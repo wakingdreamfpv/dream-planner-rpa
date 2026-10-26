@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2d0a5e">
+    <title>Dream Flight RPA | Operations Planner v5.48</title>
+    <!-- Leaflet 1.9.4 (BSD-2-Clause): kept inline with these ids — the PDF export copies them into the print window -->
+    <style id="wd-leaflet-css">/*LEAFLET_CSS*/</style>
+    <script id="wd-leaflet-js">/*LEAFLET_JS*/</script>
+    <style>
+        /* Plan locked after approval (v5.39): fields look read-only; clicks/typing are blocked in JS */
+        [data-locked="1"] input:not([type=checkbox]):not([type=radio]), [data-locked="1"] textarea, [data-locked="1"] select { background-color: #f8fafc !important; color: #475569 !important; cursor: not-allowed !important; }
+        [data-locked="1"] button:not([data-allow-locked]), [data-locked="1"] label, [data-locked="1"] input[type=checkbox] { cursor: not-allowed !important; }
+        @media print { [data-lock-banner] { display: none !important; } }
+        /* Custom print styles to ensure layout looks good on paper/PDF */
+        /* =============================================
+           PRINT STYLESHEET — Professional PDF Output
+           ============================================= */
+        @media print {
+
+            /* --- Page Setup --- */
+            @page {
+                size: A4 portrait;
+                margin: 14mm 12mm 16mm 12mm;
+            }
+
+            /* Running footer on every page */
+            @page {
+                @bottom-center {
+                    content: "RPAS Operations Planner — Confidential — Page " counter(page) " of " counter(pages);
+                    font-size: 7pt;
+                    color: #64748b;
+                    font-family: 'Inter', sans-serif;
+                }
+            }
+
+            /* --- Global resets --- */
+            *, *::before, *::after {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                box-shadow: none !important;
+            }
+
+            /* Force textareas to show all content in print — MUST come last */
+            textarea {
+                overflow: visible !important;
+                height: auto !important;
+                min-height: 0 !important;
+                white-space: pre-wrap !important;
+                resize: none !important;
+            }
+
+            html, body {
+                background: white !important;
+                font-size: 9pt !important;
+                font-family: 'Inter', sans-serif !important;
+                color: #1e293b !important;
+            }
+
+            /* --- Tailwind print utilities --- */
+            .print\:hidden { display: none !important; }
+            .print\:\!hidden { display: none !important; }
+            .print\:block { display: block !important; }
+            .print\:inline-flex { display: inline-flex !important; }
+            .print\:text-black { color: #000 !important; }
+            .print\:bg-white { background-color: #fff !important; }
+            .print\:col-span-4 { grid-column: span 4 / span 4 !important; }
+            .print\:overflow-visible { overflow: visible !important; }
+            .print\:break-before-page { break-before: page !important; page-break-before: always !important; }
+            .print\:break-inside-avoid { break-inside: avoid !important; page-break-inside: avoid !important; }
+            .print\:border-none { border: none !important; }
+            .print\:shadow-none { box-shadow: none !important; }
+            .print\:px-0 { padding-left: 0 !important; padding-right: 0 !important; }
+            .print\:p-0 { padding: 0 !important; }
+
+            /* --- Hide screen-only chrome --- */
+            nav, .sidebar, button:not(.print-show) { display: none !important; }
+
+            /* --- App wrapper: remove screen layout constraints --- */
+            .max-w-7xl { max-width: 100% !important; padding: 0 !important; }
+            .md\:col-span-1 { display: none !important; }
+            .md\:col-span-3 { grid-column: span 4 / span 4 !important; }
+            .date-time-grid { display: grid !important; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+
+            /* =============================================
+               COVER / HEADER AREA
+               ============================================= */
+            header {
+                background: white !important;
+                color: #1e293b !important;
+                border-bottom: 3px solid #1e3a5f !important;
+                padding: 0 0 8pt 0 !important;
+                margin-bottom: 16pt !important;
+            }
+
+            header h1 {
+                font-size: 16pt !important;
+                font-weight: 800 !important;
+                color: #1e3a5f !important;
+                letter-spacing: -0.02em !important;
+            }
+
+            header p {
+                font-size: 8pt !important;
+                color: #64748b !important;
+                margin-top: 2pt !important;
+            }
+
+            /* =============================================
+               SECTION WRAPPER — Card → flat bordered box
+               ============================================= */
+            .bg-white.rounded-xl,
+            .bg-white.rounded-lg {
+                border: none !important;
+                border-radius: 0 !important;
+                background: white !important;
+            }
+
+            /* Section title bars */
+            .bg-slate-50.px-6.py-4,
+            .bg-amber-50.px-6.py-4,
+            [class*="bg-slate-50"][class*="px-6"][class*="py-4"] {
+                background: #1e3a5f !important;
+                color: white !important;
+                padding: 5pt 8pt !important;
+                margin-bottom: 10pt !important;
+                border-radius: 3pt !important;
+            }
+
+            [class*="bg-slate-50"][class*="px-6"][class*="py-4"] h2,
+            [class*="bg-amber-50"][class*="px-6"][class*="py-4"] h2 {
+                color: white !important;
+                font-size: 11pt !important;
+                font-weight: 700 !important;
+            }
+
+            /* =============================================
+               PRINT FIELD DISPLAY — hide inputs, show value
+               ============================================= */
+            /* Make inputs/selects look like printed values */
+            input[type="text"],
+            input[type="number"],
+            input[type="email"],
+            input[type="tel"],
+            input[type="date"],
+            select {
+                border: none !important;
+                border-bottom: 1px solid #cbd5e1 !important;
+                background: transparent !important;
+                padding: 1pt 0 2pt 0 !important;
+                font-size: 9pt !important;
+                color: #1e293b !important;
+                width: 100% !important;
+                resize: none !important;
+                overflow: visible !important;
+                height: auto !important;
+                min-height: 0 !important;
+            }
+
+            /* textarea handled above — do not redeclare overflow here */
+            textarea {
+                border: none !important;
+                border-bottom: 1px solid #cbd5e1 !important;
+                padding: 1pt 0 3pt 0 !important;
+                line-height: 1.5 !important;
+                overflow: visible !important;
+                height: auto !important;
+                min-height: 0 !important;
+            }
+
+            /* =============================================
+               PRINT DATA TABLE — 2-col label/value layout
+               ============================================= */
+            .print-table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                margin-bottom: 8pt !important;
+            }
+
+            .print-table td {
+                padding: 3pt 6pt !important;
+                font-size: 8.5pt !important;
+                vertical-align: top !important;
+                border: 1px solid #e2e8f0 !important;
+            }
+
+            .print-table td:first-child {
+                font-weight: 600 !important;
+                color: #475569 !important;
+                width: 35% !important;
+                background: #f8fafc !important;
+                text-transform: uppercase !important;
+                font-size: 7.5pt !important;
+                letter-spacing: 0.04em !important;
+            }
+
+            /* =============================================
+               GRID LAYOUT — 2 col data grids
+               ============================================= */
+            .print-grid-2 {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 0 !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 4pt !important;
+                overflow: visible !important;
+                margin-bottom: 8pt !important;
+            }
+
+            .print-grid-2 .print-cell {
+                padding: 4pt 7pt !important;
+                border-right: 1px solid #e2e8f0 !important;
+                border-bottom: 1px solid #e2e8f0 !important;
+            }
+
+            .print-grid-2 .print-cell:nth-child(even) {
+                border-right: none !important;
+            }
+
+            .print-cell-label {
+                font-size: 7pt !important;
+                font-weight: 700 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                color: #64748b !important;
+                margin-bottom: 1pt !important;
+            }
+
+            .print-cell-value {
+                font-size: 9pt !important;
+                color: #1e293b !important;
+                font-weight: 500 !important;
+            }
+
+            /* =============================================
+               SECTION DIVIDERS
+               ============================================= */
+            .print-section-heading {
+                font-size: 10pt !important;
+                font-weight: 700 !important;
+                color: #1e3a5f !important;
+                border-bottom: 2px solid #1e3a5f !important;
+                padding-bottom: 3pt !important;
+                margin: 10pt 0 6pt 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.04em !important;
+            }
+
+            .print-subsection-heading {
+                font-size: 8.5pt !important;
+                font-weight: 700 !important;
+                color: #334155 !important;
+                border-left: 3px solid #3b82f6 !important;
+                padding-left: 5pt !important;
+                margin: 8pt 0 4pt 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.03em !important;
+            }
+
+            /* =============================================
+               CHECKLIST — compact tick layout
+               ============================================= */
+            .print-checklist {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 2pt 12pt !important;
+                margin: 6pt 0 !important;
+                padding: 6pt 8pt !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 4pt !important;
+                background: #f8fafc !important;
+            }
+
+            .print-checklist-item {
+                display: flex !important;
+                align-items: center !important;
+                gap: 4pt !important;
+                font-size: 8pt !important;
+                padding: 1.5pt 0 !important;
+            }
+
+            /* =============================================
+               RISK TABLE — compact, full-width
+               ============================================= */
+            table.risk-table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                font-size: 7.5pt !important;
+                table-layout: fixed !important;
+                margin-top: 4pt !important;
+            }
+
+            table.risk-table th {
+                background: #1e3a5f !important;
+                color: white !important;
+                padding: 4pt 5pt !important;
+                font-size: 7pt !important;
+                font-weight: 700 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.04em !important;
+                border: 1px solid #1e3a5f !important;
+                text-align: left !important;
+            }
+
+            table.risk-table td {
+                padding: 4pt 5pt !important;
+                border: 1px solid #cbd5e1 !important;
+                vertical-align: top !important;
+                font-size: 7.5pt !important;
+                line-height: 1.4 !important;
+            }
+
+            table.risk-table tr:nth-child(even) td {
+                background: #f8fafc !important;
+            }
+
+            /* =============================================
+               SIGNATURE BLOCKS
+               ============================================= */
+            .print-sig-block {
+                border: 1px solid #cbd5e1 !important;
+                border-radius: 4pt !important;
+                padding: 6pt 8pt !important;
+                margin-top: 4pt !important;
+            }
+
+            .print-sig-line {
+                border-bottom: 1.5px solid #1e293b !important;
+                margin-top: 14pt !important;
+                width: 70% !important;
+            }
+
+            /* =============================================
+               APPROVAL — toggle values
+               ============================================= */
+            .print-badge-yes {
+                display: inline-block !important;
+                background: #dcfce7 !important;
+                color: #15803d !important;
+                border: 1px solid #86efac !important;
+                padding: 1pt 5pt !important;
+                border-radius: 3pt !important;
+                font-size: 7.5pt !important;
+                font-weight: 700 !important;
+            }
+
+            .print-badge-no {
+                display: inline-block !important;
+                background: #fee2e2 !important;
+                color: #dc2626 !important;
+                border: 1px solid #fca5a5 !important;
+                padding: 1pt 5pt !important;
+                border-radius: 3pt !important;
+                font-size: 7.5pt !important;
+                font-weight: 700 !important;
+            }
+
+            /* =============================================
+               RISK MATRIX — compact print version
+               ============================================= */
+            table.risk-matrix-table {
+                font-size: 7pt !important;
+                border-collapse: collapse !important;
+            }
+
+            table.risk-matrix-table th,
+            table.risk-matrix-table td {
+                padding: 2pt 4pt !important;
+                border: 1px solid #94a3b8 !important;
+                text-align: center !important;
+            }
+
+            /* =============================================
+               PAGE BREAK CONTROLS
+               ============================================= */
+            .print-break-before { break-before: page !important; page-break-before: always !important; }
+            .print-avoid-break { break-inside: avoid !important; page-break-inside: avoid !important; }
+
+            /* Page title stamp — shown at top of each section on print */
+            .print-page-title {
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: baseline !important;
+                border-bottom: 3px solid #1e3a5f !important;
+                margin-bottom: 10pt !important;
+                padding-bottom: 4pt !important;
+            }
+
+            .print-page-title h2 {
+                font-size: 12pt !important;
+                font-weight: 800 !important;
+                color: #1e3a5f !important;
+            }
+
+            .print-page-title span {
+                font-size: 7.5pt !important;
+                color: #64748b !important;
+            }
+
+            /* =============================================
+               FORCE ALL BACKGROUNDS TO PRINT CORRECTLY
+               ============================================= */
+            *, *::before, *::after {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+
+            /* KE Table — force all cells to honour background-color */
+            table, thead, tbody, tr, th, td {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+                border-collapse: collapse !important;
+            }
+
+            /* =============================================
+               PAGE BREAKS — every major section on new page
+               ============================================= */
+            .print-section-break {
+                page-break-before: always !important;
+                break-before: page !important;
+            }
+            .print-grid-2, .print-checklist, .print-subsection-heading { page-break-inside: avoid !important; break-inside: avoid !important; }
+            table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+            /* =============================================
+               RISK REGISTER — force full text visible
+               ============================================= */
+            /* Every textarea in print must show ALL text — this is the final word */
+            textarea,
+            textarea.auto-resize,
+            .auto-resize {
+                overflow: visible !important;
+                height: auto !important;
+                max-height: none !important;
+                min-height: 0 !important;
+                white-space: pre-wrap !important;
+                word-wrap: break-word !important;
+                resize: none !important;
+                -webkit-print-color-adjust: exact !important;
+                display: block !important;
+            }
+
+            /* Risk register table — ensure rows don't clip */
+            table td textarea {
+                overflow: visible !important;
+                height: auto !important;
+                max-height: none !important;
+                white-space: pre-wrap !important;
+                word-break: break-word !important;
+                display: block !important;
+                width: 100% !important;
+                padding: 2pt 0 !important;
+                font-size: 8pt !important;
+                line-height: 1.5 !important;
+                border: none !important;
+            }
+
+            /* Ensure table cells wrap, don't clip */
+            table td {
+                overflow: visible !important;
+                word-wrap: break-word !important;
+                page-break-inside: avoid !important;
+            }
+        }
+        
+        
+        @media screen {
+            .auto-resize {
+                overflow: hidden;
+                resize: none;
+            }
+        }
+
+        
+        .auto-resize {
+            overflow: hidden;
+            resize: none;
+        }
+
+        /* Leaflet Map Custom Fixes */
+        .custom-leaflet-icon {
+            background: transparent;
+            border: none;
+        }
+        .leaflet-container {
+            z-index: 1 !important;
+        }
+        .wd-print-notice { display: none; }
+        @media print {
+            body > *:not(.wd-print-notice) { display: none !important; }
+            .wd-print-notice { display: block !important; font-family: Arial, sans-serif; padding: 40mm 10mm; text-align: center; color: #1e293b; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div class="wd-print-notice">
+      <h1 style="font-size:20pt;margin-bottom:10pt;">Use “Export PDF” to print this plan</h1>
+      <p style="font-size:11pt;color:#475569;">Printing the app screen directly gives an incomplete record (maps shift, controls show, sections duplicate).<br>
+      Close this dialog and click <b>Export PDF</b> (or any <b>Save PDF</b> button, or press ⌘P / Ctrl+P) to get the formatted operations report.</p>
+    </div>
+    <div id="root"></div>
+
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

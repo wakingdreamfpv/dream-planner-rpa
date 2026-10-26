@@ -1,0 +1,5 @@
+/* Font Awesome Free 6.4.0 — solid + regular only (icons CC BY 4.0, fonts OFL 1.1, code MIT) */
+@import './vendor/fontawesome.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
