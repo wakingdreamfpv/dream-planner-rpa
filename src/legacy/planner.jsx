@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.49';
+        const APP_VERSION = '5.50';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1106,6 +1106,70 @@
         const RISK_C = { A: 'Catastrophic', B: 'Hazardous', C: 'Moderate', D: 'Minor', E: 'Negligible' };
         const riskLevel = (l, c) => { const L = parseInt(l); if (!(L >= 1)) return 'LOW'; return (RISK_LEVELS[Math.min(5, L)] || {})[c] || 'MEDIUM'; };
         const riskBand = (l, c) => RISK_BANDS[riskLevel(l, c)];
+
+        // ── Risk assessment library: import / export (v5.50) ──
+        const BUILTIN_RISK_TEMPLATE_NAMES = {
+          standardVlos: 'Standard VLOS (Day)', nightVlos: 'Night Operations — VLOS', evlosDay: 'EVLOS — Day (not OONP)',
+          oonpEvlosDay: 'OONP + EVLOS — Day', oonpP1EvlosSet: 'OONP Pathway 1 + EVLOS — Controlled set with talent (guarded cinewhoops)',
+          oonpP1EvlosVessel: 'OONP Pathway 1 + EVLOS — Vessel / Whale watching', oonpEvlosNight: 'OONP + EVLOS — Night',
+          oonpP2EvlosNightVenue: 'OONP Pathway 2 + EVLOS — Night / Covered festival venue, open roof (limited GPS, SFX/pyro)',
+          oonpIndoorEvlos: 'OONP Indoor / EVLOS (Festivals)', motorsport: 'Motorsport / Track Events',
+        };
+        const RISK_CSV_COLS = [['refNo', 'Ref'], ['hazard', 'Hazard'], ['riskDescription', 'Risk Description'], ['existingControls', 'Existing Controls'], ['initL', 'Initial L'], ['initC', 'Initial C'], ['additionalControls', 'Additional Controls'], ['resL', 'Residual L'], ['resC', 'Residual C'], ['riskOwner', 'Risk Owner']];
+        const normL = (v) => { const m = String(v == null ? '' : v).match(/[1-5]/); return m ? m[0] : ''; };
+        const normC = (v) => { const t = String(v == null ? '' : v).trim(); const m = t.match(/^[A-Ea-e]\b/) || t.match(/\b([A-Ea-e])\b/); if (m) return (m[1] || m[0]).toUpperCase();
+          const w = { catastrophic: 'A', hazardous: 'B', major: 'B', moderate: 'C', minor: 'D', negligible: 'E', insignificant: 'E' }; const k = Object.keys(w).find(x => t.toLowerCase().includes(x)); return k ? w[k] : ''; };
+        const cleanRisk = (r, i) => ({
+          refNo: String(r.refNo || r.ref || String(i + 1).padStart(3, '0')), id: Date.now() + Math.random() + i,
+          dateAdded: r.dateAdded || localISODate(), riskOwner: r.riskOwner || 'RPIC',
+          hazard: String(r.hazard || '').trim(), riskDescription: String(r.riskDescription || '').trim(), existingControls: String(r.existingControls || '').trim(),
+          initL: normL(r.initL) || '3', initC: normC(r.initC) || 'C', resL: normL(r.resL) || '1', resC: normC(r.resC) || 'D',
+          additionalControls: String(r.additionalControls || '').trim(),
+        });
+        const csvParse = (text) => {
+          const rows = []; let row = [], cell = '', q = false;
+          for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+            else if (ch === '"') q = true; else if (ch === ',') { row.push(cell); cell = ''; }
+            else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+            else cell += ch;
+          }
+          if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+          return rows.filter(r => r.some(c => String(c).trim()));
+        };
+        const csvCell = (v) => { const t = String(v == null ? '' : v); return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+        const risksToCsv = (risks) => [RISK_CSV_COLS.map(c => c[1]).join(','), ...(risks || []).map(r => RISK_CSV_COLS.map(c => csvCell(r[c[0]])).join(','))].join('\r\n');
+        // Reads any of: a risk template file, an "all templates" export, a plain array of risks, a full plan file, or a CSV.
+        // Returns [{ name, risks }]
+        const parseRiskImport = (text, fileName) => {
+          const base = String(fileName || 'Imported').replace(/\.(json|csv)$/i, '').replace(/[_]+/g, ' ').trim();
+          const t = text.replace(/^﻿/, '');
+          if (/\.csv$/i.test(fileName || '') || (!/^\s*[[{]/.test(t))) {
+            const rows = csvParse(t); if (rows.length < 2) throw new Error('the CSV has no data rows');
+            const head = rows[0].map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+            const find = (...keys) => head.findIndex(h => keys.some(k => h === k || h.includes(k)));
+            const ix = {
+              refNo: find('ref'), hazard: find('hazard'), riskDescription: find('riskdescription', 'description'),
+              existingControls: find('existingcontrol', 'currentcontrol'), additionalControls: find('additionalcontrol', 'furthercontrol'),
+              initL: find('initiall', 'initlikelihood', 'initiallikelihood', 'likelihood'), initC: find('initialc', 'initconsequence', 'initialconsequence', 'consequence'),
+              resL: find('residuall', 'reslikelihood', 'residuallikelihood'), resC: find('residualc', 'resconsequence', 'residualconsequence'), riskOwner: find('owner'),
+            };
+            if (ix.hazard < 0) throw new Error('no "Hazard" column found (expected columns: ' + RISK_CSV_COLS.map(c => c[1]).join(', ') + ')');
+            const risks = rows.slice(1).map((r, i) => { const o = {}; Object.entries(ix).forEach(([k, j]) => { if (j >= 0) o[k] = r[j]; }); return cleanRisk(o, i); }).filter(r => r.hazard);
+            return [{ name: base, risks }];
+          }
+          const d = JSON.parse(t);
+          if (Array.isArray(d)) return [{ name: base, risks: d.map(cleanRisk).filter(r => r.hazard) }];
+          if (d && d._type === 'wdfpv_risk_template') return [{ name: d.name || base, risks: (d.risks || []).map(cleanRisk).filter(r => r.hazard) }];
+          if (d && d._type === 'wdfpv_risk_library' && d.templates) return Object.entries(d.templates).map(([n, r]) => ({ name: n, risks: (r || []).map(cleanRisk).filter(x => x.hazard) }));
+          if (d && Array.isArray(d.risks)) return [{ name: d.title || (d.overview && d.overview.operationName) || base, risks: d.risks.map(cleanRisk).filter(r => r.hazard) }];
+          if (d && d.customRiskTemplates && typeof d.customRiskTemplates === 'object') return Object.entries(d.customRiskTemplates).map(([n, r]) => ({ name: n, risks: (r || []).map(cleanRisk).filter(x => x.hazard) }));
+          if (d && typeof d === 'object' && Object.values(d).length && Object.values(d).every(v => Array.isArray(v))) return Object.entries(d).map(([n, r]) => ({ name: n, risks: r.map(cleanRisk).filter(x => x.hazard) }));
+          throw new Error('no risks found in this file');
+        };
+        const wdDownload = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type || 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
+        const fileSafe = (s) => String(s || 'risk-assessment').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 80) || 'risk-assessment';
         // HTML so the planner, browser print and the PDF report all draw the identical graphic
         function riskMatrixHtml(risks, opts) {
           opts = opts || {};
@@ -6474,6 +6538,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [lastSavedAt, setLastSavedAt] = useState(null);
           const [workingOffer, setWorkingOffer] = useState(null);
           const [recOpen, setRecOpen] = useState(false), [recList, setRecList] = useState([]);
+          const [riskLibOpen, setRiskLibOpen] = useState(false), [riskLibView, setRiskLibView] = useState(null);
           const quietUntilRef = useRef(Date.now() + 4000); // ignore the set-up effects after open / load
           const workingTimer = useRef(null);
           useEffect(() => { wdTabs.setDirty(dirty); }, [dirty]);
@@ -11762,6 +11827,108 @@ View in the Database & Settings tab.`);
                                 <input type="file" accept=".json" className="hidden" onChange={handleImportPlan} />
                             </label>
                         </div>
+
+                        {/* ── Risk Assessment Library (v5.50) ── */}
+                        {(() => {
+                          const names = Object.keys(customTemplates).sort((a, b) => a.localeCompare(b));
+                          const uniq = (n) => { let x = n, k = 2; while (customTemplates[x] || BUILTIN_RISK_TEMPLATE_NAMES[x]) x = n + ' (' + (k++) + ')'; return x; };
+                          const saveAll = (next) => { setCustomTemplates(next); try { localStorage.setItem('customRiskTemplates', JSON.stringify(next)); } catch (e) {} };
+                          const exportJson = (name, list) => wdDownload(fileSafe(name) + '.risk.json', JSON.stringify({ _type: 'wdfpv_risk_template', version: 1, name, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, risks: list }, null, 1));
+                          const exportCsv = (name, list) => wdDownload(fileSafe(name) + '.csv', '﻿' + risksToCsv(list), 'text/csv');
+                          const useInJob = (name, list) => {
+                            if (approval.flightAuthApproved) { alert('This job is approved and locked. Amend the plan first (Authorisation tab) to change its risk register.'); return; }
+                            const empty = risks.every(r => !String(r.hazard || '').trim());
+                            const replace = empty || window.confirm(`Use "${name}" in the open job (${getOpTitle(overview)})?\n\nOK: REPLACE the job's current ${risks.length} risk(s)\nCancel: ADD these ${list.length} risks to the end`);
+                            const fresh = list.map((r, i) => ({ ...r, id: Date.now() + Math.random() + i }));
+                            setRisks(replace ? fresh : [...risks, ...fresh.map((r, i) => ({ ...r, refNo: String(risks.length + i + 1).padStart(3, '0') }))]);
+                            setActiveTab('jsa');
+                          };
+                          const onImport = async (e) => {
+                            const files = Array.from(e.target.files || []); e.target.value = ''; if (!files.length) return;
+                            const raw = await wdReadFiles(files, 'text', 'Importing risk assessment' + (files.length > 1 ? 's' : ''));
+                            const next = { ...customTemplates }, done = [], bad = [];
+                            raw.forEach(x => {
+                              if (x.error) { bad.push(x.name + ': ' + x.error); return; }
+                              try {
+                                parseRiskImport(x.result, x.name).forEach(t => {
+                                  if (!t.risks.length) { bad.push(x.name + ': no hazards found'); return; }
+                                  let n = t.name; if (next[n] || BUILTIN_RISK_TEMPLATE_NAMES[n]) { n = (() => { let y = n, k = 2; while (next[y] || BUILTIN_RISK_TEMPLATE_NAMES[y]) y = t.name + ' (' + (k++) + ')'; return y; })(); }
+                                  next[n] = t.risks; done.push(`${n} — ${t.risks.length} risk${t.risks.length === 1 ? '' : 's'}`);
+                                });
+                              } catch (err) { bad.push(x.name + ': ' + err.message); }
+                            });
+                            if (done.length) saveAll(next);
+                            if (bad.length) wdProgress.fail(bad.length + ' file(s) not imported'); else wdProgress.finish(done.length + ' imported');
+                            alert((done.length ? '✅ Imported into the Risk Assessment Library:\n' + done.map(d => '• ' + d).join('\n') : 'Nothing imported.') + (bad.length ? '\n\n⚠ Not imported:\n' + bad.map(b => '• ' + b).join('\n') : ''));
+                            setRiskLibOpen(true);
+                          };
+                          const Row = ({ name, list, builtin, keyId }) => {
+                            const open = riskLibView === keyId;
+                            return (
+                              <div className="px-4 py-2.5" data-risklib-row={builtin ? 'builtin' : 'custom'} data-risklib-name={name}>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <button type="button" onClick={() => setRiskLibView(open ? null : keyId)} className="flex-1 min-w-[12rem] text-left text-sm font-semibold text-slate-800 hover:text-indigo-700">
+                                    <i className={`fa-solid ${open ? 'fa-chevron-down' : 'fa-chevron-right'} text-[10px] mr-1.5 text-slate-400`}></i>{name}
+                                    <span className="ml-2 text-xs font-normal text-slate-500">{list.length} risk{list.length === 1 ? '' : 's'}</span>
+                                    {builtin && <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">built-in</span>}
+                                  </button>
+                                  <button type="button" data-risklib-use="1" onClick={() => useInJob(name, list)} className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold">Use in open job</button>
+                                  <button type="button" onClick={() => exportJson(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Download as a file you can import again or share">JSON</button>
+                                  <button type="button" onClick={() => exportCsv(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Open in Excel / Google Sheets">CSV</button>
+                                  <button type="button" data-risklib-dup="1" onClick={() => { const n = window.prompt('Name for the copy:', uniq(name + ' (copy)')); if (n && n.trim()) saveAll({ ...customTemplates, [uniq(n.trim())]: list.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Duplicate</button>
+                                  {!builtin && <>
+                                    <button type="button" data-risklib-rename="1" onClick={() => { const n = window.prompt('Rename to:', name); if (!n || !n.trim() || n.trim() === name) return; const nn = uniq(n.trim()); const next = {}; Object.keys(customTemplates).forEach(k => { next[k === name ? nn : k] = customTemplates[k]; }); saveAll(next); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Rename</button>
+                                    <button type="button" onClick={() => { if (!risks.some(r => String(r.hazard || '').trim())) { alert('The open job has no risks to save.'); return; } if (window.confirm(`Replace "${name}" with the open job's ${risks.length} risk(s)?`)) saveAll({ ...customTemplates, [name]: risks.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Overwrite this template with the risk register of the job that's open now">Update from job</button>
+                                    <button type="button" data-risklib-del="1" onClick={() => { if (!window.confirm(`Delete the risk assessment "${name}"? Jobs that already use it keep their copy.`)) return; const next = { ...customTemplates }; delete next[name]; saveAll(next); }} className="text-xs text-slate-400 hover:text-red-600 px-1"><i className="fa-solid fa-trash-can"></i></button>
+                                  </>}
+                                </div>
+                                {open && (
+                                  <div className="mt-2 overflow-x-auto">
+                                    <table className="w-full text-[11px] border border-slate-200">
+                                      <thead className="bg-slate-50 text-slate-500 uppercase text-[9px]"><tr><th className="px-1.5 py-1 text-left">Ref</th><th className="px-1.5 py-1 text-left">Hazard</th><th className="px-1.5 py-1">Initial</th><th className="px-1.5 py-1">Residual</th><th className="px-1.5 py-1 text-left">Owner</th></tr></thead>
+                                      <tbody>{list.map((r, i) => (
+                                        <tr key={i} className="border-t border-slate-100 align-top">
+                                          <td className="px-1.5 py-1 font-mono text-slate-400">{r.refNo || String(i + 1).padStart(3, '0')}</td>
+                                          <td className="px-1.5 py-1"><div className="font-semibold text-slate-800">{r.hazard}</div>{r.existingControls && <div className="text-slate-500 line-clamp-2">{r.existingControls}</div>}</td>
+                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.initL, r.initC)}>{r.initL}{r.initC}</span></td>
+                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.resL, r.resC)}>{r.resL}{r.resC}</span></td>
+                                          <td className="px-1.5 py-1 text-slate-600">{r.riskOwner}</td>
+                                        </tr>))}</tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          };
+                          return (
+                            <div className="border border-indigo-200 rounded-xl overflow-hidden shadow-sm" data-risklib="1">
+                              <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center gap-2 flex-wrap">
+                                <button type="button" onClick={() => setRiskLibOpen(!riskLibOpen)} className="flex items-center gap-2 flex-1 text-left">
+                                  <i className="fa-solid fa-shield-halved text-indigo-600"></i>
+                                  <h3 className="font-semibold text-indigo-900 text-sm">Risk Assessment Library</h3>
+                                  <span className="text-xs bg-indigo-200 text-indigo-800 font-bold px-2 py-0.5 rounded-full">{names.length} saved · {Object.keys(BUILTIN_RISK_TEMPLATE_NAMES).length} built-in</span>
+                                  <i className={`fa-solid ${riskLibOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-indigo-500 text-xs ml-1`}></i>
+                                </button>
+                                <label className="text-xs px-2.5 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold cursor-pointer" title="JSON (from this app or a plan file) or CSV (from Excel / Google Sheets). Several files at once is fine.">
+                                  <i className="fa-solid fa-file-import mr-1"></i>Import
+                                  <input type="file" accept=".json,.csv,application/json,text/csv" multiple className="hidden" data-risklib-import="1" onChange={onImport} />
+                                </label>
+                                <button type="button" onClick={handleSaveTemplate} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100 font-semibold" title="Save the risk register of the job that's open now">Save open job's risks</button>
+                                {names.length > 0 && <button type="button" onClick={() => wdDownload('risk-assessment-library_' + localISODate() + '.json', JSON.stringify({ _type: 'wdfpv_risk_library', version: 1, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, templates: customTemplates }, null, 1))} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100">Export all</button>}
+                              </div>
+                              {riskLibOpen && (<>
+                                <div className="px-4 py-2 text-[11px] text-slate-500 bg-white border-b border-indigo-100">Import accepts this app's risk files, "Export all" libraries, full plan files (takes the plan's risk register) and CSV from Excel / Google Sheets with columns: {RISK_CSV_COLS.map(c => c[1]).join(', ')}. Likelihood 1–5, consequence A–E (or the words, e.g. "Moderate").</div>
+                                <div className="divide-y divide-indigo-100 max-h-[32rem] overflow-y-auto bg-white">
+                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50/50">Your risk assessments</div>
+                                  {names.length === 0 && <div className="px-4 py-3 text-sm text-slate-400 italic">None yet. Import a file, or save the open job's register.</div>}
+                                  {names.map(n => <Row key={'c_' + n} keyId={'c_' + n} name={n} list={customTemplates[n] || []} />)}
+                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50">Built-in (read-only — Duplicate to change)</div>
+                                  {Object.entries(BUILTIN_RISK_TEMPLATE_NAMES).filter(([k]) => riskTemplates[k]).map(([k, n]) => <Row key={'b_' + k} keyId={'b_' + k} name={n} list={riskTemplates[k]} builtin />)}
+                                </div>
+                              </>)}
+                            </div>
+                          );
+                        })()}
 
                         {/* ── Recovery copies (v5.45) ── */}
                         {(() => {
