@@ -62,6 +62,10 @@ export default defineConfig(({ mode }) => {
       outDir: single ? 'dist-single' : 'dist',
       target: 'es2019',
       chunkSizeWarningLimit: 4000,
+      // Keep function names: the PDF export writes drawHeatDabs / heatMpp into the print window by name
+      // (fn.toString()), so they must not be renamed by the minifier.
+      minify: 'terser',
+      terserOptions: { keep_fnames: true, keep_classnames: true, format: { comments: false } },
       assetsInlineLimit: single ? 100000000 : 4096,
     },
   };

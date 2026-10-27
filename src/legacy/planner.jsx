@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.50';
+        const APP_VERSION = '5.51';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1106,6 +1106,110 @@
         const RISK_C = { A: 'Catastrophic', B: 'Hazardous', C: 'Moderate', D: 'Minor', E: 'Negligible' };
         const riskLevel = (l, c) => { const L = parseInt(l); if (!(L >= 1)) return 'LOW'; return (RISK_LEVELS[Math.min(5, L)] || {})[c] || 'MEDIUM'; };
         const riskBand = (l, c) => RISK_BANDS[riskLevel(l, c)];
+
+        // ── Remote RPIC sign-off (v5.51) ──
+        // The RPIC signs a specific version of the plan. The fingerprint covers everything the RPIC is agreeing to
+        // (overview, JSA, risks, OONP, map, KE, authorisation details) but not the signatures/approval state themselves.
+        const stableStringify = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v === undefined ? null : v)
+          : Array.isArray(v) ? '[' + v.map(stableStringify).join(',') + ']'
+          : '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }) => {
+          const ap = { ...(approval || {}) };
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog'].forEach(k => delete ap[k]);
+          return { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
+        };
+        const cyrbHex = (str, seed) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+          h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+          return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0'); };
+        const planFingerprint = async (state) => {
+          const str = stableStringify(rpicSignable(state));
+          try { if (window.crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return 'sha256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); } } catch (e) {}
+          return 'h64:' + cyrbHex(str, 1) + cyrbHex(str, 7);
+        };
+        const fpShort = (fp) => String(fp || '').replace(/^\w+:/, '').slice(0, 10).toUpperCase();
+        // Standalone page the RPIC opens to review and sign (works offline, any browser; no account).
+        const buildRpicSignPage = (data) => {
+          const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+          return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RPIC sign-off — ${String(data.title).replace(/</g, '&lt;')}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f5f9;color:#1e293b}
+.top{background:#2d0a5e;color:#fff;padding:14px 18px}.top b{font-size:15px}.top div{font-size:12px;opacity:.85;margin-top:2px}
+.wrap{max-width:760px;margin:0 auto;padding:16px 14px 70px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:14px;overflow:hidden}
+.hd{padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#475569}
+.bd{padding:14px}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:6px 4px;border-bottom:1px solid #f1f5f9;vertical-align:top}td:first-child{color:#64748b;width:38%}
+.risk{border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px}.risk b{display:block;margin-bottom:3px}.risk small{color:#475569;display:block;margin-top:3px}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:#e2e8f0;margin-right:4px}
+label{display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin:10px 0 5px}
+input[type=text],textarea{width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;font-family:inherit}
+.decl{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:12px}
+.decl input{width:22px;height:22px;flex-shrink:0;margin-top:2px}
+canvas{width:100%;height:170px;border:1.5px dashed #94a3b8;border-radius:10px;background:#fff;touch-action:none;display:block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:12px 18px;border-radius:10px;font-size:15px;font-weight:700;border:none;cursor:pointer}
+.p{background:#2563eb;color:#fff}.g{background:#16a34a;color:#fff}.o{background:#fff;border:1.5px solid #cbd5e1;color:#334155}.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.note{font-size:12px;color:#64748b;margin-top:6px}.ok{background:#dcfce7;border:1px solid #86efac;color:#14532d;border-radius:10px;padding:14px;font-size:14px;line-height:1.5}
+iframe{width:100%;height:75vh;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+</style></head><body>
+<div class="top"><b>RPIC sign-off — ${String(data.company || 'Flight Record').replace(/</g, '&lt;')}</b><div id="sub"></div></div>
+<div class="wrap">
+<div class="card"><div class="hd">What you're signing</div><div class="bd" style="font-size:14px;line-height:1.5">
+<p id="intro"></p><p class="note">Plan version <b id="fp"></b>. If the plan changes after you sign, the CRP will ask you to sign again.</p></div></div>
+<div class="card"><div class="hd">Operation</div><div class="bd"><table id="sum"></table></div></div>
+<div class="card"><div class="hd">Risk assessment (<span id="nrisk"></span>)</div><div class="bd" id="risks"></div></div>
+<div class="card"><div class="hd">Full plan</div><div class="bd"><button class="btn o" id="showpdf" type="button">Open the full plan (as in the PDF)</button><div id="pdfbox" style="margin-top:10px"></div><p class="note">Maps need an internet connection to load.</p></div></div>
+<div class="card" id="signcard"><div class="hd">Sign as Remote Pilot in Command</div><div class="bd">
+<div class="decl"><input type="checkbox" id="agree"><div id="decltext"></div></div>
+<label>Full name</label><input type="text" id="name"><label>ARN</label><input type="text" id="arn" inputmode="numeric">
+<label>Any concerns or comments for the CRP (optional)</label><textarea id="comments" rows="2"></textarea>
+<label>Signature — draw with your finger or mouse</label><canvas id="pad"></canvas>
+<div class="row" style="margin-top:6px"><button class="btn o" type="button" id="clear">Clear</button></div>
+<label>Or type your name as your signature</label><input type="text" id="typed" placeholder="Type your full name">
+<div class="row"><button class="btn p" type="button" id="sign" disabled>Sign</button></div>
+<p class="note" id="why"></p></div></div>
+<div class="card" id="donecard" style="display:none"><div class="hd">Signed — send it back</div><div class="bd"><div class="ok" id="donetext"></div>
+<div class="row"><button class="btn g" type="button" id="share">Send reply file</button><button class="btn o" type="button" id="dl">Download reply file</button></div>
+<p class="note">Send the reply file to the CRP by email, message or AirDrop. They import it into the planner.</p></div></div>
+</div>
+<script>
+var D=${json};
+var $=function(i){return document.getElementById(i)};
+function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+$('sub').textContent=D.title+' · '+D.opId;
+$('intro').innerHTML='<b>'+esc(D.crpName||'The CRP')+'</b> (CRP) has asked you to review this operation and sign as its <b>Remote Pilot in Command</b>. Read the summary, the risk assessment and the full plan, then sign below. Your signature is recorded with the date and time on this device.';
+$('fp').textContent=D.fpShort;
+$('sum').innerHTML=D.summary.map(function(r){return '<tr><td>'+esc(r[0])+'</td><td>'+esc(r[1]||'—')+'</td></tr>'}).join('');
+$('nrisk').textContent=D.risks.length+' risk'+(D.risks.length===1?'':'s');
+$('risks').innerHTML=D.risks.length?D.risks.map(function(r){return '<div class="risk"><b>'+esc(r.ref+' · '+r.hazard)+'</b><span class="pill">Initial '+esc(r.init)+'</span><span class="pill">Residual '+esc(r.res)+'</span>'+(r.controls?'<small><b style="display:inline">Controls:</b> '+esc(r.controls)+'</small>':'')+(r.extra?'<small><b style="display:inline">Additional:</b> '+esc(r.extra)+'</small>':'')+'</div>'}).join(''):'<p class="note">No risks listed.</p>';
+$('decltext').innerHTML=esc(D.declaration);
+$('name').value=D.rpName||'';$('arn').value=D.rpArn||'';
+$('showpdf').onclick=function(){if(!D.pdfHtml){$('pdfbox').innerHTML='<p class="note">The full plan was not included — ask the CRP for the PDF.</p>';return}var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts allow-same-origin');f.srcdoc=D.pdfHtml;$('pdfbox').innerHTML='';$('pdfbox').appendChild(f);this.style.display='none'};
+var pad=$('pad'),ctx,drawn=false,last=null;
+function size(){var r=pad.getBoundingClientRect(),d=window.devicePixelRatio||1;var img=drawn?pad.toDataURL():null;pad.width=r.width*d;pad.height=r.height*d;ctx=pad.getContext('2d');ctx.scale(d,d);ctx.lineWidth=2.4;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#0f172a';if(img){var im=new Image();im.onload=function(){ctx.drawImage(im,0,0,r.width,r.height)};im.src=img}}
+size();window.addEventListener('resize',size);
+function pt(e){var r=pad.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top]}
+pad.addEventListener('pointerdown',function(e){pad.setPointerCapture(e.pointerId);last=pt(e);ctx.beginPath();ctx.arc(last[0],last[1],1.1,0,7);ctx.fill();drawn=true;check()});
+pad.addEventListener('pointermove',function(e){if(!last)return;var p=pt(e);ctx.beginPath();ctx.moveTo(last[0],last[1]);ctx.lineTo(p[0],p[1]);ctx.stroke();last=p});
+['pointerup','pointercancel','pointerleave'].forEach(function(t){pad.addEventListener(t,function(){last=null})});
+$('clear').onclick=function(){ctx.clearRect(0,0,pad.width,pad.height);drawn=false;check()};
+function check(){var n=$('name').value.trim(),t=$('typed').value.trim(),a=$('agree').checked;var ok=a&&n&&(drawn||t);$('sign').disabled=!ok;$('why').textContent=ok?'':(!a?'Tick the declaration. ':'')+(!n?'Enter your name. ':'')+(!(drawn||t)?'Draw or type your signature.':'')}
+['agree','name','typed'].forEach(function(i){$(i).addEventListener('input',check);$(i).addEventListener('change',check)});check();
+var reply=null;
+function fname(){return 'RPIC-signed_'+D.opId+'.json'}
+$('sign').onclick=function(){
+  var now=new Date();
+  reply={_type:'wdfpv_rpic_signoff',version:1,operationId:D.opId,planUid:D.uid,title:D.title,fingerprint:D.fp,requestId:D.requestId,
+    name:$('name').value.trim(),arn:$('arn').value.trim(),comments:$('comments').value.trim(),declaration:D.declaration,
+    signatureImage:drawn?pad.toDataURL('image/png'):'',typedSignature:$('typed').value.trim(),
+    signedAt:now.toISOString(),signedAtLocal:now.toString(),timeZone:(Intl.DateTimeFormat().resolvedOptions().timeZone||''),userAgent:navigator.userAgent};
+  ['agree','name','arn','comments','typed','sign','clear'].forEach(function(i){$(i).disabled=true});pad.style.pointerEvents='none';
+  $('donecard').style.display='block';$('donetext').innerHTML='Signed by <b>'+esc(reply.name)+'</b> at '+esc(now.toLocaleString())+'.<br>Now send the reply file back to '+esc(D.crpName||'the CRP')+'.';
+  $('donecard').scrollIntoView({behavior:'smooth'});
+};
+function blob(){return new Blob([JSON.stringify(reply,null,1)],{type:'application/json'})}
+$('dl').onclick=function(){var a=document.createElement('a');a.href=URL.createObjectURL(blob());a.download=fname();document.body.appendChild(a);a.click();setTimeout(function(){a.remove()},500)};
+$('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'application/json'});if(navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f],title:'RPIC sign-off '+D.opId,text:'Signed RPIC sign-off for '+D.title}).catch(function(){});return}}catch(e){}$('dl').onclick()};
+</script></body></html>`;
+        };
 
         // ── Risk assessment library: import / export (v5.50) ──
         const BUILTIN_RISK_TEMPLATE_NAMES = {
@@ -4238,7 +4342,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           };
 
           React.useEffect(() => { generatePDFRef.current = () => generatePDF(); });
-          const generatePDF = () => {
+          const generatePDF = (opts) => {
             // Capture heatmap canvas snapshot before opening new window
             const heatmapDataUrl = null; // heat layer is now re-drawn from GPS data inside the PDF
             const hasHeatContent = heatStrokes.some(d => !d.e) || heatExclZones.length > 0;
@@ -4584,7 +4688,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             );
 
             // Sig block
-            const sigBlk=(title,name,arn,date,signed)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
+            const sigBlk=(title,name,arn,date,signed,remote)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
               +'<div style="font-size:8pt;font-weight:700;color:'+NV+';margin-bottom:5pt;">'+esc(title)+'</div>'
               +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6pt;margin-bottom:6pt;">'
               +'<div>'+lbl('Name')+'<div style="font-size:9pt;font-weight:700;">'+esc(val(name))+'</div></div>'
@@ -4592,7 +4696,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +'<div>'+lbl('Date')+'<div style="font-size:9pt;">'+esc(fmtD(date))+'</div></div>'
               +'<div>'+lbl('Signed')+'<div style="font-size:10pt;font-weight:700;color:'+(signed?'#16a34a':'#dc2626')+'">'+(signed?'✓ Digitally Signed':'Unsigned')+'</div></div>'
               +'</div><div style="font-size:7pt;color:'+S6+';margin-bottom:3pt;">Signature:</div>'
-              +'<div style="height:24pt;border-bottom:1px solid '+S2+';"></div></div>';
+              +(remote&&signed?('<div style="min-height:24pt;border-bottom:1px solid '+S2+';">'+(remote.signatureImage?'<img src="'+remote.signatureImage+'" style="max-height:34pt;max-width:100%;">':'<span style="font-family:cursive;font-size:13pt;">'+esc(remote.typedSignature||name)+'</span>')+'</div>'
+                +'<div style="font-size:6pt;color:'+S6+';margin-top:2pt;">Signed remotely '+esc(new Date(remote.signedAt).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+(remote.timeZone?' ('+esc(remote.timeZone)+')':'')+' · plan version '+esc(fpShort(remote.fingerprint))+'</div>'
+                +(remote.comments?'<div style="font-size:6.5pt;color:'+S8+';margin-top:2pt;"><b>RPIC comments:</b> '+esc(remote.comments)+'</div>':''))
+              :'<div style="height:24pt;border-bottom:1px solid '+S2+';"></div>')+'</div>';
 
             // Sites
             const sitesHtml='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10pt;margin-bottom:10pt;">'
@@ -4870,7 +4977,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('<div style="background:'+(approval.flightAuthApproved?'#dcfce7':'#fee2e2')+';border:2px solid '+(approval.flightAuthApproved?'#16a34a':'#dc2626')+';border-radius:4pt;padding:10pt;text-align:center;font-size:11pt;font-weight:700;color:'+(approval.flightAuthApproved?'#15803d':'#dc2626')+';margin:10pt 0;">'+(approval.flightAuthApproved?'✓  FLIGHT AUTHORISED':'FLIGHT NOT YET AUTHORISED — Pending RPIC sign-off')+'</div>');
             P.push('<div style="display:flex;gap:12pt;margin-top:10pt;">');
             P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned));
-            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned));
+            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote));
             P.push('</div>');
 
             // S4
@@ -4958,13 +5065,14 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('</body></html>');
 
             const html=P.join('\n');
+            if(opts&&opts.capture) return html;
             const win=window.open('','_blank');
             if(!win){alert('Pop-up blocked — allow pop-ups for this page and try again.');return;}
             win.document.open();
             win.document.write(html);
             win.document.close();
             }; // end _generatePDF
-            _generatePDF(heatmapDataUrl, hasHeatContent);
+            return _generatePDF(heatmapDataUrl, hasHeatContent);
           };
 
 
@@ -6519,7 +6627,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const by = approval.crpName || 'the CRP';
             const reason = window.prompt(`Amend this approved plan?\n\nThis withdraws the flight authorisation and clears the CRP and RPIC signatures. ${by} must re-approve before flight.\n\nReason for the amendment (kept in the plan's record):`, '');
             if (reason === null) return;
-            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '',
+            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', rpRemote: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: (reason || '').trim(), approvedAt: prev.approvedAt || '' }] }));
           };
           const LockBanner = ({ section }) => !planLocked ? null : (
@@ -7257,13 +7365,70 @@ View in the Database & Settings tab.`);
             }
           };
 
+          // ── Remote RPIC sign-off (v5.51) ──
+          const [planFp, setPlanFp] = useState('');
+          useEffect(() => {
+            const t = setTimeout(() => { planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }).then(setPlanFp).catch(() => {}); }, 400);
+            return () => clearTimeout(t);
+          }, [overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic]); // eslint-disable-line
+          const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp);
+          const RPIC_DECLARATION = 'I have read and understood this Flight Record — the operation details, the job safety assessment and the risk assessment — and I accept the role of Remote Pilot in Command for this operation. I will conduct the operation in accordance with the operations manual, this plan and any conditions of the approval, and I will tell the CRP before flight if anything changes or if I have any concerns.';
+          const sendForRpicSign = async () => {
+            if (!approval.rpName) { alert('Choose the RPIC in the Remote Pilot in Command block first.'); return; }
+            if (!risks.some(r => String(r.hazard || '').trim())) { if (!window.confirm('The risk register is empty. Send for signing anyway?')) return; }
+            const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
+            let pdfHtml = ''; try { pdfHtml = generatePDF({ capture: true }) || ''; } catch (e) {}
+            const co = { ...(db.companyProfile || {}), ...((overview && overview.operatorProfile) || {}) };
+            const ops = (jsa.operationTypes || []).join(', ') + (oonpMode && jsa.oonpPathway ? ' · OONP ' + jsa.oonpPathway : '');
+            const win = opWindow(overview);
+            const requestId = 'R' + Date.now().toString(36);
+            const data = {
+              opId: overview.identifier, uid: overview.uid || '', title: getOpTitle(overview), fp, fpShort: fpShort(fp), requestId,
+              company: co.name || '', crpName: approval.crpName || '', rpName: approval.rpName || '', rpArn: approval.rpArn || '',
+              declaration: RPIC_DECLARATION,
+              summary: [
+                ['Operation', overview.operationName || getOpTitle(overview)], ['Client', overview.clientName], ['Location', overview.location],
+                ['Date(s)', (() => { const f = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return d && m && y ? d + '/' + m + '/' + y : iso; }; return [f(win.sd), win.ed && win.ed !== win.sd ? '→ ' + f(win.ed) : ''].filter(Boolean).join(' ') + (win.st ? ' · ' + win.st + '–' + win.et : ''); })()],
+                ['Operation types', ops], ['RPA', (overview.rpaTypes || []).join(', ')], ['Max height (ft AGL)', jsa.maxOperatingHeightAgl],
+                ['Airspace', jsa.airspaceClass], ['Approved date(s)', approval.approvedDates], ['Approved RPA types', (approval.approvedTypes || []).join(', ')],
+                ['CRP', [approval.crpName, approval.crpArn && 'ARN ' + approval.crpArn].filter(Boolean).join(' · ')],
+              ],
+              risks: risks.filter(r => String(r.hazard || '').trim()).map((r, i) => ({ ref: r.refNo || String(i + 1).padStart(3, '0'), hazard: r.hazard, init: (r.initL || '') + (r.initC || '') + ' ' + riskBand(r.initL, r.initC).short, res: (r.resL || '') + (r.resC || '') + ' ' + riskBand(r.resL, r.resC).short, controls: r.existingControls || '', extra: r.additionalControls || '' })),
+              pdfHtml,
+            };
+            wdDownload('Sign-RPIC_' + overview.identifier + '_' + fileSafe(getOpTitle(overview)) + '.html', buildRpicSignPage(data), 'text/html');
+            setApproval(prev => ({ ...prev, rpRequest: { sentAt: new Date().toISOString(), fingerprint: fp, requestId, to: approval.rpName } }));
+            alert(`Sign-off file downloaded for ${approval.rpName}.\n\n1. Send them the file (email, message or AirDrop).\n2. They open it in any browser, review the plan and sign (finger or typed).\n3. They send back a small reply file (RPIC-signed_${overview.identifier}.json).\n4. Click "Import signed reply" here.\n\nPlan version ${fpShort(fp)}. If you change the plan before their reply arrives, they'll need to sign the new version.`);
+          };
+          const importRpicSignoff = (e) => {
+            const file = e.target.files && e.target.files[0]; e.target.value = ''; if (!file) return;
+            const r = new FileReader(); wdTrackReader(r, file, 'Importing RPIC signature');
+            r.onload = async () => {
+              let d; try { d = JSON.parse(r.result); } catch (err) { alert('Could not read the reply file: ' + err.message); return; }
+              if (!d || d._type !== 'wdfpv_rpic_signoff') { alert('This is not an RPIC sign-off reply file.'); return; }
+              if (d.operationId !== overview.identifier && (!d.planUid || d.planUid !== overview.uid)) { alert(`This reply is for ${d.operationId} ("${d.title}"), not the job that's open (${overview.identifier}). Open that job first.`); return; }
+              if (!d.signatureImage && !d.typedSignature) { alert('The reply has no signature.'); return; }
+              const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
+              if (d.fingerprint !== fp) {
+                alert(`⚠ Not signed: the plan has changed since this was sent for signing.\n\n${d.name} signed plan version ${fpShort(d.fingerprint)}; the plan is now version ${fpShort(fp)}.\n\nSend it for signing again so the RPIC signs what will actually be flown.`);
+                return;
+              }
+              if (approval.rpName && d.name && approval.rpName.trim().toLowerCase() !== d.name.trim().toLowerCase() && !window.confirm(`The plan names ${approval.rpName} as RPIC, but this was signed by ${d.name}.\n\nOK: make ${d.name} the RPIC and accept the signature\nCancel: don't import`)) return;
+              const dt = new Date(d.signedAt); const local = isNaN(dt) ? '' : localISODate(dt);
+              setApproval(prev => ({ ...prev, rpSigned: true, rpName: d.name || prev.rpName, rpArn: d.arn || prev.rpArn, rpDate: local || prev.rpDate,
+                rpRemote: { signedAt: d.signedAt, signedAtLocal: d.signedAtLocal || '', timeZone: d.timeZone || '', fingerprint: d.fingerprint, signatureImage: d.signatureImage || '', typedSignature: d.typedSignature || '', comments: d.comments || '', declaration: d.declaration || '', userAgent: d.userAgent || '', requestId: d.requestId || '', importedAt: new Date().toISOString() } }));
+              alert(`✅ RPIC signature imported: ${d.name}${d.arn ? ' (ARN ' + d.arn + ')' : ''}, signed ${isNaN(dt) ? d.signedAt : dt.toLocaleString('en-AU')}.` + (d.comments ? `\n\nTheir comments:\n"${d.comments}"` : '') + '\n\nYou can now sign as CRP and approve the flight.');
+            };
+            r.readAsText(file);
+          };
+
           const handleSignature = (role) => {
             const d = new Date(); // local date, not UTC (UTC is "yesterday" before 10 am in Queensland)
             const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
             if (role === 'crp') {
               setApproval(prev => ({ ...prev, crpSigned: true, crpDate: today }));
             } else {
-              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today }));
+              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null }));
             }
           };
 
@@ -11179,7 +11344,7 @@ View in the Database & Settings tab.`);
                               <div className="flex gap-2 items-end">
                                 <div className="w-2/3 relative h-10 flex items-end pb-1 text-sm">
                                   {!approval.rpSigned ? (
-                                    <button onClick={() => handleSignature('rp')} className="text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden">
+                                    <button onClick={() => handleSignature('rp')} title="Sign here (RPIC present at this computer)" className="text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden">
                                       <i className="fa-solid fa-pen-nib"></i> Sign Document
                                     </button>
                                   ) : (
@@ -11191,13 +11356,33 @@ View in the Database & Settings tab.`);
                                 </div>
                                 <input type="date" name="rpDate" value={approval.rpDate} onChange={handleApprovalChange} className="w-1/3 px-2 py-1 text-sm border border-gray-300 rounded-md bg-white" />
                               </div>
+                              {/* Remote signing (v5.51) */}
+                              <div data-rp-remote="1" className="print:hidden border-t border-slate-100 pt-3">
+                                {approval.rpSigned && approval.rpRemote ? (
+                                  <div className={`rounded-lg border px-3 py-2 text-xs ${rpRemoteStale ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+                                    <div className="font-semibold"><i className="fa-solid fa-signature mr-1"></i>Signed remotely by {approval.rpName} · {new Date(approval.rpRemote.signedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                                    {approval.rpRemote.signatureImage ? <img src={approval.rpRemote.signatureImage} alt="RPIC signature" className="h-12 mt-1 bg-white rounded border border-slate-200" /> : <div className="mt-1 italic text-base" style={{ fontFamily: 'cursive' }}>{approval.rpRemote.typedSignature}</div>}
+                                    <div className="mt-1">{rpRemoteStale ? <b>⚠ The plan has changed since the RPIC signed (signed version {fpShort(approval.rpRemote.fingerprint)}, now {fpShort(planFp)}). Send it for signing again before approval.</b> : <>✓ Matches the current plan (version {fpShort(planFp)})</>}</div>
+                                    {approval.rpRemote.comments && <div className="mt-1"><b>RPIC comments:</b> {approval.rpRemote.comments}</div>}
+                                    {rpRemoteStale && <button type="button" onClick={sendForRpicSign} className="mt-2 text-xs px-2.5 py-1 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700">Send for signing again</button>}
+                                  </div>
+                                ) : !approval.rpSigned && (
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button type="button" data-rp-send="1" onClick={sendForRpicSign} className="text-xs px-2.5 py-1.5 rounded bg-violet-600 text-white font-semibold hover:bg-violet-700"><i className="fa-solid fa-paper-plane mr-1"></i>Send to RPIC for signing</button>
+                                    <label className="text-xs px-2.5 py-1.5 rounded border border-violet-300 bg-white text-violet-800 font-semibold hover:bg-violet-50 cursor-pointer"><i className="fa-solid fa-file-import mr-1"></i>Import signed reply
+                                      <input type="file" accept=".json,application/json" className="hidden" data-rp-import="1" onChange={importRpicSignoff} />
+                                    </label>
+                                    {approval.rpRequest && <span className="text-[11px] text-slate-500">Sent {new Date(approval.rpRequest.sentAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{approval.rpRequest.fingerprint !== planFp && planFp ? ' · plan changed since — send again' : ''}</span>}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
 
                           {/* Approval (v5.45): one large switch, only after the CRP and RPIC have signed */}
                           {(() => {
                             const on = !!approval.flightAuthApproved;
-                            const missing = [!approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature'].filter(Boolean);
+                            const missing = [!approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
                             const can = on || missing.length === 0;
                             const flip = () => {
                               if (!on) {
