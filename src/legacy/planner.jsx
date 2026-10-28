@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.51';
+        const APP_VERSION = '5.52';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4794,7 +4794,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // ── Assemble ──────────────────────────────────────────────────────
             const P=[];
             P.push('<!DOCTYPE html><html><head><meta charset="UTF-8"/>');
-            P.push('<title>'+esc(ov.operationName||ov.identifier)+'</title>');
+            // The browser uses this title as the saved PDF's file name: "<operation> dd.mm.yy" (range for multi-day events) (v5.52)
+            { const w=opWindow(ov), dmy=(iso)=>{const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?m[3]+'.'+m[2]+'.'+m[1].slice(2):'';};
+              const dt=dmy(w.sd)+(w.ed&&w.ed!==w.sd&&dmy(w.ed)?'-'+dmy(w.ed):'');
+              const nm=String(ov.operationName||ov.identifier||'Flight Record').replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim();
+              P.push('<title>'+esc(nm+(dt?' '+dt:''))+'</title>'); }
             { const lc = document.getElementById('wd-leaflet-css'); P.push(lc ? '<style>' + lc.textContent + '</style>' : '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>'); }
             P.push('<style>@page{size:A4 portrait;margin:20mm 14mm 16mm 14mm;}@media print{.pdfhdr{margin:0 0 14pt!important;border-radius:4pt;}}'
               +'*{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}'
@@ -8780,7 +8784,7 @@ View in the Database & Settings tab.`);
                               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); geocodeLocation(overview.location); } }}
                               className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
                               placeholder="Search a place or address (e.g. Burleigh Heads QLD) or paste coordinates…" />
-                            <button type="button" onClick={() => geocodeLocation(overview.location)}
+                            <button data-allow-locked="1" type="button" onClick={() => geocodeLocation(overview.location)}
                               className="print:hidden flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700">
                               <i className={`fa-solid ${geoStatus === 'searching' ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'} text-xs`}></i> Search
                             </button>
@@ -8795,7 +8799,7 @@ View in the Database & Settings tab.`);
                           {/* Ops map toolbar — hidden on heatmap tab */}
                           <div className={`${opsMapSubTab === 'heatmap' ? 'hidden' : ''} flex flex-wrap gap-2 mb-3 bg-slate-100 p-2 rounded-lg border border-slate-200 print:hidden`}>
                             {/* Existing site tools */}
-                            <button onClick={() => setMapInteraction('pan')} className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-md transition-colors ${mapInteraction === 'pan' ? 'bg-white shadow-sm font-medium text-blue-700' : 'text-slate-600 hover:bg-slate-200'}`}><i className="fa-solid fa-arrow-pointer"></i> Pan</button>
+                            <button data-allow-locked="1" onClick={() => setMapInteraction('pan')} className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-md transition-colors ${mapInteraction === 'pan' ? 'bg-white shadow-sm font-medium text-blue-700' : 'text-slate-600 hover:bg-slate-200'}`}><i className="fa-solid fa-arrow-pointer"></i> Pan</button>
                             <button onClick={() => setMapInteraction('draw')} className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-md transition-colors ${mapInteraction === 'draw' ? 'bg-white shadow-sm font-medium text-green-700' : 'text-slate-600 hover:bg-slate-200'}`}><i className="fa-solid fa-draw-polygon"></i> Ops Area</button>
                             <button onClick={() => setMapInteraction('launch')} className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-md transition-colors ${mapInteraction === 'launch' ? 'bg-white shadow-sm font-medium text-blue-700' : 'text-slate-600 hover:bg-slate-200'}`}><i className="fa-solid fa-plane-departure"></i> Launch</button>
                             <button onClick={() => setMapInteraction('recovery')} className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-md transition-colors ${mapInteraction === 'recovery' ? 'bg-white shadow-sm font-medium text-purple-700' : 'text-slate-600 hover:bg-slate-200'}`}><i className="fa-solid fa-plane-arrival"></i> Recovery</button>
@@ -10561,7 +10565,7 @@ View in the Database & Settings tab.`);
                                   <input type="checkbox" data-rf-enable="1" checked={rf.enabled !== false} onChange={() => setRf(r => ({ ...r, enabled: r.enabled === false }))} className="rounded" />
                                   Include in this job &amp; the PDF
                                 </label>
-                                {rf.enabled !== false && rf.items.some(i => i.side === 'us') && <button type="button" data-rf-copy="1" onClick={() => { const t = rfSummaryText(rf.items, db.companyProfile && db.companyProfile.name); try { navigator.clipboard.writeText(t); } catch (e) {} alert('Copied — paste it to the other teams:\n\n' + t); }} className="text-xs px-2.5 py-1 rounded border border-violet-300 bg-white text-violet-800 hover:bg-violet-100"><i className="fa-regular fa-copy mr-1"></i>Copy our bands to send</button>}
+                                {rf.enabled !== false && rf.items.some(i => i.side === 'us') && <button data-allow-locked="1" type="button" data-rf-copy="1" onClick={() => { const t = rfSummaryText(rf.items, db.companyProfile && db.companyProfile.name); try { navigator.clipboard.writeText(t); } catch (e) {} alert('Copied — paste it to the other teams:\n\n' + t); }} className="text-xs px-2.5 py-1 rounded border border-violet-300 bg-white text-violet-800 hover:bg-violet-100"><i className="fa-regular fa-copy mr-1"></i>Copy our bands to send</button>}
                               </div>
                               {rf.enabled === false ? <p className="text-xs text-slate-500 mt-1">Optional — switch on for events with broadcast, lighting, pyro or other drone teams. Left off, it doesn't print.</p> : (<>
                               <p className="text-xs text-slate-500 mt-1">List every transmitter on site — ours and everyone else's (broadcast, lighting, light sticks, other drone teams). Overlaps show in red on the chart. Frequencies are editable; for DJI, confirm the MHz shown in the goggles.</p>
@@ -10648,10 +10652,10 @@ View in the Database & Settings tab.`);
                               <button onClick={handleLoadTemplate} className="flex items-center gap-1 text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition-colors shadow-sm">
                                 <i className="fa-solid fa-cloud-arrow-down"></i> Load
                               </button>
-                              <button onClick={handleSaveTemplate} className="flex items-center gap-1 text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700 transition-colors shadow-sm">
+                              <button data-allow-locked="1" onClick={handleSaveTemplate} className="flex items-center gap-1 text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700 transition-colors shadow-sm">
                                 <i className="fa-solid fa-floppy-disk"></i> Save
                               </button>
-                              <button onClick={() => setShowMatrix(!showMatrix)} className="flex items-center gap-1 text-sm bg-slate-200 text-slate-700 border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-300 transition-colors shadow-sm">
+                              <button data-allow-locked="1" onClick={() => setShowMatrix(!showMatrix)} className="flex items-center gap-1 text-sm bg-slate-200 text-slate-700 border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-300 transition-colors shadow-sm">
                                 <i className="fa-solid fa-table-cells"></i> {showMatrix ? 'Hide Matrix' : 'Show Matrix'}
                               </button>
                             </div>
@@ -11190,7 +11194,7 @@ View in the Database & Settings tab.`);
                                     </div>
                                     <div className="flex items-center gap-1.5 flex-shrink-0">
                                       <code className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">{a.icao}</code>
-                                      <button onClick={() => { try { navigator.clipboard?.writeText(a.icao).catch(()=>{}); } catch(e){} }} title="Copy ICAO code"
+                                      <button data-allow-locked="1" onClick={() => { try { navigator.clipboard?.writeText(a.icao).catch(()=>{}); } catch(e){} }} title="Copy ICAO code"
                                         className="text-[10px] text-slate-500 hover:text-blue-600 border border-slate-200 rounded px-1.5 py-0.5 bg-white hover:bg-blue-50">Copy</button>
                                       <button onClick={() => addToNotams(a)} title="Add this location to the NOTAM box"
                                         className="text-[10px] text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 font-semibold">+ NOTAMs</button>
@@ -11435,10 +11439,10 @@ View in the Database & Settings tab.`);
                         <div className="mt-6 flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-200 print:hidden">
                           <span className="text-xs text-slate-400 italic">Step 3 of 4</span>
                           <div className="flex gap-3 flex-wrap justify-end">
-                            <button onClick={handleSaveApprovedPlan} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+                            <button data-allow-locked="1" onClick={handleSaveApprovedPlan} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
                               <i className="fa-solid fa-folder-plus"></i> Save Approved Plan
                             </button>
-                            <button onClick={() => generatePDF()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+                            <button data-allow-locked="1" onClick={() => generatePDF()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
                               <i className="fa-solid fa-download"></i> Save PDF
                             </button>
                             <button data-allow-locked="1" onClick={() => handleNavigate('log')} className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
