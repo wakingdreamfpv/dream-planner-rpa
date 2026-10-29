@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.0';
+        const APP_VERSION = '6.1';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8459,6 +8459,48 @@ View in the Database & Settings tab.`);
               </div>);
           };
 
+          // ── v6.1: Database & Settings section menu ──────────────────────────────
+          // Built from the visible section headings, so it follows whatever the tab shows.
+          const [dbSections, setDbSections] = useState([]);
+          const [dbActiveSection, setDbActiveSection] = useState('');
+          const scanDbSections = () => {
+            const root = document.querySelector('[data-db-root]'); if (!root) return;
+            const seen = {}, out = [];
+            root.querySelectorAll('h2, h3').forEach(h => {
+              if (!h.offsetParent || h.closest('[data-no-db-menu]')) return;
+              let label = (h.innerText || '').split('\n')[0].split(' · ')[0].replace(/\s+/g, ' ').trim();
+              if (!label || label.length > 60) return;
+              if (seen[label]) return; seen[label] = 1;
+              if (!h.id) h.id = 'dbsec-' + label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+              out.push({ id: h.id, label });
+            });
+            setDbSections(prev => JSON.stringify(prev) === JSON.stringify(out) ? prev : out);
+          };
+          useEffect(() => {
+            if (activeTab !== 'database') return;
+            const t = setTimeout(scanDbSections, 60);
+            const root = document.querySelector('[data-db-root]');
+            let mo = null, pend = null;
+            if (root && window.MutationObserver) { mo = new MutationObserver(() => { clearTimeout(pend); pend = setTimeout(scanDbSections, 150); }); mo.observe(root, { childList: true, subtree: true }); }
+            const onScroll = () => {
+              const hs = dbSectionsRef.current.map(s => document.getElementById(s.id)).filter(Boolean);
+              let cur = hs.length ? hs[0].id : '';
+              hs.forEach(h => { if (h.getBoundingClientRect().top < 140) cur = h.id; });
+              setDbActiveSection(cur);
+            };
+            window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
+            return () => { clearTimeout(t); clearTimeout(pend); mo && mo.disconnect(); window.removeEventListener('scroll', onScroll); };
+          }, [activeTab]); // eslint-disable-line
+          const dbSectionsRef = useRef([]); dbSectionsRef.current = dbSections;
+          const jumpToDbSection = (id) => {
+            const h = document.getElementById(id); if (!h) return;
+            const card = h.closest('.rounded-xl, .rounded-lg') || h;
+            const y = card.getBoundingClientRect().top + window.scrollY - 16;
+            window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+            setDbActiveSection(id);
+            card.classList.add('wd-req-flash'); setTimeout(() => card.classList.remove('wd-req-flash'), 1400);
+          };
+
           // ==========================================
           // --- RENDER COMPONENT ---
           // ==========================================
@@ -8669,7 +8711,8 @@ View in the Database & Settings tab.`);
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 grid grid-cols-1 md:grid-cols-4 gap-8">
                 
                 <div className="md:col-span-1 print:hidden">
-                  <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200 sticky top-8">
+                  <div className="md:sticky md:top-8 space-y-3">
+                  <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
                     <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'preliminary' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-circle-check text-lg w-6"></i> Preliminary
                       {reqMissing('preliminary').length > 0 && <span data-sidebar-left="preliminary" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('preliminary').length} left</span>}
@@ -8700,6 +8743,23 @@ View in the Database & Settings tab.`);
                       )}
                     </button>
                   </nav>
+                  {/* v6.1: Database & Settings section menu (scrolls on its own) */}
+                  {activeTab === 'database' && dbSections.length > 0 && (
+                    <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-db-menu="1">
+                      <div className="px-4 py-2.5 border-b border-slate-100 text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                        <i className="fa-solid fa-list text-indigo-500"></i> Jump to a section
+                      </div>
+                      <div className="overflow-y-auto p-2 space-y-0.5 wd-db-menu" style={{ maxHeight: 'calc(100vh - 31rem)', minHeight: '10rem' }}>
+                        {dbSections.map(sec => (
+                          <button key={sec.id} type="button" data-allow-locked="1" data-db-jump={sec.id} onClick={() => jumpToDbSection(sec.id)}
+                            className={`w-full text-left text-[13px] px-3 py-1.5 rounded-md transition-colors ${dbActiveSection === sec.id ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
+                            {sec.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  </div>
                 </div>
 
                 <div className="md:col-span-3 space-y-8 print:col-span-4 print:space-y-0">
@@ -12114,7 +12174,16 @@ View in the Database & Settings tab.`);
                     />
                   </div>
 
-                  <div className={`${activeTab === 'database' ? 'block' : 'hidden'} print:hidden`}>
+                  <div className={`${activeTab === 'database' ? 'block' : 'hidden'} print:hidden`} data-db-root="1">
+                    {dbSections.length > 0 && (
+                      <div className="md:hidden sticky top-0 z-20 -mx-1 mb-3 bg-slate-50/95 backdrop-blur px-1 py-2">
+                        <select data-db-jump-select="1" value="" onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
+                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white shadow-sm">
+                          <option value="">Jump to a section…</option>
+                          {dbSections.map(sec => <option key={sec.id} value={sec.id}>{sec.label}</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="bg-indigo-50 px-6 py-4 border-b border-indigo-100 flex items-center gap-2">
                         <i className="fa-solid fa-database text-lg text-indigo-600"></i>
@@ -12515,6 +12584,18 @@ View in the Database & Settings tab.`);
                               })}
                             </div>
                           )}
+                        </div>
+
+                        {/* v6.1: Users & logins (cloud accounts, crew roles, invites) */}
+                        <div className="border border-violet-200 rounded-xl overflow-hidden shadow-sm" data-users-section="1">
+                          <div className="bg-violet-50 px-4 py-3 border-b border-violet-200 flex items-center gap-2">
+                            <i className="fa-solid fa-user-shield text-violet-600"></i>
+                            <h3 className="font-semibold text-violet-900 text-sm">Users &amp; logins</h3>
+                          </div>
+                          <div className="p-4">
+                            <div id="wd-account-settings-slot" className="wd-acct-slot"></div>
+                            <p className="wd-acct-offline text-sm text-slate-500">Logins, crew roles and invites work in the online planner (planner.wakingdreamfpv.com). This offline copy keeps everything on this device only.</p>
+                          </div>
                         </div>
 
                         {/* Company Profile */}

@@ -45,7 +45,12 @@ function SignIn({ sb, onDone }) {
         setMsg({ ok: true, t: `If ${email.trim()} has a login, a password reset link is on its way.` });
       }
     } catch (err) {
-      setMsg({ ok: false, t: /signups not allowed|not found|Invalid login/i.test(err.message || '') ? 'That email isn\'t set up, or the password is wrong. Logins are invite-only — ask the CRP for an invite.' : (err.message || String(err)) });
+      const m = err.message || String(err);
+      setMsg({ ok: false, t: /signups not allowed|not found|user not found/i.test(m) ? `There's no login for ${email.trim()} yet. Logins are invite-only: the CRP invites this email (Users & logins › Invite crew, or Supabase › Authentication › Users › Send invitation), then you accept the email.`
+        : /Invalid login/i.test(m) ? 'Wrong email or password. Try "Email me a link" or "Forgot password".'
+        : /rate limit|too many/i.test(m) ? 'Too many emails sent just now. Wait a minute and try again.'
+        : /not confirmed/i.test(m) ? 'This login hasn\'t been accepted yet. Open the invitation email and click Accept invitation first.'
+        : m });
     } finally { setBusy(false); }
   };
   return (
@@ -178,8 +183,10 @@ function MyProfile({ sb, me, onSaved }) {
 function AccountPanel() {
   const sb = getSupabase();
   const [session, setSession] = useState(null), [me, setMe] = useState(null), [open, setOpen] = useState(false), [needPw, setNeedPw] = useState(null), [loading, setLoading] = useState(true);
-  const [slot, setSlot] = useState(null);
+  const [slot, setSlot] = useState(null), [slot2, setSlot2] = useState(null);
   useEffect(() => { const find = () => { const s = document.getElementById('wd-account-slot'); if (s) setSlot(s); else setTimeout(find, 300); }; find(); }, []);
+  // v6.1: the same panel inline in Database & Settings › Users & logins
+  useEffect(() => { let t; const find = () => { const s = document.getElementById('wd-account-settings-slot'); if (s) setSlot2(s); else t = setTimeout(find, 500); }; find(); return () => clearTimeout(t); }, []);
   const loadMe = useCallback(async (s) => {
     if (!s) { setMe(null); return; }
     const { data } = await sb.from('profiles').select('id,email,full_name,role,active').eq('id', s.user.id).maybeSingle();
@@ -203,17 +210,7 @@ function AccountPanel() {
         : <><i className="fa-solid fa-user"></i>{loading ? '…' : 'Sign in'}</>}
     </button>
   );
-  const floating = !slot && (
-    <div className="fixed bottom-3 left-3 z-[1500] print:hidden" style={{ background: '#2d0a5e', borderRadius: 10 }}>{chip}</div>
-  );
-  return (
-    <>
-      {slot ? createPortal(chip, slot) : floating}
-      {open && (
-        <Modal title={needPw ? 'Set your password' : session ? 'Account & crew' : 'Sign in'} onClose={() => setOpen(false)}>
-          {needPw && session ? <SetPassword sb={sb} why={needPw} onDone={() => { setNeedPw(null); history.replaceState(null, '', location.pathname + location.search); }} />
-            : !session ? <SignIn sb={sb} onDone={() => {}} />
-            : (
+  const account = session && (
               <div className="space-y-5">
                 <div className="flex items-center gap-3">
                   <span className="w-11 h-11 rounded-full bg-violet-600 text-white flex items-center justify-center font-bold">{initials(me && me.full_name, session.user.email)}</span>
@@ -226,7 +223,26 @@ function AccountPanel() {
                 {me && me.active && me.role !== 'crp' && <MyProfile sb={sb} me={me} onSaved={() => loadMe(session)} />}
                 <p className="text-[11px] text-slate-400"><i className="fa-solid fa-circle-info mr-1"></i>Jobs and plans are still saved on this device for now; cloud sync of jobs comes in a later update.</p>
               </div>
-            )}
+  );
+  const inline = slot2 && createPortal(
+    <div data-testid="account-inline">
+      {loading ? <p className="text-sm text-slate-500">Checking your login…</p>
+        : !session ? <SignIn sb={sb} onDone={() => {}} />
+        : account}
+    </div>, slot2);
+  const floating = !slot && (
+    <div className="fixed bottom-3 left-3 z-[1500] print:hidden" style={{ background: '#2d0a5e', borderRadius: 10 }}>{chip}</div>
+  );
+  return (
+    <>
+      {slot ? createPortal(chip, slot) : floating}
+      {inline}
+      {open && (
+        <Modal title={needPw ? 'Set your password' : session ? 'Account & crew' : 'Sign in'} onClose={() => setOpen(false)}>
+          {needPw && session ? <SetPassword sb={sb} why={needPw} onDone={() => { setNeedPw(null); history.replaceState(null, '', location.pathname + location.search); }} />
+            : !session ? <SignIn sb={sb} onDone={() => {}} />
+            : account
+}
         </Modal>
       )}
     </>

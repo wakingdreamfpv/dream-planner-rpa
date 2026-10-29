@@ -6,3 +6,6 @@
 
 /* v6.0: flash a field after jumping to it from the mandatory-items list */
 .wd-req-flash { outline: 3px solid #fb7185; outline-offset: 4px; border-radius: 8px; transition: outline-color 1.2s ease; }
+
+/* v6.1: hide the offline note once the account panel has rendered into the settings slot */
+.wd-acct-slot:not(:empty) + .wd-acct-offline { display: none; }
