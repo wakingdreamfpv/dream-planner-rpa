@@ -11,7 +11,13 @@ the same way.
 1. Create a free GitHub account, then a **private** repository called `dream-planner-rpa`.
 2. Upload this project folder. Don't upload `node_modules`, `dist` or `dist-single`; `.gitignore` excludes them.
 
-## 2. Connect Cloudflare Pages (one-off)
+## 2. Connect Cloudflare (one-off)
+
+The project is deployed as a **Cloudflare Worker with static assets** (Workers Builds): build command `npm run build`,
+deploy command `npx wrangler deploy`. `wrangler.jsonc` in the repo tells it to publish `dist/` as a single-page app.
+(The older "Pages" flow below also works if you prefer it.)
+
+### Older alternative: Cloudflare Pages
 1. Create a free Cloudflare account, then go to **Workers & Pages › Create › Pages › Connect to Git** and pick the repo.
 2. Build settings:
    - Framework preset: **Vite**

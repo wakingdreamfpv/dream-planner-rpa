@@ -1,0 +1,11 @@
+// Cloudflare Workers static-assets deploy (used by `npx wrangler deploy` in Workers Builds).
+// The build (npm run build) outputs the hosted app to ./dist; this publishes it as a static site.
+{
+  "name": "dream-planner-rpa",
+  "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./dist",
+    // single-page app: unknown paths serve index.html
+    "not_found_handling": "single-page-application"
+  }
+}
