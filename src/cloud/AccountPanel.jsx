@@ -105,17 +105,19 @@ function CrewAdmin({ sb, me }) {
     if (p.error || i.error) setErr((p.error || i.error).message); else { setErr(''); setPeople(p.data || []); setInvites(i.data || []); }
   }, [sb]);
   useEffect(() => { load(); }, [load]);
+  // v6.2: the planner's Crew & users lists invite through the shared bridge; follow its updates here
+  useEffect(() => { const h = () => { const c = window.wdCloud; if (c) { setPeople(c.people); setInvites(c.invites); } }; window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
   const invite = async (e) => {
     e.preventDefault(); setBusy(true); setNote(null);
     const { data, error } = await sb.functions.invoke('invite-user', { body: { ...form, email: form.email.trim().toLowerCase(), redirectTo: location.origin + location.pathname } });
     setBusy(false);
     const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
     if (error || (data && data.error)) setNote({ ok: false, t: msg || 'Invite failed' });
-    else { setNote({ ok: true, t: msg || 'Invite sent' }); setForm({ full_name: '', email: '', role: form.role }); load(); }
+    else { setNote({ ok: true, t: msg || 'Invite sent' }); setForm({ full_name: '', email: '', role: form.role }); load(); window.wdCloud && window.wdCloud.refresh(); }
   };
   const update = async (id, patch) => {
     const { error } = await sb.from('profiles').update(patch).eq('id', id);
-    if (error) setNote({ ok: false, t: error.message }); else load();
+    if (error) setNote({ ok: false, t: error.message }); else { load(); window.wdCloud && window.wdCloud.refresh(); }
   };
   const pending = invites.filter(i => !i.accepted_user_id);
   return (
@@ -203,6 +205,28 @@ function AccountPanel() {
     return () => sub && sub.subscription && sub.subscription.unsubscribe();
   }, [sb, loadMe]);
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
+  // v6.2: share the CRP's view of logins with the planner (Crew & users shows login status and Invite per person)
+  useEffect(() => {
+    let dead = false;
+    const publish = (v) => { window.wdCloud = v; window.dispatchEvent(new Event('wd-cloud')); };
+    if (!(me && me.active && me.role === 'crp')) { publish(null); return; }
+    const refresh = async () => {
+      const [p, i] = await Promise.all([
+        sb.from('profiles').select('id,email,full_name,role,active').order('full_name'),
+        sb.from('invites').select('email,full_name,role,invited_at,accepted_user_id').order('invited_at', { ascending: false }),
+      ]);
+      if (dead || p.error || i.error) return;
+      publish({ isCrp: true, people: p.data || [], invites: i.data || [], refresh, invite });
+    };
+    const invite = async ({ full_name, email, role }) => {
+      const { data, error } = await sb.functions.invoke('invite-user', { body: { full_name, email: String(email || '').trim().toLowerCase(), role, redirectTo: location.origin + location.pathname } });
+      const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
+      await refresh();
+      return (error || (data && data.error)) ? { ok: false, msg: msg || 'Invite failed' } : { ok: true, msg: msg || 'Invite sent' };
+    };
+    refresh();
+    return () => { dead = true; };
+  }, [sb, me]);
   const chip = (
     <button type="button" onClick={() => setOpen(true)} data-testid="account-chip"
       className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors">

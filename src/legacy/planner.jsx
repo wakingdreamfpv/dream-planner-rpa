@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.1';
+        const APP_VERSION = '6.2';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8211,7 +8211,7 @@ View in the Database & Settings tab.`);
             if (!name) return;
             if (db.pilots.some(p => p.name.toLowerCase() === name.toLowerCase())) { alert(`"${name}" is already in the pilot database.`); return; }
             updateDb('pilots', [...db.pilots, { ...dbInputPilot, name }]);
-            setDbInputPilot({ name: '', arn: '' });
+            setDbInputPilot({ name: '', arn: '', email: '' });
           };
 
           const handleExportFlightHours = () => {
@@ -8492,6 +8492,29 @@ View in the Database & Settings tab.`);
             return () => { clearTimeout(t); clearTimeout(pend); mo && mo.disconnect(); window.removeEventListener('scroll', onScroll); };
           }, [activeTab]); // eslint-disable-line
           const dbSectionsRef = useRef([]); dbSectionsRef.current = dbSections;
+          // v6.2: login status per crew member (from the account panel's bridge; CRP only, hosted app only)
+          const [, setCloudTick] = useState(0);
+          useEffect(() => { const h = () => setCloudTick(t => t + 1); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
+          const LoginBadge = ({ name, email, role }) => {
+            const c = window.wdCloud; if (!c || !c.isCrp) return null;
+            const em = String(email || '').trim().toLowerCase(), nm = String(name || '').trim().toLowerCase();
+            const same = (x) => (em && String(x.email || '').toLowerCase() === em) || (!em && nm && String(x.full_name || '').trim().toLowerCase() === nm);
+            const prof = c.people.find(same);
+            const inv = !prof && c.invites.find(i => !i.accepted_user_id && same(i));
+            const ROLE = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
+            const send = async () => {
+              let e = em;
+              if (!e) { e = String(window.prompt(`Email address for ${name}'s login:`) || '').trim().toLowerCase(); if (!e) return; if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { alert('That doesn\'t look like an email address.'); return; } }
+              if (!window.confirm(`Send ${name} an invite to log in as ${ROLE[role]}?\n\n${e}\n\nThey get an email to set a password. They'll only see their own details until jobs move to the cloud.`)) return;
+              if (role === 'pilot' && !em) updateDb('pilots', db.pilots.map(x => x.name === name ? { ...x, email: e } : x));
+              const res = await c.invite({ full_name: name, email: e, role });
+              alert(res.ok ? `Invite sent to ${e}.` : `Invite not sent: ${res.msg}`);
+            };
+            const pill = 'flex w-fit items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-1';
+            if (prof) return <span data-login={prof.active ? 'active' : 'inactive'} className={`${pill} ${prof.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`} title={prof.email}><i className="fa-solid fa-user-check"></i>{prof.active ? 'Login · ' + ROLE[prof.role] : 'Login deactivated'}</span>;
+            if (inv) return <span data-login="invited" className={`${pill} bg-amber-100 text-amber-800`} title={inv.email}><i className="fa-solid fa-envelope"></i>Invited · not signed in yet</span>;
+            return <button type="button" data-login="none" data-invite-person={name} onClick={send} className={`${pill} bg-violet-100 text-violet-800 hover:bg-violet-200`}><i className="fa-solid fa-user-plus"></i>Invite to log in</button>;
+          };
           const jumpToDbSection = (id) => {
             const h = document.getElementById(id); if (!h) return;
             const card = h.closest('.rounded-xl, .rounded-lg') || h;
@@ -12590,9 +12613,89 @@ View in the Database & Settings tab.`);
                         <div className="border border-violet-200 rounded-xl overflow-hidden shadow-sm" data-users-section="1">
                           <div className="bg-violet-50 px-4 py-3 border-b border-violet-200 flex items-center gap-2">
                             <i className="fa-solid fa-user-shield text-violet-600"></i>
-                            <h3 className="font-semibold text-violet-900 text-sm">Users &amp; logins</h3>
+                            <h3 className="font-semibold text-violet-900 text-sm">Crew &amp; users</h3>
                           </div>
-                          <div className="p-4">
+                          <div className="p-4 space-y-4">
+                            <p className="text-xs text-slate-500">Everyone you fly with. A login is optional: invite the people who should sign plans or log flights from their own device. Without one they stay records you manage.</p>
+                            {/* Pilots DB */}
+                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
+                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-users text-slate-400"></i> Pilots</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-1">
+                                    {db.pilots.map((p, i) => (
+                                        <div key={i} className="text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
+                                            {isEditingDb('pilots', i) ? (
+                                                <div className="space-y-1.5">
+                                                    <input type="text" value={editDbDraft.name} onChange={e=>setEditDbDraft(prev=>({...prev, name: e.target.value}))} placeholder="Pilot Name" className="w-full text-sm border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                                    <input type="text" value={editDbDraft.arn || ''} onChange={e=>setEditDbDraft(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono" />
+                                                    <input type="tel" value={editDbDraft.phone || ''} onChange={e=>setEditDbDraft(prev=>({...prev, phone: e.target.value}))} placeholder="Phone (optional)" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                                    <input type="email" value={editDbDraft.email || ''} onChange={e=>setEditDbDraft(prev=>({...prev, email: e.target.value}))} placeholder="Email (needed for a login)" className="w-full text-xs border rounded px-2 py-1" />
+                                                    <div>
+                                                        <label className="text-[10px] uppercase font-bold text-slate-400">Medical Expiry</label>
+                                                        <input type="date" value={editDbDraft.medicalExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, medicalExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] uppercase font-bold text-slate-400">RePL / Training Currency Due</label>
+                                                        <input type="date" value={editDbDraft.trainingExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, trainingExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                                    </div>
+                                                    <div className="flex gap-1.5 justify-end pt-0.5">
+                                                        <button onClick={saveEditDb} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition-colors"><i className="fa-solid fa-check"></i> Save</button>
+                                                        <button onClick={cancelEditDb} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1 rounded transition-colors">Cancel</button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                      <span className="font-semibold text-slate-800">{p.name}</span><br/>
+                                                      <span className="text-xs text-slate-500 font-mono mt-0.5">ARN: {p.arn}{p.phone ? ' · ' + p.phone : ''}</span>
+                                                      {p.email && <span className="block text-xs text-slate-500 truncate">{p.email}</span>}
+                                                      <LoginBadge name={p.name} email={p.email} role="pilot" onNeedEmail={() => startEditDb('pilots', i, p)} />
+                                                      {(() => {
+                                                        const medBadge = getExpiryBadge(p.medicalExpiry);
+                                                        const trainBadge = getExpiryBadge(p.trainingExpiry);
+                                                        if (!medBadge && !trainBadge) return null;
+                                                        return (
+                                                          <div className="flex flex-wrap gap-1 mt-1">
+                                                            {medBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${medBadge.cls}`} title="Medical Certificate">Med: {medBadge.text}</span>}
+                                                            {trainBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${trainBadge.cls}`} title="RePL / Training Currency">Currency: {trainBadge.text}</span>}
+                                                          </div>
+                                                        );
+                                                      })()}
+                                                    </div>
+                                                    <div className="flex gap-0.5 flex-shrink-0">
+                                                        <button onClick={() => startEditDb('pilots', i, p)} className="text-slate-400 hover:text-blue-500 transition-colors p-1"><i className="fa-solid fa-pen text-sm"></i></button>
+                                                        <button onClick={() => { if (window.confirm(`Delete pilot "${p.name}"? This cannot be undone.`)) updateDb('pilots', db.pilots.filter(x => x.name !== p.name)); }} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                    <input type="text" value={dbInputPilot.name} onChange={e=>setDbInputPilot(prev=>({...prev, name: e.target.value}))} placeholder="New Pilot Name" className="flex-1 min-w-[8rem] text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                    <input type="text" value={dbInputPilot.arn} onChange={e=>setDbInputPilot(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="flex-1 min-w-[8rem] text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                    <input type="email" value={dbInputPilot.email || ''} onChange={e=>setDbInputPilot(prev=>({...prev, email: e.target.value}))} placeholder="Email (optional)" className="flex-1 min-w-[10rem] text-sm border rounded px-3 py-1.5" />
+                                    <button onClick={handleAddPilotDirect} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
+                                </div>
+                            </div>
+                                {/* Observers DB */}
+                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
+                                    <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-eye text-slate-400"></i> Observers / spotters</h3>
+                                    <ul className="mb-4 space-y-2 max-h-60 overflow-y-auto pr-1">
+                                        {db.observers.map((c, i) => (
+                                            <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
+                                                <span className="font-medium text-slate-700 flex-1">{c}</span>
+                                                <span className="mr-1 -mt-1"><LoginBadge name={c} role="observer" /></span>
+                                                <button onClick={() => updateDb('observers', db.observers.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
+                                            </li>
+                                        ))}
+                                        {db.observers.length === 0 && <li className="text-sm text-slate-400 italic text-center py-2">No observers saved.</li>}
+                                    </ul>
+                                    <div className="flex gap-2">
+                                        <input type="text" value={dbInputObserver} onChange={e=>setDbInputObserver(e.target.value)} placeholder="New Observer Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                        <button onClick={() => {if(dbInputObserver) {updateDb('observers', [...db.observers, dbInputObserver]); setDbInputObserver('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
+                                    </div>
+                                </div>
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-2 border-t border-slate-100">Logins</div>
                             <div id="wd-account-settings-slot" className="wd-acct-slot"></div>
                             <p className="wd-acct-offline text-sm text-slate-500">Logins, crew roles and invites work in the online planner (planner.wakingdreamfpv.com). This offline copy keeps everything on this device only.</p>
                           </div>
@@ -12795,81 +12898,8 @@ View in the Database & Settings tab.`);
                                     </div>
                                 </div>
 
-                                {/* Observers DB */}
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                    <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-eye text-slate-400"></i> Visual Observers</h3>
-                                    <ul className="mb-4 space-y-2 max-h-32 overflow-y-auto pr-1">
-                                        {db.observers.map((c, i) => (
-                                            <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                                <span className="font-medium text-slate-700">{c}</span>
-                                                <button onClick={() => updateDb('observers', db.observers.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                            </li>
-                                        ))}
-                                        {db.observers.length === 0 && <li className="text-sm text-slate-400 italic text-center py-2">No observers saved.</li>}
-                                    </ul>
-                                    <div className="flex gap-2">
-                                        <input type="text" value={dbInputObserver} onChange={e=>setDbInputObserver(e.target.value)} placeholder="New Observer Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                        <button onClick={() => {if(dbInputObserver) {updateDb('observers', [...db.observers, dbInputObserver]); setDbInputObserver('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                    </div>
-                                </div>
                             </div>
 
-                            {/* Pilots DB */}
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-users text-slate-400"></i> Personnel / Pilots</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-48 overflow-y-auto pr-1">
-                                    {db.pilots.map((p, i) => (
-                                        <div key={i} className="text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                            {isEditingDb('pilots', i) ? (
-                                                <div className="space-y-1.5">
-                                                    <input type="text" value={editDbDraft.name} onChange={e=>setEditDbDraft(prev=>({...prev, name: e.target.value}))} placeholder="Pilot Name" className="w-full text-sm border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    <input type="text" value={editDbDraft.arn || ''} onChange={e=>setEditDbDraft(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono" />
-                                                    <input type="tel" value={editDbDraft.phone || ''} onChange={e=>setEditDbDraft(prev=>({...prev, phone: e.target.value}))} placeholder="Phone (optional)" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    <div>
-                                                        <label className="text-[10px] uppercase font-bold text-slate-400">Medical Expiry</label>
-                                                        <input type="date" value={editDbDraft.medicalExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, medicalExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    </div>
-                                                    <div>
-                                                        <label className="text-[10px] uppercase font-bold text-slate-400">RePL / Training Currency Due</label>
-                                                        <input type="date" value={editDbDraft.trainingExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, trainingExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    </div>
-                                                    <div className="flex gap-1.5 justify-end pt-0.5">
-                                                        <button onClick={saveEditDb} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition-colors"><i className="fa-solid fa-check"></i> Save</button>
-                                                        <button onClick={cancelEditDb} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1 rounded transition-colors">Cancel</button>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="flex justify-between items-center">
-                                                    <div>
-                                                      <span className="font-semibold text-slate-800">{p.name}</span><br/>
-                                                      <span className="text-xs text-slate-500 font-mono mt-0.5">ARN: {p.arn}{p.phone ? ' · ' + p.phone : ''}</span>
-                                                      {(() => {
-                                                        const medBadge = getExpiryBadge(p.medicalExpiry);
-                                                        const trainBadge = getExpiryBadge(p.trainingExpiry);
-                                                        if (!medBadge && !trainBadge) return null;
-                                                        return (
-                                                          <div className="flex flex-wrap gap-1 mt-1">
-                                                            {medBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${medBadge.cls}`} title="Medical Certificate">Med: {medBadge.text}</span>}
-                                                            {trainBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${trainBadge.cls}`} title="RePL / Training Currency">Currency: {trainBadge.text}</span>}
-                                                          </div>
-                                                        );
-                                                      })()}
-                                                    </div>
-                                                    <div className="flex gap-0.5 flex-shrink-0">
-                                                        <button onClick={() => startEditDb('pilots', i, p)} className="text-slate-400 hover:text-blue-500 transition-colors p-1"><i className="fa-solid fa-pen text-sm"></i></button>
-                                                        <button onClick={() => { if (window.confirm(`Delete pilot "${p.name}"? This cannot be undone.`)) updateDb('pilots', db.pilots.filter(x => x.name !== p.name)); }} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="flex gap-2 mt-3">
-                                    <input type="text" value={dbInputPilot.name} onChange={e=>setDbInputPilot(prev=>({...prev, name: e.target.value}))} placeholder="New Pilot Name" className="w-1/2 text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <input type="text" value={dbInputPilot.arn} onChange={e=>setDbInputPilot(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="w-1/2 text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <button onClick={handleAddPilotDirect} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                </div>
-                            </div>
 
                             {/* RPAS Fleet DB */}
                             <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
