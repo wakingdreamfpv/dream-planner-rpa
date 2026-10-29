@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.55';
+        const APP_VERSION = '6.0';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -458,7 +458,7 @@
           const p = prev || {}, out = { ...p }, changes = [];
           const short = (s) => { s = String(s).replace(/\s+/g, ' ').trim(); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
           Object.keys(incoming || {}).forEach(k => {
-            if (k === 'rpaLogs') return;
+            if (k === 'rpaLogs' || k === 'yn60') return;
             const v = incoming[k], label = CREW_FIELD_LABELS[k] || k;
             if (typeof v === 'boolean') { if (v && !p[k]) { out[k] = true; changes.push(label + ': ticked'); } return; }
             if (v == null || typeof v === 'object') return;
@@ -767,6 +767,22 @@
             </span>
           </div>
         );
+
+        // v6.0: required marker. `why` explains the source (e.g. "CASA MOS 10.04").
+        const ReqMark = ({ why }) => <span className="text-rose-500 font-bold ml-0.5 print:hidden" title={'Required' + (why ? ' — ' + why : '')} data-req-mark="1">*</span>;
+        // v6.0: Yes / No answer with a third "not answered" state (click the chosen answer again to clear it).
+        const YesNo = ({ label, value, onChange, req, why, small = false, yesText = 'Yes', noText = 'No' }) => (
+          <div className={`flex items-center justify-between gap-3 ${small ? 'py-1.5' : 'py-2'}`} data-yn="1">
+            <span className={`text-sm ${small ? '' : 'font-medium'} text-gray-700`}>{label}{req && <ReqMark why={why} />}</span>
+            <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden flex-shrink-0 print:hidden" role="group">
+              <button type="button" data-yn-yes="1" aria-pressed={value === true} onClick={() => onChange(value === true ? null : true)}
+                className={`px-3 py-1 text-xs font-bold transition-colors ${value === true ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-emerald-50'}`}>{yesText}</button>
+              <button type="button" data-yn-no="1" aria-pressed={value === false} onClick={() => onChange(value === false ? null : false)}
+                className={`px-3 py-1 text-xs font-bold border-l border-slate-300 transition-colors ${value === false ? 'bg-amber-500 text-white' : 'bg-white text-slate-500 hover:bg-amber-50'}`}>{noText}</button>
+            </div>
+          </div>
+        );
+        const ynBadge = (v) => v === true ? <span className="print-badge-yes">YES</span> : v === false ? <span className="print-badge-no">NO</span> : <span style={{color:'#94a3b8'}}>—</span>;
 
         // Smart ComboBox with + button to add new values to the database
         // onAdd(value) is called when user confirms adding a new entry
@@ -1113,11 +1129,24 @@
         const stableStringify = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v === undefined ? null : v)
           : Array.isArray(v) ? '[' + v.map(stableStringify).join(',') + ']'
           : '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+        // v6.0 Yes / No answers. Before v6.0 an untouched switch saved as false, so "No" and "not answered" looked
+        // the same. On load, a false with nothing written beside it becomes "not answered"; a false with a reason stays No.
+        const migrateYesNo = (cl, cn) => { if (!cn || cn.__yn60) return cl;
+          Object.keys(cl || {}).forEach(k => { if (cl[k] === false && !String(cn[k] || '').trim()) cl[k] = null; });
+          cn.__yn60 = '1'; return cl; };
+        const migrateYesNoApproval = (ap) => { if (ap.yn60) return ap;
+          if (ap.sopMitigatesAll === false && !String(ap.unmitigatedHazards || '').trim()) ap.sopMitigatesAll = null;
+          if (ap.jsaCorrect === false && !String(ap.jsaChanges || '').trim()) ap.jsaCorrect = null; ap.yn60 = 1; return ap; };
+        const migrateYesNoLog = (lg) => { if (lg.yn60) return lg;
+          if (lg.weatherMeetsLimitations === false) lg.weatherMeetsLimitations = null;
+          if (lg.conductedIAW === false && !String(lg.conductedChanges || '').trim()) lg.conductedIAW = null;
+          if (lg.serviceableAtEnd === false && !String(lg.defects || '').trim()) lg.serviceableAtEnd = null; lg.yn60 = 1; return lg; };
         // v5.55: the CRP's own review answers (SOP mitigates / JSA correct) are left out, so answering them after the
         // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
         const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, legacy) => {
           const ap = { ...(approval || {}) };
-          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog'].forEach(k => delete ap[k]);
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable'].forEach(k => delete ap[k]);
+          if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           return { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
         };
@@ -3876,14 +3905,8 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [navModal, setNavModal] = useState(null); // { to: string, warnings: [{field, label, severity}] }
 
           // Call this instead of setActiveTab directly from Next buttons
-          const handleNavigate = (to) => {
-            const warnings = getValidationWarnings(activeTab);
-            if (warnings.length > 0) {
-              setNavModal({ to, warnings });
-            } else {
-              setActiveTab(to);
-            }
-          };
+          // v6.0: no pop-up on Next. Missing mandatory items are listed at the top of each section and on the sidebar.
+          const handleNavigate = (to) => { setActiveTab(to); try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} };
           
           const defaultPilots = [
             { name: "John Doe", arn: "1122334" },
@@ -4035,7 +4058,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                   fleet: defaultFleet, observers: defaultObservers,
                   batteries: ["3S-550-2025-01","3S-550-2025-02","3S-550-2025-03","3S-550-2025-04","3S-550-2025-05","3S-550-2025-06","3S-550-2025-07","3S-550-2025-08","3S-550-2025-09","3S-550-2025-10","3S-720-0226-11","3S-720-0226-12","3S-720-0226-13","3S-720-0226-14","3S-720-0226-15","3S-720-0226-16","6s-2200—2025-17","6s-2200—2025-18","6s-2200—2025-19","6s-2200—2025-20","6s-1850—2025-21","6s-1850—2025-22","6s-1850—2025-23","6s-1850—2025-24","6s-1550—2025-25","6s-1480—2025-26","6s-1600—2025-27","6s-1600—2025-28","6s-1600—2025-29","6s-1600—2025-30","4S-850-2025-31","4S-850-2025-32","4S-850-2025-33","4S-850-2025-34","Mavic 4-35","Mavic 4-36","Mavic 4-37","MINI 4-38","MINI 4-39","MINI 4-40","Avata 2-41","Avata 2-42","Avata 2-43","3S-660-0226-44","3S-660-0226-45","3S-660-0226-46","3S-660-0226-47","3S-660-0226-48","3S-660-0226-49","3S-660-0226-50","MINI 5-51","MINI 5-52","MINI 5-53","6s-1850—2026-54","6s-1850—2026-55","6s-1850—2026-56","6s-1760—2026-57","6s-1760—2026-58","6s-5600—2026-59","6s-7000—2025-60","6s-7000—2025-61"],
                   rpaBatteries: defaultRpaBatteries, savedPlans: [], completedFlights: [],
-                  companyProfile: { name: 'Waking Dream FPV', reocNumber: '', companyArn: '1266519', address: '', phone: '', email: 'ops@wakingdreamfpv.com.au', logo: '' },
+                  companyProfile: { name: '', reocNumber: '', companyArn: '', address: '', phone: '', email: '', logo: '' }, // v6.0: blank on a new database
                   draftPlans: [], compliance: {},
                   speedMeasures: ['Throttle limited to 60-70% in OONP zone','OSD speed display active and monitored','VO briefed on max speed limits','Turtle/slow mode engaged','Hardware speed cap configured in FC','Geofencing speed limit active'],
                   heightMeasures: ['OSD altitude warning set to 30m','Barometer altitude hold active','Visual height markers on ground','VO provides altitude callouts','RTH height set below max limit','Drone altitude displayed on monitor'],
@@ -4080,7 +4103,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               rpaBatteries: defaultRpaBatteries,
               savedPlans: [],
               completedFlights: [],
-              companyProfile: { name: 'Waking Dream FPV', reocNumber: '', companyArn: '1266519', address: '', phone: '', email: 'ops@wakingdreamfpv.com.au', logo: '' },
+              companyProfile: { name: '', reocNumber: '', companyArn: '', address: '', phone: '', email: '', logo: '' }, // v6.0: blank on a new database
               draftPlans: [],
               compliance: {},
               speedMeasures: ['Throttle limited to 60-70% in OONP zone','OSD speed display active and monitored','VO briefed on max speed limits','Turtle/slow mode engaged','Hardware speed cap configured in FC','Geofencing speed limit active'],
@@ -4362,7 +4385,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const ov=overview;
             const fmtD=(iso)=>{if(!iso)return'—';try{const[y,m,d]=iso.split('-');return d+'/'+m+'/'+y;}catch(e){return iso;}};
             const val=(v)=>(v&&String(v).trim())?String(v):'—';
-            const yn=(v)=>v?'✓  YES':'NO';
+            const yn=(v)=>v===true?'✓  YES':v===false?'NO':'—';
             const ri=(l,c)=>{const lv=riskLevel(l,c),b=RISK_BANDS[lv];return{t:lv==='MEDIUM'?'MED':lv,c:b.fg,b:b.bg,bd:b.bd};};
             const PU='#2d0a5e',NV='#1e3a5f',S2='#e2e8f0',S5='#f8fafc',S6='#475569',S8='#1e293b';
             const esc=(s)=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -4392,12 +4415,12 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               ['sopMitigates','SOP/JSA mitigates all hazards'],['notNearEmergency','Not near emergency operations'],['weightUnder2kg','MTOW ≤ 2 kg']];
             // Ticked = green ✓. Not ticked but a mitigating approval written (e.g. "EVLOS 1") = green, approved.
             // Not ticked and nothing written = grey dot (not confirmed). No red crosses.
-            const clHtml=getPrelimItems().map((it,i)=>{const v=isPrelimChecked(it.id);const n=checklistNotes[it.id];const appr=!v&&n&&n!=='__checked__'&&String(n).trim();
-              const mark=v?'<span style="color:#16a34a;">✓</span>':appr?'<span style="color:#16a34a;">✓</span>':'<span style="color:#94a3b8;">•</span>';
+            const clHtml=getPrelimItems().map((it,i)=>{const a=prelimAns(it.id);const v=a==='yes';const n=prelimWhy(it.id);const appr=a==='no'&&n;
+              const mark=v?'<span style="color:#16a34a;">✓</span>':appr?'<span style="color:#16a34a;">✓</span>':a==='no'?'<span style="color:#b45309;">!</span>':'<span style="color:#94a3b8;">•</span>';
               return '<div style="display:flex;align-items:baseline;gap:5pt;padding:3pt 5pt;border-bottom:1px solid '+S2+';background:'+(appr?'#ecfdf5':(i%2?S5:'white'))+';">'
                 +'<span style="font-size:11pt;font-weight:700;flex-shrink:0;width:12pt;">'+mark+'</span>'
                 +'<div><div style="font-size:8pt;'+(!v&&!appr?'color:#64748b;':'')+'">'+esc(it.label)+'</div>'
-                +(appr?'<div style="display:inline-block;margin-top:1pt;font-size:7pt;font-weight:700;color:#166534;background:#bbf7d0;border:1px solid #4ade80;border-radius:3pt;padding:0 4pt;">Approved: '+esc(n)+'</div>':'')+'</div></div>';}).join('');
+                +(appr?'<div style="display:inline-block;margin-top:1pt;font-size:7pt;font-weight:700;color:#166534;background:#bbf7d0;border:1px solid #4ade80;border-radius:3pt;padding:0 4pt;">Not met — covered by: '+esc(n)+'</div>':a==='no'?'<div style="font-size:7pt;font-weight:700;color:#92400e;">Not met — see JSA</div>':'')+'</div></div>';}).join('');
 
             // Risk rows
             const rHtml=risks.map(r=>{const ir=ri(r.initL,r.initC);const rr=ri(r.resL,r.resC);
@@ -4847,7 +4870,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
             // Header
             P.push('<div class="pdfhdr" style="background:'+PU+';color:white;padding:10pt 14pt;margin:-20mm -14mm 14pt;display:flex;justify-content:space-between;align-items:flex-start;">');
-            P.push('<div><div style="font-size:13pt;font-weight:800;">'+esc(val(co.name||'Waking Dream FPV'))+'</div>'
+            P.push('<div><div style="font-size:13pt;font-weight:800;">'+esc(val(co.name||'Dream Planner RPA'))+'</div>'
               +'<div style="font-size:7pt;opacity:.7;margin-top:2pt;">RPAS Operations Planner · ReOC: '+esc(val(co.reocNumber))+' · ARN: '+esc(val(co.companyArn))+' · '+esc(val(co.email))+'</div></div>');
             P.push('<div style="text-align:right;"><div style="font-size:10pt;font-weight:700;">'+esc(val(ov.identifier))+'</div>'
               +'<div style="font-size:7pt;opacity:.7;">'+esc(fmtD(ov.operationDate))+(ov.operationEndDate?' – '+esc(fmtD(ov.operationEndDate)):'')+'</div></div></div>');
@@ -4869,8 +4892,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               r2('Start Date & Time',fmtD(ov.operationDate)+' '+(ov.startTime||''),'End Date & Time',fmtD(ov.operationEndDate||ov.operationDate)+' '+(ov.endTime||'')),
               cRow('Task Overview',ov.taskOverview),
               r2('Location / Site',ov.location,'Max Height Planned',ov.maxHeightPlanned?ov.maxHeightPlanned+' ft AGL':'—'),
-              r2('RPAS Fleet',(ov.rpaTypes||[]).join(', ')||'—','Support Personnel',ov.supportPersonnel),
-              r2('RPIC',ov.rpic,'Client',ov.clientName)));
+              r2('RPAS Fleet',(ov.rpaTypes||[]).join(', ')||'—','Remote Pilot Station',ov.remotePilotStation||'—'),
+              r2('RPIC',ov.rpic+((db.pilots||[]).find(p=>p.name===ov.rpic&&p.arn)?' (ARN '+(db.pilots.find(p=>p.name===ov.rpic).arn)+')':''),'Crew / Support',ov.supportPersonnel),
+              r2('Flight Mode',(jsa.operationTypes||[]).join(', ')+(jsa.timeOfDay&&jsa.timeOfDay!=='DAY'?' · '+jsa.timeOfDay.toLowerCase():''),'Client',ov.clientName)));
             P.push(sitesHtml);
 
             P.push(sub('Preliminary Assessment Checklist'));
@@ -4998,6 +5022,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // S3
             P.push(sHd(3,'Approval & Flight Authorisation'));
             P.push(grid(r2('SOP Mitigates All Hazards',yn(approval.sopMitigatesAll),'JSA Correct',yn(approval.jsaCorrect)),
+              r2('RPA Serviceable (release)',yn(approval.releaseServiceable===true?true:approval.releaseServiceable===false?false:null),'Remote Pilot Station',overview.remotePilotStation||'—'),
               r2('Approved Date(s)',approval.approvedDates,'Approved RPA Types',(approval.approvedTypes||[]).join(', ')||'—'),
               cRow('Other Restrictions / Limitations',approval.otherRestrictions),
               cRow('Official Authorisation Reference',approval.officialAuth),
@@ -5171,15 +5196,15 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const emptyMap = { launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] };
             const md = { ...emptyMap, ...(clone(plan.mapData) || {}) };
             setOverview(plan.overview ? { ...getInitialOverview(), ...clone(plan.overview) } : getInitialOverview());
-            setChecklist(plan.checklist ? clone(plan.checklist) : getInitialChecklist());
-            setChecklistNotes(plan.checklistNotes ? clone(plan.checklistNotes) : getInitialChecklistNotes());
+            { const cl = plan.checklist ? clone(plan.checklist) : getInitialChecklist(), cn = plan.checklistNotes ? clone(plan.checklistNotes) : getInitialChecklistNotes();
+              migrateYesNo(cl, cn); setChecklist(cl); setChecklistNotes(cn); }
             setJsa(plan.jsa ? { ...getInitialJsa(), ...clone(plan.jsa) } : getInitialJsa());
             setRisks(plan.risks ? clone(plan.risks) : []);
-            setApproval(plan.approval ? { ...getInitialApproval(), ...clone(plan.approval) } : getInitialApproval());
+            setApproval(plan.approval ? migrateYesNoApproval({ ...getInitialApproval(), ...clone(plan.approval) }) : getInitialApproval());
             setOonp({ ...getInitialOonp(), ...(clone(plan.oonp) || {}) });
             setOonpMode(plan.oonpMode !== undefined ? !!plan.oonpMode : false);
             if (Array.isArray(plan.oonpSections)) setOonpSections([...plan.oonpSections]);
-            setLog(plan.log ? { ...getInitialLog(), ...clone(plan.log) } : getInitialLog());
+            setLog(plan.log ? migrateYesNoLog({ ...getInitialLog(), ...clone(plan.log) }) : getInitialLog());
             setMapData(md);
             setSiteAttachments(clone(plan.siteAttachments) || []);
             setBallistic(plan.ballistic ? clone(plan.ballistic) : { enabled: false, height: 5.0, speed: 5.0 });
@@ -5246,20 +5271,21 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           }; };
 
           const getInitialChecklist = () => ({
-            maintain30m: false, clearOfPopulous: false, below400ft: false, outsideRestricted: false,
-            outsideNoFlyTowered: false, outsideNoFlyRelevant: false, dayVMC: false, vlos: false,
-            sopMitigates: false, notNearEmergency: false, weightUnder2kg: false
+            maintain30m: null, clearOfPopulous: null, below400ft: null, outsideRestricted: null,
+            outsideNoFlyTowered: null, outsideNoFlyRelevant: null, dayVMC: null, vlos: null,
+            sopMitigates: null, notNearEmergency: null, weightUnder2kg: null
           });
 
           const getInitialChecklistNotes = () => ({
             maintain30m: '', clearOfPopulous: '', below400ft: '', outsideRestricted: '',
             outsideNoFlyTowered: '', outsideNoFlyRelevant: '', dayVMC: '', vlos: '',
-            sopMitigates: '', notNearEmergency: '', weightUnder2kg: ''
+            sopMitigates: '', notNearEmergency: '', weightUnder2kg: '', __yn60: '1'
           });
 
           const getInitialJsa = () => ({
             airspaceClass: '', maxOperatingHeightAgl: '', suaMaxAltitudeAmsl: '', nearbyAerodromes: '',
             emergencyContacts: { enabled: true, rows: DEFAULT_EMERGENCY_CONTACTS(), notes: '' },
+            rfPlan: { enabled: false, items: [], notes: '' },
             radioFrequencies: '', operationTypes: ['VLOS'], timeOfDay: 'DAY', airspaceHazards: '', groundHazards: '',
             evlosObserver: '', oonpPathway: '', oonpCustomPathway: '',
             // Pathway 1 checklist
@@ -5272,16 +5298,16 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           });
 
           const getInitialApproval = () => ({
-            sopMitigatesAll: false, unmitigatedHazards: '', jsaCorrect: false, jsaChanges: '',
+            yn60: 1, sopMitigatesAll: null, unmitigatedHazards: '', jsaCorrect: null, jsaChanges: '',
             otherRestrictions: '', officialAuth: '', notams: '', flightAuthApproved: false,
             approvedDates: '', approvedTypes: [], crpName: '', crpArn: '', crpDate: '', crpSigned: false,
             rpName: '', rpArn: '', rpDate: '', rpSigned: false
           });
 
           const getInitialLog = () => ({
-            weatherMeetsLimitations: false, weatherDetails: '', onsiteValidationInitials: '',
-            planningErrors: '', conductedIAW: false, conductedChanges: '', comments: '',
-            serviceableAtEnd: false, defects: '', crewRP: '', crewSecondRP: '', crewObserver: '',
+            yn60: 1, weatherMeetsLimitations: null, weatherDetails: '', onsiteValidationInitials: '',
+            planningErrors: '', conductedIAW: null, conductedChanges: '', comments: '',
+            serviceableAtEnd: null, defects: '', crewRP: '', crewSecondRP: '', crewObserver: '',
             preflightChecks: { enabled: false, items: {} },
             rpaLogs: {} 
           });
@@ -5317,17 +5343,30 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
           };
 
-          const isPrelimChecked = (id) => {
-            if (id in checklist) return checklist[id];
-            return checklistNotes[id] === '__checked__';
-          };
+          // v6.0: answers are Yes / No / unanswered. Built-in items: checklist[id] true | false | null, reason in checklistNotes[id].
+          // Custom items: checklistNotes[id] '__checked__' (Yes) | '__no__' (No) | '' and reason in checklistNotes[id + '__why'].
+          const prelimAns = (id) => (id in checklist)
+            ? (checklist[id] === true ? 'yes' : checklist[id] === false ? 'no' : null)
+            : (checklistNotes[id] === '__checked__' ? 'yes' : checklistNotes[id] === '__no__' ? 'no' : null);
+          const prelimWhy = (id) => { const v = checklistNotes[(id in checklist) ? id : id + '__why']; return v && v !== '__checked__' && v !== '__no__' ? String(v) : ''; };
+          const setPrelimAns = (id, a) => { if (id in checklist) setChecklist(p => ({ ...p, [id]: a === 'yes' ? true : a === 'no' ? false : null }));
+            else setChecklistNotes(p => ({ ...p, [id]: a === 'yes' ? '__checked__' : a === 'no' ? '__no__' : '' })); };
+          const setPrelimWhy = (id, v) => setChecklistNotes(p => ({ ...p, [(id in checklist) ? id : id + '__why']: v }));
+          const isPrelimChecked = (id) => prelimAns(id) === 'yes';
           const [jsa, setJsa] = useState(getInitialJsa());
           const [approval, setApproval] = useState(getInitialApproval());
           const [log, setLog] = useState(getInitialLog());
 
           const [newClientDetails, setNewClientDetails] = useState({ email: '', phone: '' });
 
-          const isJsaRequired = Object.values(checklist).some(val => val === false);
+          const isJsaRequired = getPrelimItems().some(it => prelimAns(it.id) === 'no');
+          const prelimAllAnswered = getPrelimItems().every(it => prelimAns(it.id));
+          const [oonpToolsOpen, setOonpToolsOpen] = useState(false);
+          // v6.0: fold optional cards to a one-line summary (remembered on this device)
+          const [folds, setFolds] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_folds') || '{}') || {}; } catch (e) { return {}; } });
+          const folded = (k, dflt = false) => (k in folds ? !!folds[k] : dflt);
+          const toggleFold = (k, dflt = false) => setFolds(p => { const n = { ...p, [k]: !(k in p ? !!p[k] : dflt) }; try { localStorage.setItem('wd_folds', JSON.stringify(n)); } catch (e) {} return n; });
+          const FoldBtn = ({ k, dflt }) => <button type="button" data-allow-locked="1" data-fold={k} onClick={() => toggleFold(k, dflt)} className="text-xs font-semibold px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 print:hidden">{folded(k, dflt) ? <><i className="fa-solid fa-chevron-down mr-1 text-[9px]"></i>Show</> : <><i className="fa-solid fa-chevron-up mr-1 text-[9px]"></i>Hide</>}</button>;
 
           const [mapInteraction, setMapInteraction] = useState('pan');
           const [mapData, setMapData] = useState({ launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] });
@@ -5617,7 +5656,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [risks, setRisks] = useState([
             { id: Date.now(), hazard: '', existingControls: '', initL: '3', initC: 'C', additionalControls: '', resL: '1', resC: 'D' }
           ]);
-          const [showMatrix, setShowMatrix] = useState(true);
+          const [showMatrix, setShowMatrix] = useState(false); // v6.0: hidden until asked for (still prints)
           const [selectedTemplate, setSelectedTemplate] = useState('');
 
           // Custom risk templates are stored in the database (so they're in backups); older builds kept them in browser storage only
@@ -6880,7 +6919,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 </head>
 <body>
 <div class="top-bar">
-  <span class="logo">Waking Dream FPV</span>
+  <span class="logo">${String((db.companyProfile && db.companyProfile.name) || "Dream Planner RPA").replace(/</g, "&lt;")}</span>
   <span class="badge">Crew Flight Log</span>
 </div>
 <div class="job-card">
@@ -7471,16 +7510,15 @@ View in the Database & Settings tab.`);
 
           const toggleChecklist = (key) => setChecklist(prev => ({...prev, [key]: !prev[key]}));
           
+          // v6.0: answers every unanswered item Yes; when all are answered it clears them (after asking).
           const handleCheckAll = () => {
-            const allChecked = Object.values(checklist).every(Boolean);
-            const newState = {};
-            Object.keys(checklist).forEach(k => newState[k] = !allChecked);
-            setChecklist(newState);
-            if (!allChecked) {
-                const emptyNotes = {};
-                Object.keys(checklistNotes).forEach(k => emptyNotes[k] = '');
-                setChecklistNotes(emptyNotes);
+            const items = getPrelimItems();
+            if (items.every(it => prelimAns(it.id))) {
+              if (!window.confirm('Clear all checklist answers (and their reasons)?')) return;
+              items.forEach(it => { setPrelimAns(it.id, null); setPrelimWhy(it.id, ''); });
+              return;
             }
+            items.forEach(it => { if (!prelimAns(it.id)) setPrelimAns(it.id, 'yes'); });
           };
 
           const addRiskRow = () => setRisks(prev => [...prev, {
@@ -8338,8 +8376,87 @@ View in the Database & Settings tab.`);
                   setRisks([{ id: Date.now(), hazard: '', existingControls: '', initL: '3', initC: 'C', additionalControls: '', resL: '1', resC: 'D' }]);
                   clearMap();
                   setHeatStrokes([]); setHeatExclZones([]); amendmentsRef.current = [];
+                  // v6.0: these used to carry over from the previous job (OONP set-up, KE/ballistic, attachments)
+                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]);
+                  setBallistic({ enabled: false, height: 5.0, speed: 5.0 });
+                  setKeData({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
+                  setExtraKe([]); setOonpToolsOpen(false);
                   setActiveTab('preliminary');
               }
+          };
+
+          // ── v6.0 Mandatory record items ───────────────────────────────────────
+          // "release" items must be done before the flight can be approved; "log" items complete the record after flying.
+          // Sources: CASA Part 101 MOS 10.04 (operational release), 10.05 (operational log), 10.06 (remote pilot log),
+          // and the operator's Flight Record form F.1 (ops manual).
+          const reqItems = (() => {
+            const t = (v) => String(v == null ? '' : v).trim();
+            const ops = jsa.operationTypes || [];
+            const needsAuth = ops.some(o => o !== 'VLOS') || (jsa.timeOfDay && jsa.timeOfDay !== 'DAY');
+            const coords = (arr) => (arr || []).some(x => t(x && x.coords));
+            const flights = Object.values(log.rpaLogs || {}).flatMap(l => (l && l.flights) || []);
+            const flown = flights.filter(fl => t(fl.duration) || fl.telemetry);
+            const withHeight = flown.filter(fl => fl.telemetry || (fl.segments || []).some(sg => t(sg.maxFt) || t(sg.height)) || t(fl.maxFt) || t(fl.maxHeight));
+            const I = (tab, id, label, ok, why, stage = 'release') => ({ tab, id, label, ok: !!ok, why, stage });
+            return [
+              I('preliminary', 'taskOverview', 'Nature & purpose of the operation (task overview)', t(overview.taskOverview), '__M4__'),
+              I('preliminary', 'assessor', 'Preliminary assessor', t(overview.assessor), 'Ops manual F.1 Section 1'),
+              I('preliminary', 'rpic', 'RPIC (name and ARN)', t(overview.rpic), '__M4__'),
+              I('preliminary', 'dates', 'Date and times', t(overview.operationDate) && t(overview.startTime) && t(overview.endTime), '__M4__'),
+              I('preliminary', 'rpaTypes', 'RPA type / model', (overview.rpaTypes || []).length, '__M4__'),
+              I('preliminary', 'rps', 'Remote pilot station (controller / GCS)', t(overview.remotePilotStation), '__M4__'),
+              I('preliminary', 'maxHeight', 'Maximum height (ft AGL)', t(overview.maxHeightPlanned) || t(jsa.maxOperatingHeightAgl), '__M4__'),
+              I('preliminary', 'launch', 'Launch location (coordinates)', coords(overview.launchSites), '__M4__; __M5__'),
+              I('preliminary', 'recovery', 'Recovery / landing location (coordinates)', coords(overview.recoverySites), '__M4__; __M5__'),
+              I('preliminary', 'prelim', 'Preliminary assessment checklist answered', prelimAllAnswered, 'Ops manual F.1 Section 1'),
+              I('jsa', 'opTypes', 'Flight mode (VLOS / EVLOS / BVLOS …)', ops.length, '__M4__'),
+              I('jsa', 'airspace', 'Airspace class', t(jsa.airspaceClass), 'Ops manual F.1 Section 2'),
+              I('jsa', 'risks', 'Risk register (at least one hazard)', risks.some(x => t(x.hazard)), 'Ops manual F.1 Section 2'),
+              I('approval', 'sopMitigatesAll', 'SOP mitigates all hazards? (Yes, or No + hazards)', approval.sopMitigatesAll === true || (approval.sopMitigatesAll === false && t(approval.unmitigatedHazards)), 'Ops manual F.1 Section 3'),
+              I('approval', 'jsaCorrect', 'Preliminary assessment / JSA correct? (Yes, or No + changes)', approval.jsaCorrect === true || (approval.jsaCorrect === false && t(approval.jsaChanges)), 'Ops manual F.1 Section 3'),
+              ...(needsAuth ? [I('approval', 'officialAuth', 'CASA approval / instrument relied on (' + [...ops.filter(o => o !== 'VLOS'), jsa.timeOfDay !== 'DAY' ? 'night' : ''].filter(Boolean).join(', ') + ')', t(approval.officialAuth), '__M4__')] : []),
+              I('approval', 'notams', 'NOTAMs checked (paste them, or write "Nil")', t(approval.notams), 'Ops manual F.1 Section 3'),
+              I('approval', 'releaseServiceable', 'Statement: RPA serviceable for this operation', approval.releaseServiceable === true, '__M4__'),
+              I('approval', 'approvedDates', 'Date(s) approved', t(approval.approvedDates), 'Ops manual F.1 Section 3'),
+              I('approval', 'approvedTypes', 'RPA types approved', (approval.approvedTypes || []).length, 'Ops manual F.1 Section 3'),
+              I('log', 'weatherMeetsLimitations', 'Weather within limitations? (answer)', log.weatherMeetsLimitations === true || log.weatherMeetsLimitations === false, 'Ops manual F.1 Part A', 'log'),
+              I('log', 'onsiteValidationInitials', 'On-site validation (RP initials)', t(log.onsiteValidationInitials), '__M5__: confirmation of the operational release', 'log'),
+              I('log', 'conductedIAW', 'Conducted as planned? (Yes, or No + changes)', log.conductedIAW === true || (log.conductedIAW === false && t(log.conductedChanges)), '__M5__: confirmation of, or change to, the release', 'log'),
+              I('log', 'serviceableAtEnd', 'RPA serviceable at end? (Yes, or No + defects)', log.serviceableAtEnd === true || (log.serviceableAtEnd === false && t(log.defects)), '__M5__: whether the RPA became unserviceable', 'log'),
+              I('log', 'crewRP', 'Remote pilot who flew', t(log.crewRP), 'CASA MOS 10.06 (remote pilot log)', 'log'),
+              I('log', 'flights', 'Each flight with its length and height AGL', flown.length && withHeight.length === flown.length, '__M5__ and 10.06: each flight segment, its height AGL, and its length', 'log'),
+            ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }));
+          })();
+          const showOonpTools = (jsa.operationTypes || []).includes('OONP') || oonpMode || !!keData.enabled || !!ballistic.enabled || extraKe.length > 0 || oonpToolsOpen;
+          const reqMissing = (tab) => reqItems.filter(x => !x.ok && (!tab || x.tab === tab));
+          const reqWhy = (id) => { const x = reqItems.find(i => i.id === id); return x ? x.why : ''; };
+          // Jump to a required field: switch tab, scroll to it, focus its first input and flash it.
+          const jumpToReq = (id) => {
+            const it = reqItems.find(x => x.id === id); if (it && it.tab !== activeTab) setActiveTab(it.tab);
+            setTimeout(() => {
+              const el = document.querySelector('[data-req-anchor="' + id + '"]'); if (!el) return;
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              const box = el.closest('[data-req-box]') || el.parentElement || el;
+              const inp = (el.matches('input,textarea,select') ? el : box.querySelector('input:not([readonly]),textarea,select,button[data-yn-yes]'));
+              try { inp && inp.focus({ preventScroll: true }); } catch (e) {}
+              box.classList.add('wd-req-flash'); setTimeout(() => box.classList.remove('wd-req-flash'), 1600);
+            }, 120);
+          };
+          // Compact "still to record" strip at the top of each section.
+          const ReqStrip = ({ tab, title }) => {
+            const m = reqMissing(tab);
+            if (!m.length) return (
+              <div className="mx-6 mt-4 text-xs font-semibold text-emerald-700 flex items-center gap-1.5 print:hidden" data-req-strip={tab} data-req-left="0">
+                <i className="fa-solid fa-circle-check"></i> All mandatory items for this section are recorded.
+              </div>);
+            return (
+              <div className="mx-6 mt-4 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 print:hidden" data-req-strip={tab} data-req-left={m.length}>
+                <div className="text-xs font-bold text-rose-800 mb-1.5"><span className="text-rose-500">*</span> {m.length} mandatory item{m.length === 1 ? '' : 's'} {title || 'still to record'} <span className="font-normal text-rose-700/80">· tap one to go to it</span></div>
+                <div className="flex flex-wrap gap-1.5">
+                  {m.map(x => <button key={x.id} type="button" data-allow-locked="1" data-req-chip={x.id} title={x.why} onClick={() => jumpToReq(x.id)}
+                    className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-rose-200 text-rose-800 hover:bg-rose-100">{x.label}</button>)}
+                </div>
+              </div>);
           };
 
           // ==========================================
@@ -8409,7 +8526,7 @@ View in the Database & Settings tab.`);
                   <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-center justify-center p-4 print:hidden" data-testid="welcome">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
                       <div className="px-6 py-5 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
-                        <div className="text-xs uppercase tracking-widest opacity-75">Waking Dream FPV</div>
+                        <div className="text-xs uppercase tracking-widest opacity-75">{(db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA'}</div>
                         <h2 className="text-2xl font-bold mt-1">Welcome to Dream Planner</h2>
                         <p className="text-sm opacity-85 mt-1">RPAS operations planner, JSA and Flight Records · v{APP_VERSION}</p>
                       </div>
@@ -8527,7 +8644,7 @@ View in the Database & Settings tab.`);
                   <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
                       <i className="fa-solid fa-plane-departure text-2xl" style={{color:"#c084fc"}}></i>
-                      {(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Waking Dream FPV'}
+                      {(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Dream Planner RPA'}
                     </h1>
                     <p className="text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>
@@ -8547,9 +8664,6 @@ View in the Database & Settings tab.`);
                     </button>
                   </div>
                 </div>
-                <div className="bg-amber-500 text-amber-950 text-xs font-semibold px-4 py-1.5 text-center">
-                  <i className="fa-solid fa-flask mr-1"></i> Waking Dream FPV — Internal Operations Tool — All NAIPS / CASA data must be verified before flight.
-                </div>
               </header>
 
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 grid grid-cols-1 md:grid-cols-4 gap-8">
@@ -8558,16 +8672,19 @@ View in the Database & Settings tab.`);
                   <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200 sticky top-8">
                     <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'preliminary' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-circle-check text-lg w-6"></i> Preliminary
+                      {reqMissing('preliminary').length > 0 && <span data-sidebar-left="preliminary" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('preliminary').length} left</span>}
                     </button>
                     <button data-allow-locked="1" onClick={() => setActiveTab('jsa')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'jsa' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className={`fa-solid fa-triangle-exclamation text-lg w-6 ${isJsaRequired ? 'text-amber-500' : ''}`}></i> JSA & Risk
-                      {isJsaRequired && <span className="ml-auto bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs">Required</span>}
+{reqMissing('jsa').length > 0 && <span data-sidebar-left="jsa" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('jsa').length} left</span>}
                     </button>
                     <button data-allow-locked="1" onClick={() => setActiveTab('approval')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'approval' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-file-signature text-lg w-6"></i> Authorisation
+                      {reqMissing('approval').length > 0 && <span data-sidebar-left="approval" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('approval').length} left</span>}
                     </button>
                     <button data-allow-locked="1" onClick={() => setActiveTab('log')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'log' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-clipboard-list text-lg w-6"></i> Flight Log
+                      {reqMissing('log').length > 0 && <span data-sidebar-left="log" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('log').length} left</span>}
                     </button>
                     <div className="border-t border-slate-100 my-2"></div>
                     <button data-allow-locked="1" onClick={() => setActiveTab('compliance')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'compliance' ? 'bg-teal-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
@@ -8595,6 +8712,7 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-lines text-lg text-blue-600 print:hidden"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 1: Operations Overview & Preliminary Assessment</h2>
                       </div>
+                      <ReqStrip tab="preliminary" />
 
                       {/* PRINT: Section page title */}
                       <div className="hidden print:flex print-page-title">
@@ -8696,7 +8814,7 @@ View in the Database & Settings tab.`);
                             <input type="text" name="operationName" value={overview.operationName || ''} onChange={handleOverviewChange} placeholder="e.g. Riverfire 2026, Wedding Reel, Site Survey" className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Preliminary Assessor Name</label>
+                            <label data-req-anchor="assessor" className="block text-sm font-medium text-gray-700 mb-1">Preliminary Assessor Name<ReqMark why={reqWhy('assessor')} /></label>
                             <div className="flex gap-2">
                               <ComboBox name="assessor" value={overview.assessor} onChange={handleOverviewChange} onBlur={e => handleAutoSave('assessors', e.target.value)} onAdd={makeAddHandler('assessors')} options={db.assessors} placeholder="Select or type assessor name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             </div>
@@ -8719,7 +8837,7 @@ View in the Database & Settings tab.`);
                           </div>
                           
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Remote Pilot in Command (RPIC)</label>
+                            <label data-req-anchor="rpic" className="block text-sm font-medium text-gray-700 mb-1">Remote Pilot in Command (RPIC)<ReqMark why={reqWhy('rpic')} /></label>
                             <ComboBox name="rpic" value={overview.rpic} onChange={handleOverviewChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select or type RPIC..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             {(() => {
                               const p = db.pilots.find(px => px.name === overview.rpic);
@@ -8738,15 +8856,19 @@ View in the Database & Settings tab.`);
                               <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             </div>
                           </div>
+                          <div className="md:col-span-2" data-req-box="1">
+                            <label data-req-anchor="rps" className="block text-sm font-medium text-gray-700 mb-1">Remote Pilot Station <span className="text-xs text-slate-400 font-normal">(controller / ground control station, e.g. RadioMaster TX15 ELRS, DJI RC 2)</span><ReqMark why={reqWhy('rps')} /></label>
+                            <ComboBox name="remotePilotStation" value={overview.remotePilotStation || ''} onChange={handleOverviewChange} onBlur={e => handleAutoSave('remoteStations', e.target.value)} onAdd={v => handleAutoSave('remoteStations', v)} options={db.remoteStations || []} placeholder="Select or type the controller…" className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                          </div>
 
                           <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Task Overview</label>
+                            <label data-req-anchor="taskOverview" className="block text-sm font-medium text-gray-700 mb-1">Task Overview <span className="text-xs text-slate-400 font-normal">(nature and purpose of the operation)</span><ReqMark why={reqWhy('taskOverview')} /></label>
                             <textarea name="taskOverview" value={overview.taskOverview} onChange={handleOverviewChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"></textarea>
                           </div>
                           <div className="md:col-span-2 flex flex-col md:flex-row gap-6">
                             <div className="flex-1">
                               <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
-                                <span>Date & Time</span>
+                                <span data-req-anchor="dates">Date & Time<ReqMark why={reqWhy('dates')} /></span>
                                 <a href={generateGCalLink()} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 font-normal bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition-colors print:hidden">
                                   <i className="fa-regular fa-calendar"></i> Add to Google Calendar
                                 </a>
@@ -8791,7 +8913,7 @@ View in the Database & Settings tab.`);
                             </div>
                             
                             <div className="flex-1">
-                              <label className="block text-sm font-medium text-gray-700 mb-1">Proposed RPAS Fleet (Multi-Select)</label>
+                              <label data-req-anchor="rpaTypes" className="block text-sm font-medium text-gray-700 mb-1">Proposed RPAS Fleet (Multi-Select)<ReqMark why={reqWhy('rpaTypes')} /></label>
                               <div className="flex gap-2 mb-2 print:hidden">
                                 <select 
                                   onChange={(e) => {
@@ -9313,7 +9435,7 @@ View in the Database & Settings tab.`);
                         <div className="mt-8 print:break-inside-avoid">
                           {/* Header with Edit toggle */}
                           <div className="flex items-center justify-between mb-4 border-b pb-2 print:hidden">
-                            <h3 className="text-md font-semibold text-slate-800">Preliminary Assessment Checklist</h3>
+                            <h3 data-req-anchor="prelim" className="text-md font-semibold text-slate-800">Preliminary Assessment Checklist<ReqMark why={reqWhy('prelim')} /></h3>
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => setEditingPrelimChecklist(e => !e)}
@@ -9323,7 +9445,7 @@ View in the Database & Settings tab.`);
                               </button>
                               {!editingPrelimChecklist && (
                                 <button onClick={handleCheckAll} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
-                                  {getPrelimItems().every(it => isPrelimChecked(it.id)) ? 'Uncheck All' : 'Check All'}
+                                  {getPrelimItems().every(it => prelimAns(it.id)) ? 'Clear answers' : 'Yes to the rest'}
                                 </button>
                               )}
                             </div>
@@ -9359,47 +9481,42 @@ View in the Database & Settings tab.`);
                             <div className="print-subsection-heading">Preliminary Assessment Checklist</div>
                             <div className="print-checklist">
                               {getPrelimItems().map(item => {
-                                const checked = isPrelimChecked(item.id);
-                                const note = checklistNotes[item.id];
-                                const showNote = !checked && note && note !== '__checked__' && String(note).trim();
+                                const a = prelimAns(item.id);
+                                const why = prelimWhy(item.id);
+                                const covered = a === 'no' && why;
                                 return (
-                                  <div key={item.id} className="print-checklist-item" style={showNote ? {background:'#ecfdf5'} : undefined}>
-                                    <span style={{fontSize:'11pt', color: (checked || showNote) ? '#16a34a' : '#94a3b8', fontWeight: 700}}>{(checked || showNote) ? '✓' : '•'}</span>
-                                    <span style={{color: checked ? '#111827' : showNote ? '#166534' : '#9ca3af', fontWeight: (checked || showNote) ? 600 : 400}}>{item.label}</span>
-                                    {showNote && <span style={{fontSize:'7pt', color:'#166534', background:'#bbf7d0', border:'1px solid #4ade80', borderRadius:'3pt', padding:'0 4pt', marginLeft:'4pt', fontWeight:700}}>Approved: {note}</span>}
+                                  <div key={item.id} className="print-checklist-item" style={covered ? {background:'#ecfdf5'} : undefined}>
+                                    <span style={{fontSize:'11pt', color: (a === 'yes' || covered) ? '#16a34a' : a === 'no' ? '#b45309' : '#94a3b8', fontWeight: 700}}>{(a === 'yes' || covered) ? '✓' : a === 'no' ? '!' : '•'}</span>
+                                    <span style={{color: a ? '#111827' : '#9ca3af', fontWeight: a ? 600 : 400}}>{item.label}</span>
+                                    {covered && <span style={{fontSize:'7pt', color:'#166534', background:'#bbf7d0', border:'1px solid #4ade80', borderRadius:'3pt', padding:'0 4pt', marginLeft:'4pt', fontWeight:700}}>Not met — covered by: {why}</span>}
+                                    {a === 'no' && !why && <span style={{fontSize:'7pt', color:'#92400e', marginLeft:'4pt', fontWeight:700}}>Not met — see JSA</span>}
                                   </div>
                                 );
                               })}
                             </div>
                           </div>
 
-                          {/* SCREEN: Dynamic toggle checklist */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1 print:hidden">
+                          {/* SCREEN: Yes / No checklist (v6.0). A reason box opens only on No. */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 print:hidden" data-prelim-list="1">
                             {getPrelimItems().map(item => {
-                              const checked = isPrelimChecked(item.id);
-                              const note = checklistNotes[item.id];
+                              const a = prelimAns(item.id);
+                              const why = prelimWhy(item.id);
                               return (
-                                <div key={item.id} className="border-b border-gray-100 last:border-0 py-1 flex items-start gap-1">
+                                <div key={item.id} className="border-b border-gray-100 py-1 flex items-start gap-1" data-prelim-item={item.id}>
                                   {editingPrelimChecklist && (
                                     <button onClick={() => savePrelimItems(getPrelimItems().filter(i => i.id !== item.id))}
-                                      className="flex-shrink-0 mt-2 w-4 h-4 rounded-full bg-red-100 text-red-500 hover:bg-red-200 flex items-center justify-center text-[10px] font-bold">×</button>
+                                      className="flex-shrink-0 mt-2.5 w-4 h-4 rounded-full bg-red-100 text-red-500 hover:bg-red-200 flex items-center justify-center text-[10px] font-bold">×</button>
                                   )}
-                                  <div className="flex-1">
-                                    {(() => { const approved = !checked && note && note !== '__checked__' && String(note).trim(); return (<>
-                                    <Toggle label={approved ? <span><i className="fa-solid fa-circle-check text-green-600 mr-1.5"></i>{item.label}</span> : item.label} checked={checked} onChange={() => togglePrelimItem(item.id)} noBorder={true} labelClass={approved ? 'text-green-700 font-semibold' : ''} />
-                                    {!checked && !editingPrelimChecklist && (
-                                      <div className="pl-1 pb-2">
-                                        <input
-                                          type="text"
-                                          value={note && note !== '__checked__' ? note : ''}
-                                          onChange={(e) => handleChecklistNoteChange(item.id, e.target.value)}
-                                          placeholder="Reason / Mitigating Approval (e.g. EVLOS 1)"
-                                          className={`w-full text-xs px-2 py-1.5 border rounded-md shadow-inner ${approved ? 'border-green-400 bg-green-50 text-green-900 font-semibold focus:ring-green-500 focus:border-green-500' : 'border-slate-300 bg-slate-50 text-slate-700 focus:ring-blue-500 focus:border-blue-500'}`}
-                                        />
-                                        {approved && <div className="text-[10px] text-green-700 font-semibold mt-0.5"><i className="fa-solid fa-check mr-1"></i>Approved by mitigation — shown green on the report</div>}
+                                  <div className="flex-1 min-w-0">
+                                    <YesNo label={a === 'no' && why ? <span className="text-green-700"><i className="fa-solid fa-circle-check text-green-600 mr-1.5"></i>{item.label}</span> : item.label}
+                                      value={a === 'yes' ? true : a === 'no' ? false : null} onChange={v => setPrelimAns(item.id, v === true ? 'yes' : v === false ? 'no' : null)} />
+                                    {a === 'no' && !editingPrelimChecklist && (
+                                      <div className="pb-2">
+                                        <input type="text" value={why} onChange={(e) => setPrelimWhy(item.id, e.target.value)}
+                                          placeholder="Not met: reason or covering approval (e.g. EVLOS 1, CASA.OONP.0079)"
+                                          className={`w-full text-xs px-2 py-1.5 border rounded-md ${why ? 'border-green-400 bg-green-50 text-green-900 font-semibold' : 'border-amber-300 bg-amber-50'}`} />
                                       </div>
                                     )}
-                                    </>); })()}
                                   </div>
                                 </div>
                               );
@@ -9408,19 +9525,20 @@ View in the Database & Settings tab.`);
                         </div>
 
                         <div className="mt-6 p-5 bg-white border border-slate-200 rounded-lg shadow-sm print:break-inside-avoid print:shadow-none print:border-slate-300">
-                          <h4 className="font-semibold text-slate-800 mb-4 flex items-center gap-2 print:hidden"><i className="fa-solid fa-map-pin text-slate-400"></i> Flight Coordinates & Parameters</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 print:hidden">
+                          <h4 className="font-semibold text-slate-800 mb-1 flex items-center gap-2 print:hidden"><i className="fa-solid fa-map-pin text-slate-400"></i> Flight Coordinates & Parameters</h4>
+                          <p className="text-xs text-slate-500 mb-4 print:hidden">Drop Launch and Recovery pins on the map and the coordinates fill in here, or type / paste them.</p>
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:hidden">
                             {/* Multi Launch Sites */}
                             <div>
                               <div className="flex items-center justify-between mb-1">
-                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Launch / TOLZ Sites</label>
+                                <label data-req-anchor="launch" className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Launch / TOLZ Sites<ReqMark why={reqWhy('launch')} /></label>
                                 <button onClick={addLaunchSite} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"><i className="fa-solid fa-plus text-[10px]"></i> Add Site</button>
                               </div>
                               <div className="space-y-2">
                                 {(overview.launchSites||[{id:1,label:'Primary Launch',coords:overview.launchLocation||''}]).map((site,i) => (
                                   <div key={site.id} className="flex gap-2 items-center">
-                                    <input type="text" value={site.label} onChange={e=>updateLaunchSite(site.id,'label',e.target.value)} className="w-28 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white font-medium" placeholder="Label" />
-                                    <input type="text" value={site.coords} onChange={e=>updateLaunchSite(site.id,'coords',e.target.value)} className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-mono" placeholder="Lat, Lng or click map" />
+                                    <input type="text" value={site.label} onChange={e=>updateLaunchSite(site.id,'label',e.target.value)} className="w-28 flex-shrink-0 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white font-medium" placeholder="Label" />
+                                    <input type="text" value={site.coords} onChange={e=>updateLaunchSite(site.id,'coords',e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-mono" placeholder="Lat, Lng or click map" />
                                     {(overview.launchSites||[]).length > 1 && <button onClick={()=>removeLaunchSite(site.id)} className="text-slate-400 hover:text-red-500"><i className="fa-solid fa-xmark text-xs"></i></button>}
                                   </div>
                                 ))}
@@ -9429,24 +9547,24 @@ View in the Database & Settings tab.`);
                             {/* Multi Recovery Sites */}
                             <div>
                               <div className="flex items-center justify-between mb-1">
-                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Recovery Sites</label>
+                                <label data-req-anchor="recovery" className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Recovery Sites<ReqMark why={reqWhy('recovery')} /></label>
                                 <button onClick={addRecoverySite} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"><i className="fa-solid fa-plus text-[10px]"></i> Add Site</button>
                               </div>
                               <div className="space-y-2">
                                 {(overview.recoverySites||[{id:1,label:'Primary Recovery',coords:overview.recoveryLocation||''}]).map((site,i) => (
                                   <div key={site.id} className="flex gap-2 items-center">
-                                    <input type="text" value={site.label} onChange={e=>updateRecoverySite(site.id,'label',e.target.value)} className="w-28 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white font-medium" placeholder="Label" />
-                                    <input type="text" value={site.coords} onChange={e=>updateRecoverySite(site.id,'coords',e.target.value)} className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-mono" placeholder="Lat, Lng or click map" />
+                                    <input type="text" value={site.label} onChange={e=>updateRecoverySite(site.id,'label',e.target.value)} className="w-28 flex-shrink-0 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-white font-medium" placeholder="Label" />
+                                    <input type="text" value={site.coords} onChange={e=>updateRecoverySite(site.id,'coords',e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-mono" placeholder="Lat, Lng or click map" />
                                     {(overview.recoverySites||[]).length > 1 && <button onClick={()=>removeRecoverySite(site.id)} className="text-slate-400 hover:text-red-500"><i className="fa-solid fa-xmark text-xs"></i></button>}
                                   </div>
                                 ))}
                               </div>
                             </div>
-                            <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Max Height Planned (ft)</label><input type="number" name="maxHeightPlanned" value={overview.maxHeightPlanned} onChange={handleOverviewChange} className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50" placeholder="e.g. 400" /></div>
+                            <div data-req-box="1" className="lg:col-span-2 lg:max-w-xs"><label data-req-anchor="maxHeight" className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Max Height Planned (ft AGL)<ReqMark why={reqWhy('maxHeight')} /></label><input type="number" name="maxHeightPlanned" value={overview.maxHeightPlanned || jsa.maxOperatingHeightAgl || ''} onChange={e => { const v = e.target.value; setOverview(p => ({ ...p, maxHeightPlanned: v })); setJsa(p => ({ ...p, maxOperatingHeightAgl: v })); }} className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-slate-50" placeholder="e.g. 400" /></div>
                           </div>
                         </div>
 
-                        {!isJsaRequired ? (
+                        {!isJsaRequired ? (!prelimAllAnswered ? null :
                           <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg print:break-inside-avoid">
                             <h4 className="font-semibold text-green-800 flex items-center gap-2"><i className="fa-solid fa-circle-check text-xl print:hidden"></i> Standard Operations Confirmed</h4>
                             <p className="text-sm text-green-700 mt-1">All preliminary conditions met. Operations fall under standard SOPs.</p>
@@ -9538,8 +9656,8 @@ View in the Database & Settings tab.`);
                         {/* Bottom Nav — Section 1 */}
                         <div className="mt-6 flex justify-between items-center print:hidden">
                           <span className="text-xs text-slate-400 italic">Step 1 of 4</span>
-                          <button data-allow-locked="1" onClick={() => handleNavigate(isJsaRequired ? 'jsa' : 'approval')} className="flex items-center gap-2 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm" style={{background:"#7c3aed"}}>
-                            Next: {isJsaRequired ? 'JSA & Risk' : 'Authorisation'} <i className="fa-solid fa-arrow-right"></i>
+                          <button data-allow-locked="1" onClick={() => handleNavigate('jsa')} className="flex items-center gap-2 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm" style={{background:"#7c3aed"}}>
+                            Next: JSA & Risk <i className="fa-solid fa-arrow-right"></i>
                           </button>
                         </div>
                       </div>
@@ -9556,6 +9674,7 @@ View in the Database & Settings tab.`);
                           <h2 className="text-lg font-semibold text-slate-800">Section 2: Job Safety Assessment (JSA)</h2>
                         </div>
                       </div>
+                      <ReqStrip tab="jsa" />
 
                       {/* PRINT: JSA page title */}
                       <div className="hidden print:flex print-page-title">
@@ -9613,7 +9732,7 @@ View in the Database & Settings tab.`);
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div>
                             <div className="flex items-center justify-between mb-1">
-                              <label className="block text-sm font-medium text-gray-700">Airspace Class(es)</label>
+                              <label data-req-anchor="airspace" className="block text-sm font-medium text-gray-700">Airspace Class(es)<ReqMark why={reqWhy('airspace')} /></label>
                               <button data-allow-locked="1" onClick={() => handleAirspaceFetch()} disabled={isFetchingNaips} className="flex items-center gap-1 bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded text-xs font-medium transition-colors border border-blue-200 print:hidden" title="Fetch live airspace data from OpenAIP (API key required in Database & Settings)">
                                 {isFetchingNaips ? <i className="fa-solid fa-spinner fa-spin text-xs"></i> : <i className="fa-solid fa-satellite-dish text-xs"></i>}
                                 {isFetchingNaips ? 'Fetching...' : 'Fetch Live'}
@@ -9629,7 +9748,7 @@ View in the Database & Settings tab.`);
                               className="px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
                             />
                           </div>
-                          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Operating Height (ft AGL)</label><input type="number" name="maxOperatingHeightAgl" value={jsa.maxOperatingHeightAgl} onChange={handleJsaChange} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" /></div>
+                          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Operating Height (ft AGL) <span className="text-xs text-slate-400 font-normal">· same as Section 1</span></label><input type="number" name="maxOperatingHeightAgl" value={jsa.maxOperatingHeightAgl || overview.maxHeightPlanned || ''} onChange={e => { const v = e.target.value; setJsa(p => ({ ...p, maxOperatingHeightAgl: v })); setOverview(p => ({ ...p, maxHeightPlanned: v })); }} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" /></div>
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <label className="block text-sm font-medium text-gray-700">SUA Max Altitude (ft AMSL)</label>
@@ -9681,15 +9800,14 @@ View in the Database & Settings tab.`);
                             {(() => {
                               const ck = airspaceCheck;
                               if (!openAipKey || (ck && ck.needKey)) return (
-                                <div className="border border-sky-200 bg-sky-50 rounded-xl px-4 py-3 text-sm text-sky-900">
-                                  <div className="font-semibold mb-1"><i className="fa-solid fa-tower-broadcast mr-1.5 text-sky-600"></i>Airspace &amp; radio check</div>
-                                  Fills airspace, nearby aerodromes and radio frequencies for the ops area from OpenAIP. It needs a free OpenAIP client ID (one-time):
-                                  <ol className="list-decimal ml-5 mt-1 text-xs space-y-0.5">
+                                <details className="text-xs text-slate-500 border border-slate-200 rounded-lg px-3 py-2" data-openaip-setup="1">
+                                  <summary className="cursor-pointer"><i className="fa-solid fa-tower-broadcast mr-1.5 text-sky-600"></i>Fill airspace, aerodromes and radio frequencies automatically: <span className="underline">set up OpenAIP (free, one-time)</span></summary>
+                                  <ol className="list-decimal ml-5 mt-1.5 space-y-0.5 text-slate-600">
                                     <li>Create a free account at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="underline font-semibold">openaip.net</a>.</li>
                                     <li>In your account, open the API / client ID page and create a client ID.</li>
                                     <li>Paste it into Database &amp; Settings › API Integration Settings › OpenAIP Client ID, then press Fetch Live here.</li>
                                   </ol>
-                                </div>
+                                </details>
                               );
                               if (!ck) return <div className="text-xs text-slate-500 border border-slate-200 rounded-lg px-3 py-2"><i className="fa-solid fa-tower-broadcast mr-1.5"></i>Press <b>Fetch Live</b> to check airspace, nearby aerodromes and radio frequencies for this job.</div>;
                               if (ck.error) return <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><i className="fa-solid fa-triangle-exclamation mr-1.5"></i>Airspace check couldn't reach OpenAIP ({ck.error}). Needs internet; check the client ID in Database &amp; Settings.</div>;
@@ -9861,7 +9979,7 @@ View in the Database & Settings tab.`);
                         <div className="py-6 border-y border-gray-100 mt-6">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="space-y-4">
-                              <label className="block text-sm font-medium text-gray-700">Operation Types (Multi-Select)</label>
+                              <label data-req-anchor="opTypes" className="block text-sm font-medium text-gray-700">Operation Types (Multi-Select)<ReqMark why={reqWhy('opTypes')} /></label>
                               <div className="flex flex-wrap gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 shadow-inner">
                                 {['VLOS', 'EVLOS', 'OONP', 'BVLOS', 'NVLOS'].map(op => (
                                   <label key={op} className="flex items-center gap-2 cursor-pointer select-none">
@@ -10041,6 +10159,8 @@ View in the Database & Settings tab.`);
                           </div>
                         </div>
 
+                        {/* v6.0: OONP physics tools only for OONP jobs (or when already in use on this job) */}
+                        {showOonpTools ? (<>
                         {/* Kinetic Energy Matrix Calculator */}
                         <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 mt-6 shadow-inner print:break-inside-avoid print:bg-white print:border-slate-300 print:shadow-none">
                           <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200 print:border-slate-300">
@@ -10203,10 +10323,10 @@ View in the Database & Settings tab.`);
                           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                             <p className="text-xs text-amber-700">Auto-calculated with the same physics as the Kinetic Energy chart. Values are editable — override as needed.</p>
                           </div>
-                          <div className="mb-3 text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 flex items-start gap-2">
-                            <i className="fa-solid fa-circle-info text-blue-400 mt-0.5 flex-shrink-0"></i>
+                          <details className="mb-3 text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                            <summary className="cursor-pointer"><i className="fa-solid fa-circle-info text-blue-400 mr-1.5"></i>How these limits are calculated</summary>
                             <span>Each drone uses the settings of its KE chart (weight and the <strong className="text-slate-700">Use Aerodynamic Model</strong> toggle). Drones without a chart use fleet weight and the main chart's toggle. <strong className="text-slate-700">Freefall:</strong> KE = ½m(v² + 2gh). <strong className="text-slate-700">Aerodynamic:</strong> KE = ½m(v² + vt²(1 − e<sup>−2gh/vt²</sup>)). Heights are at zero ground speed, speeds at zero height, rounded down to 0.1.</span>
-                          </div>
+                          </details>
                           {(!overview.rpaTypes || overview.rpaTypes.length === 0) ? (
                             <p className="text-xs text-slate-400 italic">Select RPAS fleet in Section 1 to populate this table.</p>
                           ) : (
@@ -10507,6 +10627,12 @@ View in the Database & Settings tab.`);
                               </div>
                           )}
                         </div>
+                        </>) : (
+                          <div className="mt-6 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-2.5 text-sm text-slate-600 print:hidden" data-oonp-tools-closed="1">
+                            <span><i className="fa-solid fa-shield-halved text-amber-500 mr-1.5"></i>OONP tools (kinetic energy limits, per-drone limits, ballistic splash area) appear when <b>OONP</b> is ticked in Operation Types.</span>
+                            <button type="button" data-allow-locked="1" onClick={() => setOonpToolsOpen(true)} className="text-xs font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100">Show anyway</button>
+                          </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
                           <div>
@@ -10549,14 +10675,16 @@ View in the Database & Settings tab.`);
                             const venueOk = oonp && oonp.venueContact && !ec.rows.some(r => r.name === oonp.venueContact);
                             return (<>
                               <div className="flex items-center gap-3 flex-wrap">
-                                <h3 className="text-md font-semibold text-slate-800 flex-1"><i className="fa-solid fa-phone-volume text-rose-600 mr-2"></i>Emergency Contacts</h3>
+                                <h3 className="text-md font-semibold text-slate-800 flex-1"><i className="fa-solid fa-phone-volume text-rose-600 mr-2"></i>Emergency Contacts
+                                  {ec.enabled && folded('emerg') && <span className="ml-2 text-xs font-normal text-slate-500">{ec.rows.filter(x => (x.phone || '').trim()).length} of {ec.rows.length} with a number{ec.rows.some(x => /hospital/i.test(x.role || x.label || '') && !(x.phone || '').trim()) ? ' · nearest hospital not filled' : ''}</span>}</h3>
+                                {ec.enabled && <FoldBtn k="emerg" />}
                                 <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
                                   <input type="checkbox" data-emerg-enable="1" checked={!!ec.enabled} onChange={() => setEc(e => ({ ...e, enabled: !e.enabled }))} className="rounded" />
                                   Include in this job &amp; the PDF
                                 </label>
                               </div>
-                              <p className="text-xs text-slate-500 mt-1">The ERP requires a list of relevant contacts for the location and type of operation to be available to all personnel on site. Defaults come from ERP Appendix B; add the site's own contacts.</p>
-                              {ec.enabled && (
+                              {!(ec.enabled && folded('emerg')) && <p className="text-xs text-slate-500 mt-1">The ERP requires a list of relevant contacts for the location and type of operation to be available to all personnel on site. Defaults come from ERP Appendix B; add the site's own contacts.</p>}
+                              {ec.enabled && !folded('emerg') && (
                                 <div className="mt-3 space-y-2">
                                   {ec.rows.map((r, i) => (
                                     <div key={i} data-emerg-row={i} className="grid grid-cols-12 gap-2 items-center">
@@ -10678,8 +10806,8 @@ View in the Database & Settings tab.`);
                         <div className="mt-8">
                           <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-4 mb-4 pb-2 border-b border-gray-200">
                             <div>
-                              <h3 className="text-md font-semibold text-slate-800 flex items-center gap-2">
-                                Risk Assessment Register
+                              <h3 data-req-anchor="risks" className="text-md font-semibold text-slate-800 flex items-center gap-2">
+                                Risk Assessment Register<ReqMark why={reqWhy('risks')} />
                               </h3>
                               <p className="text-sm text-slate-500 mt-1">Identify hazards and apply the Likelihood/Consequence matrix to calculate risk.</p>
                             </div>
@@ -11044,6 +11172,7 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation</h2>
                       </div>
+                      <ReqStrip tab="approval" />
 
                       {/* Expiry check for this job's dates */}
                       {(() => {
@@ -11091,15 +11220,15 @@ View in the Database & Settings tab.`);
                         <div className="print-cell">
                           <div className="print-cell-label">SOP Mitigates All Hazards?</div>
                           <div className="print-cell-value">
-                            {approval.sopMitigatesAll ? <span className="print-badge-yes">YES</span> : <span className="print-badge-no">NO</span>}
-                            {!approval.sopMitigatesAll && approval.unmitigatedHazards && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{approval.unmitigatedHazards}</div>}
+                            {ynBadge(approval.sopMitigatesAll)}
+                            {approval.sopMitigatesAll === false && approval.unmitigatedHazards && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{approval.unmitigatedHazards}</div>}
                           </div>
                         </div>
                         <div className="print-cell">
                           <div className="print-cell-label">Preliminary Assessment / JSA Correct?</div>
                           <div className="print-cell-value">
-                            {approval.jsaCorrect ? <span className="print-badge-yes">YES</span> : <span className="print-badge-no">NO</span>}
-                            {!approval.jsaCorrect && approval.jsaChanges && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{approval.jsaChanges}</div>}
+                            {ynBadge(approval.jsaCorrect)}
+                            {approval.jsaCorrect === false && approval.jsaChanges && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{approval.jsaChanges}</div>}
                           </div>
                         </div>
                         <div className="print-cell" style={{gridColumn:'span 2'}}>
@@ -11161,8 +11290,8 @@ View in the Database & Settings tab.`);
                       <div className="p-6 space-y-6 print:px-0">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 border-b pb-6 border-slate-200 print:hidden">
                           <div className="space-y-4">
-                            <Toggle label="Does SOP adequately mitigate all hazards?" checked={approval.sopMitigatesAll} onChange={() => setApproval(prev => ({...prev, sopMitigatesAll: !prev.sopMitigatesAll}))} />
-                            {!approval.sopMitigatesAll && (
+                            <div data-req-anchor="sopMitigatesAll"><YesNo label="Does SOP adequately mitigate all hazards?" req why="Ops manual F.1 Section 3" value={approval.sopMitigatesAll} onChange={v => setApproval(prev => ({...prev, sopMitigatesAll: v}))} /></div>
+                            {approval.sopMitigatesAll === false && (
                               <div className="animate-in fade-in slide-in-from-top-2">
                                 <label className="block text-sm font-medium text-amber-700 mb-1">Detail unmitigated hazards:</label>
                                 <textarea name="unmitigatedHazards" value={approval.unmitigatedHazards} onChange={handleApprovalChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-amber-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 bg-amber-50"></textarea>
@@ -11170,8 +11299,8 @@ View in the Database & Settings tab.`);
                             )}
                           </div>
                           <div className="space-y-4">
-                            <Toggle label="Preliminary Assessment / JSA correct?" checked={approval.jsaCorrect} onChange={() => setApproval(prev => ({...prev, jsaCorrect: !prev.jsaCorrect}))} />
-                            {!approval.jsaCorrect && (
+                            <div data-req-anchor="jsaCorrect"><YesNo label="Preliminary Assessment / JSA correct?" req why="Ops manual F.1 Section 3" value={approval.jsaCorrect} onChange={v => setApproval(prev => ({...prev, jsaCorrect: v}))} /></div>
+                            {approval.jsaCorrect === false && (
                               <div className="animate-in fade-in slide-in-from-top-2">
                                 <label className="block text-sm font-medium text-amber-700 mb-1">Record changes here:</label>
                                 <textarea name="jsaChanges" value={approval.jsaChanges} onChange={handleApprovalChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-amber-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 bg-amber-50"></textarea>
@@ -11186,7 +11315,7 @@ View in the Database & Settings tab.`);
                             <textarea name="otherRestrictions" value={approval.otherRestrictions} onChange={handleApprovalChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Identification of Official Authorisation (if applicable)</label>
+                            <label data-req-anchor="officialAuth" className="block text-sm font-medium text-gray-700 mb-1">Identification of Official Authorisation (if applicable){reqItems.some(x => x.id === 'officialAuth') && <ReqMark why={reqWhy('officialAuth')} />}</label>
                             {(() => {
                               const list = officialAuthList(db);
                               const grp = (scope) => list.filter(x => (x.scope || 'operator') === scope);
@@ -11218,7 +11347,7 @@ View in the Database & Settings tab.`);
                           </div>
                           <div className="md:col-span-2">
                             <div className="flex justify-between items-center mb-1">
-                              <label className="block text-sm font-medium text-gray-700">Active NOTAMs</label>
+                              <label data-req-anchor="notams" className="block text-sm font-medium text-gray-700">Active NOTAMs<ReqMark why={reqWhy('notams')} /></label>
                               <div className="flex items-center gap-2 print:hidden">
                                 <a href="https://www.airservicesaustralia.com/naips/Account/LogOn" target="_blank" rel="noopener noreferrer"
                                   className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs font-medium transition-colors border border-slate-200">
@@ -11239,9 +11368,10 @@ View in the Database & Settings tab.`);
 
                             {/* NAIPS Location Code Lookup */}
                             <div className="mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg print:hidden">
-                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                                <i className="fa-solid fa-magnifying-glass text-slate-400"></i> NAIPS Location Code Lookup
-                              </p>
+                              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                <i className="fa-solid fa-magnifying-glass text-slate-400"></i> NAIPS location codes
+                                <span className="ml-auto normal-case tracking-normal"><FoldBtn k="naips" dflt={true} /></span>
+                              </div>
                               {(() => {
                                 const pt = getNotamPoint();
                                 const near = nearestAerodromes(pt.lat, pt.lng, { radiusNm: 30, limit: 4, types: 'LMSW' });
@@ -11278,6 +11408,21 @@ View in the Database & Settings tab.`);
                                 const results = searchAerodromesByText(naipsSearch);
                                 const q = naipsSearch.trim().toUpperCase();
                                 const iataHit = q.length === 3 ? AU_AERO_DB.find(a => a.iata === q) : null;
+                                if (folded('naips', true)) {
+                                  const all = [...near, ...helis];
+                                  return (
+                                    <div className="flex flex-wrap items-center gap-1.5" data-naips-compact="1">
+                                      <span className="text-[11px] text-slate-500 mr-1">Nearest to {pt.source}:</span>
+                                      {near.map(a => <code key={a.icao} title={a.name + ' · ' + AU_AERO_TYPES[a.type]} className="text-[11px] font-bold text-blue-700 bg-white border border-blue-200 px-1.5 py-0.5 rounded">{a.icao} <span className="font-normal text-slate-400">{a.dist != null ? a.dist.toFixed(1) + ' nm' : ''}</span></code>)}
+                                      {helis.length > 0 && <span className="text-[11px] text-rose-600 font-semibold" title={helis.map(a => a.icao + ' ' + a.name).join('\n')}>+{helis.length} helipad{helis.length === 1 ? '' : 's'} within 3 nm</span>}
+                                      {!all.length && <span className="text-[11px] text-slate-400">none within 30 nm, use a NAIPS area (FIR) briefing</span>}
+                                      {all.length > 0 && <>
+                                        <button data-allow-locked="1" type="button" onClick={() => { try { navigator.clipboard?.writeText(all.map(a => a.icao).join(' ')).catch(() => {}); } catch (e) {} }} className="text-[10px] text-slate-600 border border-slate-200 rounded px-1.5 py-0.5 bg-white hover:bg-blue-50">Copy all codes</button>
+                                        <button type="button" onClick={() => all.forEach(addToNotams)} className="text-[10px] text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 font-semibold">+ Add all to NOTAMs</button>
+                                      </>}
+                                    </div>
+                                  );
+                                }
                                 return (
                                   <div>
                                     <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -11336,12 +11481,12 @@ View in the Database & Settings tab.`);
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                             <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">Date(s) Approved</label>
+                              <label data-req-anchor="approvedDates" className="block text-sm font-medium text-gray-700 mb-1">Date(s) Approved<ReqMark why={reqWhy('approvedDates')} /></label>
                               <input type="text" name="approvedDates" value={approval.approvedDates} onChange={handleApprovalChange} className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white" />
                             </div>
                             
                             <div className="flex-1">
-                              <label className="block text-sm font-medium text-gray-700 mb-1">RPA Types/Models Approved</label>
+                              <label data-req-anchor="approvedTypes" className="block text-sm font-medium text-gray-700 mb-1">RPA Types/Models Approved<ReqMark why={reqWhy('approvedTypes')} /></label>
                               <div className="flex gap-2 mb-2 print:hidden">
                                 <select 
                                   onChange={(e) => {
@@ -11371,6 +11516,11 @@ View in the Database & Settings tab.`);
                                 ))}
                               </div>
                             </div>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-1 mb-6 print:hidden" data-req-anchor="releaseServiceable">
+                            <YesNo label={<span>The RPA (and its remote pilot station) are serviceable for this operation <span className="text-xs text-slate-400 font-normal">— statement for the operational release</span></span>} req why={reqWhy('releaseServiceable')} value={approval.releaseServiceable === true ? true : approval.releaseServiceable === false ? false : null} onChange={v => setApproval(prev => ({ ...prev, releaseServiceable: v }))} />
+                            {approval.releaseServiceable === false && <div className="text-xs text-amber-800 pb-2">Not serviceable: the flight can't be approved until the RPA is serviceable. Record the defect in the RPAS technical log.</div>}
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -11453,8 +11603,7 @@ View in the Database & Settings tab.`);
                           {(() => {
                             const on = !!approval.flightAuthApproved;
                             const missing = [
-                              !approval.sopMitigatesAll && !String(approval.unmitigatedHazards || '').trim() && 'answer "Does SOP adequately mitigate all hazards?" (Yes, or list the hazards)',
-                              !approval.jsaCorrect && !String(approval.jsaChanges || '').trim() && 'answer "Preliminary Assessment / JSA correct?" (Yes, or describe the changes)',
+                              ...reqItems.filter(x => x.stage === 'release' && !x.ok).map(x => x.label),
                               !approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
                             const can = on || missing.length === 0;
                             const flip = () => {
@@ -11471,7 +11620,10 @@ View in the Database & Settings tab.`);
                                   <div className={`text-lg font-bold ${on ? 'text-emerald-800' : 'text-slate-800'}`}><i className={`fa-solid ${on ? 'fa-circle-check text-emerald-600' : 'fa-plane-departure text-slate-400'} mr-2`}></i>Approved for Flight</div>
                                   <div className="text-xs text-slate-600 mt-0.5">
                                     {on ? `Approved${approval.crpName ? ' by ' + approval.crpName : ''}${approval.approvedAt ? ' · ' + new Date(approval.approvedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}. Sections 1–3 are locked.`
-                                      : missing.length ? <span className="text-amber-700 font-semibold" data-approve-missing="1"><i className="fa-solid fa-pen-nib mr-1"></i>Before approving: {missing.join('; ')}.</span> : 'Both signatures are in. Switch on to approve the flight and lock the plan.'}
+                                      : missing.length ? <span className="text-amber-700 font-semibold" data-approve-missing="1"><i className="fa-solid fa-pen-nib mr-1"></i>Before approving ({missing.length}): <span className="sr-only">{missing.join('; ')}.</span>
+                                          <span className="flex flex-wrap gap-1.5 mt-1.5" aria-hidden="true">{missing.map(m => { const it = reqItems.find(x => x.label === m); return it
+                                            ? <button key={m} type="button" data-allow-locked="1" onClick={() => jumpToReq(it.id)} title={it.why} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white border border-amber-300 text-amber-900 hover:bg-amber-100">{m}</button>
+                                            : <span key={m} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 border border-amber-200 text-amber-900">{m}</span>; })}</span></span> : 'Everything is recorded and both signatures are in. Switch on to approve the flight and lock the plan.'}
                                   </div>
                                 </div>
                                 <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can}
@@ -11528,6 +11680,7 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-clipboard-list text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log</h2>
                       </div>
+                      <ReqStrip tab="log" title="to complete the record" />
 
                       {/* PRINT: Log page title */}
                       <div className="hidden print:flex print-page-title">
@@ -11542,7 +11695,7 @@ View in the Database & Settings tab.`);
                           <div className="print-cell">
                             <div className="print-cell-label">Weather Conditions Meet Limitations?</div>
                             <div className="print-cell-value">
-                              {log.weatherMeetsLimitations ? <span className="print-badge-yes">YES</span> : <span className="print-badge-no">NO</span>}
+                              {ynBadge(log.weatherMeetsLimitations)}
                               {log.weatherDetails && <span style={{fontSize:'8pt',marginLeft:'6pt',color:'#475569'}}>{log.weatherDetails}</span>}
                             </div>
                           </div>
@@ -11560,15 +11713,15 @@ View in the Database & Settings tab.`);
                           <div className="print-cell">
                             <div className="print-cell-label">Operation Conducted IAW Sections 1–3?</div>
                             <div className="print-cell-value">
-                              {log.conductedIAW ? <span className="print-badge-yes">YES</span> : <span className="print-badge-no">NO</span>}
-                              {!log.conductedIAW && log.conductedChanges && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{log.conductedChanges}</div>}
+                              {ynBadge(log.conductedIAW)}
+                              {log.conductedIAW === false && log.conductedChanges && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{log.conductedChanges}</div>}
                             </div>
                           </div>
                           <div className="print-cell">
                             <div className="print-cell-label">RPAS Serviceable at End?</div>
                             <div className="print-cell-value">
-                              {log.serviceableAtEnd ? <span className="print-badge-yes">YES</span> : <span className="print-badge-no">NO</span>}
-                              {!log.serviceableAtEnd && log.defects && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{log.defects}</div>}
+                              {ynBadge(log.serviceableAtEnd)}
+                              {log.serviceableAtEnd === false && log.defects && <div style={{fontSize:'8pt',marginTop:'2pt',color:'#b91c1c'}}>{log.defects}</div>}
                             </div>
                           </div>
                           <div className="print-cell" style={{gridColumn:'span 2'}}>
@@ -11676,12 +11829,12 @@ View in the Database & Settings tab.`);
                           <h3 className="text-sm font-bold text-blue-900 print:text-slate-800 mb-4 uppercase tracking-wider">Part A: Pre-Flight Action</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                             <div className="bg-white p-3 rounded border border-blue-100 print:border-slate-300">
-                              <Toggle small label="Weather conditions meet limitations?" checked={log.weatherMeetsLimitations} onChange={() => setLog(prev => ({...prev, weatherMeetsLimitations: !prev.weatherMeetsLimitations}))} />
+                              <div data-req-anchor="weatherMeetsLimitations"><YesNo small label="Weather conditions meet limitations?" req why="Ops manual F.1 Part A" value={log.weatherMeetsLimitations} onChange={v => setLog(prev => ({...prev, weatherMeetsLimitations: v}))} /></div>
                               <input type="text" name="weatherDetails" value={log.weatherDetails} onChange={handleLogChange} placeholder="Enter specific weather (e.g., Wind 10kts, Clear)" className="w-full mt-2 px-3 py-2 border border-blue-200 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm bg-white print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-blue-100 flex flex-col justify-center print:border-slate-300">
                               <div className="flex justify-between items-end mb-1">
-                                <label className="block text-sm font-medium text-blue-900 print:text-slate-800">Onsite Validation completed (RP Initials)</label>
+                                <label data-req-anchor="onsiteValidationInitials" className="block text-sm font-medium text-blue-900 print:text-slate-800">Onsite Validation completed (RP Initials)<ReqMark why={reqWhy('onsiteValidationInitials')} /></label>
                                 {savedInitials && !log.onsiteValidationInitials && (
                                   <button 
                                     onClick={() => setLog(prev => ({...prev, onsiteValidationInitials: savedInitials}))} 
@@ -11762,8 +11915,8 @@ View in the Database & Settings tab.`);
                           <h3 className="text-sm font-bold text-slate-800 mb-4 border-b pb-2 uppercase tracking-wider">Part B: Post-Flight Action</h3>
                           
                           <div className="bg-white p-3 rounded border border-slate-200 mb-4 shadow-sm print:shadow-none print:border-slate-300">
-                            <Toggle small label="Was the operation conducted IAW Sections 1 to 3?" checked={log.conductedIAW} onChange={() => setLog(prev => ({...prev, conductedIAW: !prev.conductedIAW}))} />
-                            {!log.conductedIAW && (
+                            <div data-req-anchor="conductedIAW"><YesNo small label="Was the operation conducted IAW Sections 1 to 3?" req why="CASA MOS 10.05: confirmation of, or change to, the operational release" value={log.conductedIAW} onChange={v => setLog(prev => ({...prev, conductedIAW: v}))} /></div>
+                            {log.conductedIAW === false && (
                               <div className="mt-3 animate-in fade-in slide-in-from-top-2">
                                 <label className="block text-sm font-medium text-amber-700 mb-1">If NO, record changes here:</label>
                                 <textarea name="conductedChanges" value={log.conductedChanges} onChange={handleLogChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-amber-300 rounded-md focus:ring-amber-500 focus:border-amber-500 bg-amber-50 print:bg-white print:border-slate-300 print:resize-none overflow-hidden"></textarea>
@@ -11777,8 +11930,8 @@ View in the Database & Settings tab.`);
                           </div>
 
                           <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
-                            <Toggle small label="Was the RPAS serviceable at the end of the operation?" checked={log.serviceableAtEnd} onChange={() => setLog(prev => ({...prev, serviceableAtEnd: !prev.serviceableAtEnd}))} />
-                            {!log.serviceableAtEnd && (
+                            <div data-req-anchor="serviceableAtEnd"><YesNo small label="Was the RPAS serviceable at the end of the operation?" req why="CASA MOS 10.05: whether the RPA became unserviceable" value={log.serviceableAtEnd} onChange={v => setLog(prev => ({...prev, serviceableAtEnd: v}))} /></div>
+                            {log.serviceableAtEnd === false && (
                               <div className="mt-3 animate-in fade-in slide-in-from-top-2">
                                 <label className="block text-sm font-medium text-red-700 mb-1">If NO, record defects here (Must also log in RPAS Technical Log Part 2):</label>
                                 <textarea name="defects" value={log.defects} onChange={handleLogChange} onInput={handleAutoResize} rows="2" className="auto-resize w-full px-3 py-2 border border-red-300 rounded-md focus:ring-red-500 focus:border-red-500 bg-red-50 print:bg-white print:border-slate-300 print:resize-none overflow-hidden"></textarea>
@@ -11788,10 +11941,10 @@ View in the Database & Settings tab.`);
                         </div>
 
                         <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 print:bg-white print:border-slate-300 print:break-inside-avoid">
-                          <h3 className="text-sm font-bold text-slate-800 mb-4 border-b pb-2 uppercase tracking-wider">Part C: Crew Logging</h3>
+                          <h3 data-req-anchor="flights" className="text-sm font-bold text-slate-800 mb-4 border-b pb-2 uppercase tracking-wider">Part C: Crew Logging</h3>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
-                              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Primary RP</label>
+                              <label data-req-anchor="crewRP" className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Primary RP<ReqMark why={reqWhy('crewRP')} /></label>
                               <ComboBox name="crewRP" value={log.crewRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">

@@ -3,3 +3,6 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* v6.0: flash a field after jumping to it from the mandatory-items list */
+.wd-req-flash { outline: 3px solid #fb7185; outline-offset: 4px; border-radius: 8px; transition: outline-color 1.2s ease; }

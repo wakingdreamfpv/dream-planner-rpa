@@ -9,6 +9,12 @@ Do these in your Supabase project (`jirvugtgclgdbysrfjsc`, Sydney), in order.
 - **Confirm email**: **ON**.
 - Click **Save**.
 
+## 1b. Where the email links go back to
+**Authentication › URL Configuration**:
+- **Site URL:** `https://planner.wakingdreamfpv.com`
+- **Redirect URLs:** add `https://planner.wakingdreamfpv.com/**` and `https://dream-planner-6f6.pages.dev/**`
+- Click **Save**. Without this, invite and password-reset links open the wrong address.
+
 ## 2. Create the tables and security rules
 1. Open **SQL Editor › New query**.
 2. Paste the whole of `supabase/migrations/0001_chunk1_auth_roles.sql`.
