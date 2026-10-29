@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.54';
+        const APP_VERSION = '5.55';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1113,16 +1113,19 @@
         const stableStringify = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v === undefined ? null : v)
           : Array.isArray(v) ? '[' + v.map(stableStringify).join(',') + ']'
           : '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
-        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }) => {
+        // v5.55: the CRP's own review answers (SOP mitigates / JSA correct) are left out, so answering them after the
+        // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
+        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, legacy) => {
           const ap = { ...(approval || {}) };
           ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog'].forEach(k => delete ap[k]);
+          if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           return { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
         };
         const cyrbHex = (str, seed) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
           h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
           return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0'); };
-        const planFingerprint = async (state) => {
-          const str = stableStringify(rpicSignable(state));
+        const planFingerprint = async (state, legacy) => {
+          const str = stableStringify(rpicSignable(state, legacy));
           try { if (window.crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return 'sha256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); } } catch (e) {}
           return 'h64:' + cyrbHex(str, 1) + cyrbHex(str, 7);
         };
@@ -3430,7 +3433,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
 
           return (
             <div className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Flights</span>
                   {totalMins>0 && <span className="text-xs bg-slate-200 text-slate-700 font-mono font-bold px-2 py-0.5 rounded-full">{totalMins} min · {flights.length} flight{flights.length!==1?'s':''}</span>}
@@ -4476,7 +4479,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // OONP block
             const oonpHtml=oonpMode?(
               '<div style="border-left:4px solid #f59e0b;background:#fffbeb;border-radius:0 4pt 4pt 0;padding:10pt;margin:10pt 0;break-inside:avoid;">'
-              +'<div style="font-weight:700;font-size:10pt;color:#78350f;margin-bottom:6pt;">⚡ OONP — '+esc(val(jsa.oonpPathway))+'</div>'
+              +'<div style="font-weight:700;font-size:10pt;color:#78350f;margin-bottom:6pt;">⚡ OONP'+(jsa.oonpPathway?' — '+esc(jsa.oonpPathway==='Custom'&&jsa.oonpCustomPathway?jsa.oonpCustomPathway:jsa.oonpPathway):' — pathway not selected')+'</div>'
               +grid(r2('Venue Contact',oonp.venueContact,'Contact Phone',oonp.venueContactPhone),
                     r2('RC Link',oonp.rcLink,'RC Freq',oonp.rcFreq),
                     r2('Video TX',oonp.videoTx,'Video Freq',oonp.videoFreq),
@@ -4624,6 +4627,23 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                   +'</div></div>';
               }
               h+='</div>';
+              const fStyle=log.pdfFlightStyle||'auto', asTable=fStyle==='table'||(fStyle==='auto'&&flts.length>24);
+              if(asTable){
+                const th=(t,al)=>'<th style="padding:3pt 4pt;text-align:'+(al||'left')+';font-size:6pt;text-transform:uppercase;letter-spacing:.04em;color:#475569;border-bottom:1.5px solid #0f172a;">'+t+'</th>';
+                const td=(t,al,st)=>'<td style="padding:2.5pt 4pt;border-bottom:1px solid '+S2+';font-size:7pt;text-align:'+(al||'left')+';vertical-align:top;'+(st||'')+'">'+t+'</td>';
+                h+='<table style="width:100%;border-collapse:collapse;margin-top:4pt;"><thead><tr>'+th('#')+th('Flight')+th('Type')+th('Duration','right')+th('Max alt','right')+th('Max speed','right')+th('Battery')+th('Notes / checks')+'</tr></thead><tbody>'
+                  +flts.map((fl,i)=>{
+                    const pk=peakOf(fl), t=fl.telemetry, kg=parseFloat(((db.fleet||{})[rpa]||{}).weight)||0;
+                    const iss=t?flightLimitIssues(t,{...flightLimitCtx(rpa),kg,oonp:fl.oonp}):[];
+                    const notes=[...iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';font-weight:700;">&#9888; '+esc(x.text)+'</span>'),String(fl.notes||'').trim()?esc(String(fl.notes).trim()):'',fl.amendNote?'<span style="color:#b45309;">AMENDED — '+esc(fl.amendNote)+'</span>':''].filter(Boolean).join('<br>');
+                    return '<tr style="break-inside:avoid;">'+td(i+1,'left','color:#94a3b8;')+td(esc(fl.label||'')+(t?' <span style="background:#0e7490;color:white;padding:0 2pt;border-radius:2pt;font-size:5pt;">AUTO</span>':''))
+                      +td(fl.oonp===true?'<b style="color:#b45309;">OONP</b>':fl.oonp===false?'Non-OONP':'<span style="color:#94a3b8;">—</span>')
+                      +td(parseInt(fl.duration)>0?fl.duration+' min':'—','right')+td(pk?pk+' ft':'—','right',pk>400?'color:#dc2626;font-weight:700;':'')
+                      +td(t&&t.maxSpeedKmh!=null?t.maxSpeedKmh+' km/h':'—','right')+td('<span style="font-family:monospace;">'+(esc(fl.batteries||'')||'—')+'</span>')+td(notes||'')+'</tr>';
+                  }).join('')+'</tbody></table>';
+                h+='<div style="font-size:6pt;color:#94a3b8;margin-top:3pt;">Compact flight table ('+flts.length+' flights). Max alt is the highest logged segment; telemetry heights are measured from ground level at take-off.</div>';
+                return '<div style="margin-bottom:12pt;">'+h+'</div>';
+              }
               h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5pt;">';
               flts.forEach((fl,i)=>{
                 const pk=peakOf(fl); fl=Object.assign({},fl,{__i:'f'+(++flUid),__rpa:rpa});
@@ -4808,7 +4828,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               const nm=String(ov.operationName||ov.identifier||'Flight Record').replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim();
               P.push('<title>'+esc(nm+(dt?' '+dt:''))+'</title>'); }
             { const lc = document.getElementById('wd-leaflet-css'); P.push(lc ? '<style>' + lc.textContent + '</style>' : '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>'); }
-            P.push('<style>@page{size:A4 portrait;margin:20mm 14mm 16mm 14mm;}@media print{.pdfhdr{margin:0 0 14pt!important;border-radius:4pt;}}'
+            const cssq=(t)=>'"'+String(t||'').replace(/["\\\n\r]/g,' ')+'"';
+            P.push('<style>@page{size:A4 portrait;margin:20mm 14mm 16mm 14mm;'
+              +'@bottom-left{content:'+cssq((ov.identifier||'')+' · '+(ov.operationName||'Flight Record')+' · '+(co.name||''))+';font:7pt Arial,sans-serif;color:#94a3b8;}'
+              +'@bottom-right{content:"Page " counter(page) " of " counter(pages);font:7pt Arial,sans-serif;color:#94a3b8;}}@media print{.pdfhdr{margin:0 0 14pt!important;border-radius:4pt;}}'
               +'*{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}'
               +'body{font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:'+S8+';margin:0;background:white;}'
               +'table{border-collapse:collapse;width:100%;}td,th{vertical-align:top;}'
@@ -4911,9 +4934,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push(oonpHtml);
 
             if(oonpMode&&ov.rpaTypes&&ov.rpaTypes.length>0){
-              P.push('<div style="break-before:page;page-break-before:always;"></div>');
-              P.push(sub('OONP Per-Drone Speed & Height Limits'));
-              P.push(droneSpeedTable());
+              P.push('<div style="break-inside:avoid;page-break-inside:avoid;">'+sub('OONP Per-Drone Speed & Height Limits'));
+              P.push(droneSpeedTable()+'</div>');
             }
 
             // Kinetic energy charts — copied from the live charts so the PDF matches the software exactly
@@ -7379,11 +7401,13 @@ View in the Database & Settings tab.`);
 
           // ── Remote RPIC sign-off (v5.51) ──
           const [planFp, setPlanFp] = useState('');
+          const [planFpLegacy, setPlanFpLegacy] = useState('');
           useEffect(() => {
-            const t = setTimeout(() => { planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }).then(setPlanFp).catch(() => {}); }, 400);
+            const t = setTimeout(() => { const st = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic };
+              planFingerprint(st).then(setPlanFp).catch(() => {}); planFingerprint(st, true).then(setPlanFpLegacy).catch(() => {}); }, 400);
             return () => clearTimeout(t);
           }, [overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic]); // eslint-disable-line
-          const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp);
+          const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp && approval.rpRemote.fingerprint !== planFpLegacy);
           const RPIC_DECLARATION = 'I have read and understood this Flight Record — the operation details, the job safety assessment and the risk assessment — and I accept the role of Remote Pilot in Command for this operation. I will conduct the operation in accordance with the operations manual, this plan and any conditions of the approval, and I will tell the CRP before flight if anything changes or if I have any concerns.';
           const sendForRpicSign = async () => {
             if (!approval.rpName) { alert('Choose the RPIC in the Remote Pilot in Command block first.'); return; }
@@ -7421,7 +7445,8 @@ View in the Database & Settings tab.`);
               if (d.operationId !== overview.identifier && (!d.planUid || d.planUid !== overview.uid)) { alert(`This reply is for ${d.operationId} ("${d.title}"), not the job that's open (${overview.identifier}). Open that job first.`); return; }
               if (!d.signatureImage && !d.typedSignature) { alert('The reply has no signature.'); return; }
               const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
-              if (d.fingerprint !== fp) {
+              const fpOld = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, true);
+              if (d.fingerprint !== fp && d.fingerprint !== fpOld) {
                 alert(`⚠ Not signed: the plan has changed since this was sent for signing.\n\n${d.name} signed plan version ${fpShort(d.fingerprint)}; the plan is now version ${fpShort(fp)}.\n\nSend it for signing again so the RPIC signs what will actually be flown.`);
                 return;
               }
@@ -8498,7 +8523,7 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               <header className="print:hidden" style={{background:"linear-gradient(135deg,#1a0533 0%,#2d0a5e 50%,#1a0533 100%)",boxShadow:"0 4px 24px rgba(139,92,246,0.3)"}}>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 flex flex-col md:flex-row justify-between items-center gap-3 md:gap-4">
                   <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
                       <i className="fa-solid fa-plane-departure text-2xl" style={{color:"#c084fc"}}></i>
@@ -8506,19 +8531,19 @@ View in the Database & Settings tab.`);
                     </h1>
                     <p className="text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>
-                  <div className="hidden md:flex gap-3">
+                  <div className="flex flex-wrap justify-center md:justify-end gap-2 md:gap-3" data-header-actions="1">
                     <span id="wd-account-slot" className="self-center"></span>
                     <button onClick={handleResetForm} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 text-slate-300 hover:text-white">
-                      <i className="fa-solid fa-rotate-left"></i> New Operation
+                      <i className="fa-solid fa-rotate-left"></i> <span className="hidden sm:inline">New Operation</span><span className="sm:hidden">New</span>
                     </button>
                     <span data-save-state={dirty ? 'dirty' : 'clean'} className={`self-center text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap ${dirty ? 'bg-amber-400 text-amber-950' : 'bg-white/10 text-slate-300'}`} title={dirty ? 'Changes since the last save are kept in an autosaved working copy until you Save Draft' : ''}>
                       {dirty ? <><i className="fa-solid fa-circle text-[7px] mr-1 align-middle"></i>Unsaved changes</> : lastSavedAt ? <><i className="fa-solid fa-check mr-1"></i>Saved {new Date(lastSavedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</> : null}
                     </span>
                     <button onClick={handleSaveDraftPlan} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-amber-600 text-white print:hidden">
-                      <i className="fa-solid fa-pen-to-square"></i> Save Draft
+                      <i className="fa-solid fa-pen-to-square"></i> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Save</span>
                     </button>
-                    <button onClick={generatePDF} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors print:hidden">
-                      <i className="fa-solid fa-file-pdf"></i> Export PDF
+                    <button onClick={() => generatePDF()} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors print:hidden">
+                      <i className="fa-solid fa-file-pdf"></i> <span className="hidden sm:inline">Export PDF</span><span className="sm:hidden">PDF</span>
                     </button>
                   </div>
                 </div>
@@ -8823,7 +8848,7 @@ View in the Database & Settings tab.`);
                           <div className="flex gap-2 mb-1">
                             <input type="text" name="location" value={overview.location} onChange={handleOverviewChange}
                               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); geocodeLocation(overview.location); } }}
-                              className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
+                              className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
                               placeholder="Search a place or address (e.g. Burleigh Heads QLD) or paste coordinates…" />
                             <button data-allow-locked="1" type="button" onClick={() => geocodeLocation(overview.location)}
                               className="print:hidden flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700">
@@ -9623,7 +9648,7 @@ View in the Database & Settings tab.`);
                               {isFetchingNaips && <span className="text-xs font-normal text-blue-500 flex items-center gap-1"><i className="fa-solid fa-circle-notch fa-spin text-[9px]"></i> Searching...</span>}
                             </label>
                             <div className="flex gap-2 mb-1">
-                              <input type="text" name="nearbyAerodromes" value={jsa.nearbyAerodromes} onChange={handleJsaChange} className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" placeholder="Location, distance, type" />
+                              <input type="text" name="nearbyAerodromes" value={jsa.nearbyAerodromes} onChange={handleJsaChange} className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" placeholder="Location, distance, type" />
                               <button onClick={() => { const {lat,lng} = getCurrentCoords(); const results = searchAerodromesByCoords(lat,lng); setSuggestedAirports(results.length > 0 ? results.map(a => ({ name: `${a.name} (${a.icao}) — ${a.dist.toFixed(1)} nm`, freqs: '', dist: a.dist })) : []); if(results.length===0) alert('No aerodromes found within 30 nm of the ops area location.'); }} disabled={isFetchingNaips} title="Search from ops area coordinates"
                                 className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-blue-50 border border-blue-200 text-blue-700 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 print:hidden flex-shrink-0">
                                 <i className="fa-solid fa-magnifying-glass text-[11px]"></i> Search
@@ -10651,7 +10676,7 @@ View in the Database & Settings tab.`);
 
                         {/* Dynamic Risk Assessment Table with Templates */}
                         <div className="mt-8">
-                          <div className="flex flex-col md:flex-row justify-between md:items-end gap-4 mb-4 pb-2 border-b border-gray-200">
+                          <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-4 mb-4 pb-2 border-b border-gray-200">
                             <div>
                               <h3 className="text-md font-semibold text-slate-800 flex items-center gap-2">
                                 Risk Assessment Register
@@ -10659,11 +10684,11 @@ View in the Database & Settings tab.`);
                               <p className="text-sm text-slate-500 mt-1">Identify hazards and apply the Likelihood/Consequence matrix to calculate risk.</p>
                             </div>
                             
-                            <div className="flex flex-wrap items-center gap-2 print:hidden">
+                            <div className="flex flex-wrap items-center gap-2 min-w-0 print:hidden">
                               <select 
                                 value={selectedTemplate} 
                                 onChange={(e) => setSelectedTemplate(e.target.value)}
-                                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                className="max-w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
                               >
                                 <option value="">-- Select Template --</option>
                                 <optgroup label="Standard Operations">
@@ -10862,28 +10887,28 @@ View in the Database & Settings tab.`);
                             <div>
                               <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Venue Point of Contact</label>
                               <div className="flex gap-2">
-                                <input type="text" name="venueContact" value={oonp.venueContact} onChange={handleOonpChange} placeholder="Name" className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                                <input type="text" name="venueContact" value={oonp.venueContact} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                                 <input type="tel" name="venueContactPhone" value={oonp.venueContactPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                               </div>
                             </div>
                             <div>
                               <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">RF / Comms Coordinator</label>
                               <div className="flex gap-2">
-                                <input type="text" name="rfCoordinator" value={oonp.rfCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                                <input type="text" name="rfCoordinator" value={oonp.rfCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                                 <input type="tel" name="rfCoordinatorPhone" value={oonp.rfCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                               </div>
                             </div>
                             <div>
                               <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Media / Broadcast Lead</label>
                               <div className="flex gap-2">
-                                <input type="text" name="mediaLead" value={oonp.mediaLead} onChange={handleOonpChange} placeholder="Name" className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                                <input type="text" name="mediaLead" value={oonp.mediaLead} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                                 <input type="tel" name="mediaLeadPhone" value={oonp.mediaLeadPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                               </div>
                             </div>
                             <div>
                               <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Pyro / Fireworks Coordinator</label>
                               <div className="flex gap-2">
-                                <input type="text" name="pyroCoordinator" value={oonp.pyroCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                                <input type="text" name="pyroCoordinator" value={oonp.pyroCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                                 <input type="tel" name="pyroCoordinatorPhone" value={oonp.pyroCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
                               </div>
                             </div>
@@ -11407,7 +11432,7 @@ View in the Database & Settings tab.`);
                                   <div className={`rounded-lg border px-3 py-2 text-xs ${rpRemoteStale ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
                                     <div className="font-semibold"><i className="fa-solid fa-signature mr-1"></i>Signed remotely by {approval.rpName} · {new Date(approval.rpRemote.signedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                                     {approval.rpRemote.signatureImage ? <img src={approval.rpRemote.signatureImage} alt="RPIC signature" className="h-12 mt-1 bg-white rounded border border-slate-200" /> : <div className="mt-1 italic text-base" style={{ fontFamily: 'cursive' }}>{approval.rpRemote.typedSignature}</div>}
-                                    <div className="mt-1">{rpRemoteStale ? <b>⚠ The plan has changed since the RPIC signed (signed version {fpShort(approval.rpRemote.fingerprint)}, now {fpShort(planFp)}). Send it for signing again before approval.</b> : <>✓ Matches the current plan (version {fpShort(planFp)})</>}</div>
+                                    <div className="mt-1">{rpRemoteStale ? <b>⚠ The plan has changed since the RPIC signed (signed version {fpShort(approval.rpRemote.fingerprint)}, now {fpShort(planFp)}). Send it for signing again before approval.</b> : <>✓ Matches the current plan (version {fpShort(approval.rpRemote.fingerprint)})</>}</div>
                                     {approval.rpRemote.comments && <div className="mt-1"><b>RPIC comments:</b> {approval.rpRemote.comments}</div>}
                                     {rpRemoteStale && <button type="button" onClick={sendForRpicSign} className="mt-2 text-xs px-2.5 py-1 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700">Send for signing again</button>}
                                   </div>
@@ -11427,11 +11452,14 @@ View in the Database & Settings tab.`);
                           {/* Approval (v5.45): one large switch, only after the CRP and RPIC have signed */}
                           {(() => {
                             const on = !!approval.flightAuthApproved;
-                            const missing = [!approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
+                            const missing = [
+                              !approval.sopMitigatesAll && !String(approval.unmitigatedHazards || '').trim() && 'answer "Does SOP adequately mitigate all hazards?" (Yes, or list the hazards)',
+                              !approval.jsaCorrect && !String(approval.jsaChanges || '').trim() && 'answer "Preliminary Assessment / JSA correct?" (Yes, or describe the changes)',
+                              !approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
                             const can = on || missing.length === 0;
                             const flip = () => {
                               if (!on) {
-                                if (missing.length) { alert('Sign first: ' + missing.join(' and ') + ' needed before the flight can be approved.'); return; }
+                                if (missing.length) { alert('Before approving: ' + missing.join('; ') + '.'); return; }
                                 const ex = jobExpiryCheck(db, overview, approval, oonpMode);
                                 if (ex.bad.length && !window.confirm(`These are out of date for this job:\n\n${ex.bad.map(i => '• ' + i.name + ': ' + jobExpiryText(i)).join('\n')}\n\nApprove the flight anyway?`)) return;
                               }
@@ -11443,7 +11471,7 @@ View in the Database & Settings tab.`);
                                   <div className={`text-lg font-bold ${on ? 'text-emerald-800' : 'text-slate-800'}`}><i className={`fa-solid ${on ? 'fa-circle-check text-emerald-600' : 'fa-plane-departure text-slate-400'} mr-2`}></i>Approved for Flight</div>
                                   <div className="text-xs text-slate-600 mt-0.5">
                                     {on ? `Approved${approval.crpName ? ' by ' + approval.crpName : ''}${approval.approvedAt ? ' · ' + new Date(approval.approvedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}. Sections 1–3 are locked.`
-                                      : missing.length ? <span className="text-amber-700 font-semibold"><i className="fa-solid fa-pen-nib mr-1"></i>Sign first: {missing.join(' and ')}.</span> : 'Both signatures are in. Switch on to approve the flight and lock the plan.'}
+                                      : missing.length ? <span className="text-amber-700 font-semibold" data-approve-missing="1"><i className="fa-solid fa-pen-nib mr-1"></i>Before approving: {missing.join('; ')}.</span> : 'Both signatures are in. Switch on to approve the flight and lock the plan.'}
                                   </div>
                                 </div>
                                 <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can}
@@ -11781,6 +11809,11 @@ View in the Database & Settings tab.`);
                             <button type="button" onClick={openLogDump} data-partc-logs="1" className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
                               <i className="fa-solid fa-file-import"></i> Import flight logs
                             </button>
+                            <label className="text-xs text-indigo-900 flex items-center gap-1.5 order-last w-full sm:w-auto sm:order-none" title="How flights appear in the PDF. Auto uses the compact table above 24 flights.">PDF flight log
+                              <select value={log.pdfFlightStyle || 'auto'} data-pdf-flight-style="1" onChange={e => setLog(prev => ({ ...prev, pdfFlightStyle: e.target.value }))} className="px-1.5 py-1 border border-indigo-200 rounded bg-white text-xs">
+                                <option value="auto">Auto</option><option value="cards">Cards with charts</option><option value="table">Compact table</option>
+                              </select>
+                            </label>
                             <p className="text-xs text-indigo-900 flex-1 min-w-[14rem]">Select every radio log (EdgeTX CSV) from the day, from any number of drones. Each flight is matched to an aircraft by its battery cell count (from the starting RxBt voltage) or the radio model name, and you check the list before anything is added.</p>
                           </div>
 
@@ -12411,7 +12444,7 @@ View in the Database & Settings tab.`);
                         })()}
 
                         {/* Database Backup */}
-                        <div className="flex justify-between items-center bg-indigo-100 p-4 rounded-lg border border-indigo-200">
+                        <div className="flex flex-wrap gap-3 justify-between items-center bg-indigo-100 p-4 rounded-lg border border-indigo-200">
                             <div>
                                 <h3 className="font-bold text-indigo-900 text-sm">Database Backup & Sync</h3>
                                 <p className="text-xs text-indigo-700 mt-1">Export everything (plans, drafts, records, fleet, people, custom risk templates) to a JSON file to prevent data loss or to move to another device.</p>
@@ -12432,7 +12465,7 @@ View in the Database & Settings tab.`);
                                   </p>
                                 )}
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
                                 <button onClick={handleExportDb} className="bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1">
                                     <i className="fa-solid fa-download"></i> Export Data
                                 </button>

@@ -22,12 +22,18 @@ index.html                 page shell (print styles, Leaflet inlined for the PDF
 src/main.jsx               entry: globals → styles → storage → planner → offline support
 src/globals.js             React / ReactDOM globals the planner was written against
 src/legacy/planner.jsx     the planner app (from the single-file version, unchanged)
-src/storage/index.js       storage-mode setting: local / sync / cloud (only 'local' active until Chunk 1)
+src/storage/index.js       storage-mode setting: local / sync / cloud (only 'local' active so far)
+src/cloud/                 Supabase client + Account & crew panel (hosted app only; Chunk 1)
 src/pwa.js                 service worker registration (hosted build only)
 src/styles/app.css         Tailwind + Font Awesome (solid + regular, woff2)
 public/                    app icons
 scripts/vendor-fa.mjs      regenerates the trimmed Font Awesome CSS when upgrading
+supabase/migrations/       database schema + row-level security (run in Supabase SQL Editor)
+supabase/functions/        edge functions (invite-user)
+supabase/tests/            RLS tests: `cd supabase/tests && npm i @electric-sql/pglite && node rls.test.mjs`
 ```
+
+The app version is `APP_VERSION` in `src/legacy/planner.jsx`; the page title uses it automatically.
 
 Build notes:
 - The planner relies on classic-script hoisting, so `let`/`const` are compiled to `var`
@@ -48,4 +54,4 @@ already uses (`wdStore`).
 
 ## Deploying the hosted app
 
-See `DEPLOY.md`.
+Pushing to `main` deploys to https://planner.wakingdreamfpv.com (Cloudflare Pages). See `DEPLOY.md`.

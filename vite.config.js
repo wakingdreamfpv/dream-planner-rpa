@@ -16,11 +16,16 @@ const inlineLeaflet = () => ({
   } },
 });
 
+// The app version lives in one place (APP_VERSION in src/legacy/planner.jsx); the page title picks it up at build time.
+const APP_VERSION = (readFileSync(fileURLToPath(new URL('./src/legacy/planner.jsx', import.meta.url)), 'utf8').match(/const APP_VERSION = '([\d.]+)'/) || [])[1] || 'dev';
+const appVersion = () => ({ name: 'wd-app-version', transformIndexHtml: { order: 'pre', handler: (html) => html.replace(/%APP_VERSION%/g, APP_VERSION) } });
+
 export default defineConfig(({ mode }) => {
   const single = mode === 'single';
   return {
     base: './',
     plugins: [
+      appVersion(),
       inlineLeaflet(),
       react({
         jsxRuntime: 'classic', // the planner uses the global React, like the original page

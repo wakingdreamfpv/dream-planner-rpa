@@ -1,7 +1,7 @@
 {
   "name": "dream-planner-rpa",
   "private": true,
-  "version": "5.48.0",
+  "version": "5.55.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
