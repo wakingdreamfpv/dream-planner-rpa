@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '5.52';
+        const APP_VERSION = '5.53';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4101,6 +4101,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // IndexedDB is the master copy. Nothing is written until it has been read, so defaults can't overwrite real data.
           const dbReadyRef = useRef(false);
           const [dbReady, setDbReady] = useState(false);
+          // A brand-new database on this device (no saved data anywhere): upgrade notices stay quiet and a welcome screen shows (v5.53)
+          const freshDbRef = useRef(false);
+          const [showWelcome, setShowWelcome] = useState(false);
           useEffect(() => {
             let cancelled = false;
             wdStore.load().then(stored => {
@@ -4111,6 +4114,11 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 // first run on this version: move the localStorage data into IndexedDB
                 let legacy = null; try { legacy = localStorage.getItem('rpas_database'); } catch (e) {}
                 if (legacy) wdStore.save(JSON.parse(legacy));
+                else {
+                  freshDbRef.current = true;
+                  let seen = false; try { seen = !!localStorage.getItem('wd_welcomed'); } catch (e) {}
+                  if (!seen && !wdStore.locked) setShowWelcome(true);
+                }
               }
             }).catch(err => console.warn('IndexedDB unavailable — using localStorage only', err))
               .finally(() => { if (!cancelled) { dbReadyRef.current = true; setDbReady(true); } });
@@ -4302,7 +4310,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (moved.length) lines.push(`Packs moved to the aircraft with the matching rating (${moved.length}):\n` + moved.slice(0, 15).map(s => '• ' + s).join('\n') + (moved.length > 15 ? `\n• …and ${moved.length - 15} more` : ''));
             if (left.length) lines.push('Left as they are (check these):\n' + left.slice(0, 10).map(s => '• ' + s).join('\n'));
             if (missing.length) lines.push('No aircraft found named like: ' + missing.join(', ') + '. Set its Battery in Database & Settings › Fleet.');
-            if (lines.length) setTimeout(() => alert('Fleet updated for v5.29\n\n' + lines.join('\n\n')), 600);
+            if (lines.length && !freshDbRef.current) setTimeout(() => alert('Fleet updated for v5.29\n\n' + lines.join('\n\n')), 600);
           }, [dbReady]); // eslint-disable-line
 
           // One-time update (v5.32): CASA.OONP.0079 Schedule 1.3 reading, agreed with the CASA delegate (confirmation pending)
@@ -8370,6 +8378,38 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               <WdProgressOverlay />
+              {showWelcome && (() => {
+                const close = () => { try { localStorage.setItem('wd_welcomed', new Date().toISOString()); } catch (e) {} setShowWelcome(false); };
+                return (
+                  <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-center justify-center p-4 print:hidden" data-testid="welcome">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+                      <div className="px-6 py-5 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <div className="text-xs uppercase tracking-widest opacity-75">Waking Dream FPV</div>
+                        <h2 className="text-2xl font-bold mt-1">Welcome to Dream Planner</h2>
+                        <p className="text-sm opacity-85 mt-1">RPAS operations planner, JSA and Flight Records · v{APP_VERSION}</p>
+                      </div>
+                      <div className="p-6 space-y-3">
+                        <p className="text-sm text-slate-600">This is a new planner on this device. How would you like to start?</p>
+                        <label className="flex items-start gap-3 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 rounded-xl px-4 py-3 cursor-pointer">
+                          <i className="fa-solid fa-database text-indigo-600 mt-1"></i>
+                          <span><span className="block font-semibold text-indigo-900">Import my backup</span><span className="block text-xs text-indigo-800">Bring across everything from another copy of the planner: in the old one, go to Database &amp; Settings › Export backup, then choose that file here.</span></span>
+                          <input type="file" accept=".json" className="hidden" data-welcome-import="1" onChange={(e) => { close(); handleImportDb(e); }} />
+                        </label>
+                        <label className="flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 cursor-pointer">
+                          <i className="fa-solid fa-file-import text-slate-600 mt-1"></i>
+                          <span><span className="block font-semibold text-slate-800">Import a single job</span><span className="block text-xs text-slate-600">A plan file (.json) exported from the planner. It's added to your drafts.</span></span>
+                          <input type="file" accept=".json" className="hidden" onChange={(e) => { close(); handleImportPlan(e); }} />
+                        </label>
+                        <button type="button" data-welcome-start="1" onClick={close} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
+                          <i className="fa-solid fa-plane-departure text-emerald-600 mt-1"></i>
+                          <span><span className="block font-semibold text-slate-800">Start a new job</span><span className="block text-xs text-slate-600">Set up your company, fleet and crew any time in Database &amp; Settings.</span></span>
+                        </button>
+                        <p className="text-[11px] text-slate-400 pt-1"><i className="fa-solid fa-lock mr-1"></i>Your data is saved in this browser on this device. Use Export backup regularly, or install the app (Install / Add to Home Screen) to use it offline.</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               {logDump && (() => {
                 const d = logDump, fleetNames = Object.keys(db.fleet || {}).sort((a, b) => a.localeCompare(b));
                 const job = (overview.rpaTypes || []).filter(r => (db.fleet || {})[r]);
