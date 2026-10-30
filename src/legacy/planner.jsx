@@ -69,12 +69,14 @@
           if (v === 'limits') {
             const top = h34 != null ? h34 : Math.min(60, (h15 || 10) * 4);
             const step = [0.25, 0.5, 1, 2, 5, 10].find(s => top / s <= 15) || 10;
-            const rows = [];
-            for (let h = 0; h < top - 1e-9; h += step) {
-              const hh = Math.round(h * 1000) / 1000;
-              if ((h15 != null && Math.abs(hh - h15) < step * 0.12) || (h34 != null && Math.abs(hh - h34) < step * 0.12)) continue;
-              rows.push({ h: hh });
-            }
+            // v6.4: coarse steps where there's plenty of allowance, then every whole metre (½ m on small ceilings)
+            // over the last few metres below each ceiling, so the heights you actually fly near the limit are listed.
+            const hset = new Set();
+            for (let h = 0; h < top - 1e-9; h += step) hset.add(Math.round(h * 1000) / 1000);
+            [h15, h34].forEach(c => { if (c == null) return;
+              const fine = c <= 6 ? 0.5 : 1, band = Math.max(3, step * 2);
+              for (let h = Math.max(0, Math.ceil((c - band) / fine) * fine); h < c - 1e-9; h += fine) hset.add(Math.round(h * 1000) / 1000); });
+            const rows = [...hset].filter(hh => !((h15 != null && Math.abs(hh - h15) < 0.05) || (h34 != null && Math.abs(hh - h34) < 0.05))).sort((a, b) => a - b).map(h => ({ h }));
             if (h15 != null) rows.push({ h: h15, ceil: 15 });
             if (h34 != null) rows.push({ h: h34, ceil: 34 });
             rows.sort((a, b) => a.h - b.h);
@@ -167,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.3';
+        const APP_VERSION = '6.4';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1932,6 +1934,15 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             // especially just after arming. Measure from the lowest point of the flight (5-sample median smoothed), so
             // heights are never pushed below zero. This can only over-state height, never under-state it.
             const altRaw = seg.map(r => r.alt);
+            // v6.4: at arming the receiver often repeats an old altitude for a few samples, then jumps to the real one
+            // (e.g. 24 m → 0 m in 0.1 s). A jump faster than any drone can climb or fall, in the first 3 s, marks
+            // everything before it as stale, and those samples are ignored.
+            { let cut = -1;
+              for (let i = 1; i < seg.length && seg[i].ms - seg[0].ms <= 3000; i++) {
+                const a0 = altRaw[i - 1], a1 = altRaw[i], dt = Math.max(0.05, (seg[i].ms - seg[i - 1].ms) / 1000);
+                if (isFinite(a0) && isFinite(a1) && Math.abs(a1 - a0) > Math.max(6, 25 * dt)) cut = i;
+              }
+              for (let i = 0; i < cut; i++) altRaw[i] = NaN; }
             const altSm = altRaw.map((v, i) => { if (!isFinite(v)) return NaN; const w = altRaw.slice(Math.max(0, i - 2), i + 3).filter(isFinite).sort((x, y) => x - y); return w[Math.floor(w.length / 2)]; });
             const altOk = altSm.filter(isFinite);
             // Zero = ground level at take-off (v5.42): the median smoothed altitude while the aircraft is armed but still on
@@ -3344,6 +3355,36 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           { id: 5, name: 'Landing',                  maxFt: '', minFt: '', useRange: false },
         ];
 
+        // v6.4: battery pack groups from the name, e.g. "3S-720-0226-11" → 3S 720 mAh
+        const battSpec = (name) => {
+          const m = /(\d)\s*s\b[^0-9]{0,3}(\d{3,5})/i.exec(String(name || '')) || /(\d{3,5})\s*mah[^0-9]{0,6}(\d)\s*s\b/i.exec(String(name || ''));
+          if (!m) return { cells: 0, mah: 0, group: 'Other' };
+          const cells = /mah/i.test(m[0]) ? +m[2] : +m[1], mah = /mah/i.test(m[0]) ? +m[1] : +m[2];
+          return { cells, mah, group: cells + 'S ' + mah + ' mAh' };
+        };
+        const battSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+        // Cycle the chosen packs through the flights in time order (pack 1, 2, … n, then 1 again).
+        // A pack is skipped for a flight when the cell count doesn't match the log, or (optionally) the flight used more than the pack holds.
+        function planBatteryCycle(flights, packs, { onlyBlank = true, start = 0, capacityCheck = true } = {}) {
+          const order = flights.map((f, i) => ({ f, i, t: (f.telemetry && f.telemetry.startMs) || 0 }))
+            .sort((a, b) => (a.t && b.t) ? a.t - b.t : a.i - b.i);
+          const out = {}, warn = [];
+          if (!packs.length) return { out, warn };
+          let k = ((start % packs.length) + packs.length) % packs.length;
+          order.forEach(({ f }) => {
+            if (onlyBlank && String(f.batteries || '').trim()) return;
+            const t = f.telemetry || {};
+            for (let tries = 0; tries < packs.length; tries++) {
+              const p = packs[(k + tries) % packs.length], sp = battSpec(p);
+              const cellsOk = !(t.cells && sp.cells) || t.cells === sp.cells;
+              const capOk = !capacityCheck || !(t.mahUsed && sp.mah) || t.mahUsed <= sp.mah * 1.02;
+              if (cellsOk && capOk) { out[f.id] = p; k = (k + tries + 1) % packs.length; return; }
+            }
+            warn.push(f.id);
+          });
+          return { out, warn };
+        }
+
         function FlightEntryLogger({ rpa, flights: initFlights, rpaBattOpts, allBatts, onChange, fleetKg, limitCtx, rpaCells }) {
           const mkFlight = () => ({ id: Date.now()+Math.random(), label:'', duration:'', batteries:'', showHeights:false, segments:DEFAULT_FLIGHT_SEGS() });
           const [flights, setFlights] = React.useState(() =>
@@ -3362,6 +3403,12 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               : [mkFlight()]);
           }, [initFlights]); // eslint-disable-line
           const [bulkMins, setBulkMins] = React.useState('');
+          const [autoBatt, setAutoBatt] = React.useState(null); // { packs:[], onlyBlank, start, capacityCheck }
+          const openAutoBatt = () => {
+            const cells = parseInt(rpaCells) || 0;
+            const assigned = (rpaBattOpts || []).filter(b => !cells || !battSpec(b).cells || battSpec(b).cells === cells);
+            setAutoBatt({ packs: [...assigned].sort(battSort), onlyBlank: flights.some(f => !String(f.batteries || '').trim()), start: 0, capacityCheck: true });
+          };
           const fillBlankDurations = () => {
             const v = parseInt(bulkMins); if (!(v > 0)) return;
             commit(flights.map(f => (parseInt(f.duration) > 0 ? f : { ...f, duration: String(v) })));
@@ -3428,18 +3475,27 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const importTelemetry = () => pickCsv(true, (results) => {
             const have = new Set(flights.filter(f => f.telemetry).map(f => f.telemetry.startMs));
             const found = [], skipped = [], empty = [];
+            const refresh = {};
             results.forEach(r => {
               if (!r.flights.length) { empty.push(r.name + (r.error ? ' (' + r.error + ')' : '')); return; }
-              r.flights.forEach(t => { if (have.has(t.startMs)) skipped.push(t); else { have.add(t.startMs); found.push(t); } });
+              r.flights.forEach(t => { if (have.has(t.startMs)) { skipped.push(t); refresh[t.startMs] = t; } else { have.add(t.startMs); found.push(t); } });
             });
             found.sort((a, b) => a.startMs - b.startMs);
-            if (found.length) {
-              const kept = flights.filter(f => !isBlank(f));
+            // v6.4: a flight that's already here gets the fresh reading (e.g. the improved height); its battery, label, notes and OONP stay
+            let updated = 0;
+            const refreshed = flights.map(f => {
+              const t = f.telemetry && refresh[f.telemetry.startMs]; if (!t) return f;
+              if (JSON.stringify(t) === JSON.stringify(f.telemetry)) return f;
+              updated++; const auto = flightFromTelemetry(t);
+              return f.source === 'telemetry' ? { ...f, telemetry: t, segments: auto.segments, duration: auto.duration } : { ...f, telemetry: t };
+            });
+            if (found.length || updated) {
+              const kept = refreshed.filter(f => !isBlank(f));
               commit([...kept, ...found.map(flightFromTelemetry)]);
             }
             const mins = found.reduce((s, t) => s + t.durationSec, 0);
             alert((found.length ? `Imported ${found.length} flight${found.length !== 1 ? 's' : ''} for ${rpa} (${fmtMmSs(mins)} armed).` : 'No new flights imported.')
-              + (skipped.length ? `\n${skipped.length} already in this log — skipped.` : '')
+              + (skipped.length ? `\n${skipped.length} already in this log${updated ? ` — ${updated} updated with the latest reading (battery, label and notes kept)` : ' — unchanged'}.` : '')
               + (empty.length ? `\nNo armed flights found in: ${empty.join(', ')}` : '')
               + (found.length ? '\n\nAdd the battery used and mark OONP / Non-OONP on each flight.' : ''));
           });
@@ -3487,11 +3543,77 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       <i className="fa-solid fa-satellite-dish text-[10px]"></i> Import telemetry
                     </button>
                   </div>
+                  {flights.length > 1 && <button onClick={openAutoBatt} data-auto-batt="1" className="flex items-center gap-1.5 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold px-3 py-1.5 rounded-lg border border-amber-200 transition-colors" title="Pick the packs you cycled through and fill them in across the flights">
+                    <i className="fa-solid fa-car-battery text-[10px]"></i> Auto-assign batteries
+                  </button>}
                   <button onClick={addFlight} className="flex items-center gap-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold px-3 py-1.5 rounded-lg border border-blue-200 transition-colors">
                     <i className="fa-solid fa-plus text-[10px]"></i> Add Flight
                   </button>
                 </div>
               </div>
+
+              {autoBatt && (() => {
+                const all = [...new Set([...(rpaBattOpts || []), ...(allBatts || []).map(b => (b && typeof b === 'object') ? b.name : b)].map(x => String(x || '').trim()))].filter(Boolean).sort(battSort);
+                const groups = {}; all.forEach(b => { const g = battSpec(b).group; (groups[g] = groups[g] || []).push(b); });
+                const gNames = Object.keys(groups).sort((a, b) => (a === 'Other') - (b === 'Other') || battSort(a, b));
+                const sel = autoBatt.packs, has = (b) => sel.includes(b);
+                const setSel = (arr) => setAutoBatt(a => ({ ...a, packs: all.filter(b => arr.includes(b)), start: 0 }));
+                const plan = planBatteryCycle(flights, sel, autoBatt);
+                const nPlan = Object.keys(plan.out).length, used = {}; Object.values(plan.out).forEach(p => { used[p] = (used[p] || 0) + 1; });
+                const order = flights.map((f, i) => ({ f, i, t: (f.telemetry && f.telemetry.startMs) || 0 })).sort((a, b) => (a.t && b.t) ? a.t - b.t : a.i - b.i);
+                const apply = () => { commit(flights.map(f => plan.out[f.id] ? { ...f, batteries: plan.out[f.id] } : f)); setAutoBatt(null); };
+                return (
+                  <div className="fixed inset-0 z-[300] bg-black/50 flex items-start sm:items-center justify-center p-3 overflow-y-auto print:hidden" data-auto-batt-modal="1" onMouseDown={e => { if (e.target === e.currentTarget) setAutoBatt(null); }}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6">
+                      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200">
+                        <h3 className="font-bold text-slate-800 flex-1"><i className="fa-solid fa-car-battery text-amber-600 mr-2"></i>Auto-assign batteries · {rpa}</h3>
+                        <button onClick={() => setAutoBatt(null)} className="text-slate-400 hover:text-slate-700 text-xl"><i className="fa-solid fa-xmark"></i></button>
+                      </div>
+                      <div className="p-5 space-y-4">
+                        <p className="text-sm text-slate-600">Tick the packs you had in circulation. They're filled in across the flights in time order, cycling 1, 2, 3 … then back to the first, the way you swap packs on the day.{rpaCells ? ` Packs whose cell count doesn't match ${rpaCells}S are skipped.` : ''}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+                          {gNames.map(g => { const list = groups[g], on = list.filter(has).length; return (
+                            <div key={g} className="border border-slate-200 rounded-lg p-2.5" data-batt-group={g}>
+                              <label className="flex items-center gap-2 font-semibold text-sm text-slate-800 mb-1.5 cursor-pointer">
+                                <input type="checkbox" className="accent-amber-600 w-4 h-4" checked={on === list.length} ref={el => { if (el) el.indeterminate = on > 0 && on < list.length; }}
+                                  onChange={e => setSel(e.target.checked ? [...new Set([...sel, ...list])] : sel.filter(b => !list.includes(b)))} data-batt-group-all={g} />
+                                {g} <span className="text-xs font-normal text-slate-500">({on}/{list.length})</span>
+                              </label>
+                              <div className="flex flex-wrap gap-1">
+                                {list.map(b => <label key={b} className={`text-[11px] font-mono px-1.5 py-0.5 rounded border cursor-pointer ${has(b) ? 'bg-amber-100 border-amber-300 text-amber-900' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                  <input type="checkbox" className="hidden" checked={has(b)} onChange={() => setSel(has(b) ? sel.filter(x => x !== b) : [...sel, b])} data-batt-pick={b} />{b}{used[b] ? <span className="ml-1 font-sans font-bold">×{used[b]}</span> : null}</label>)}
+                              </div>
+                            </div>); })}
+                          {!gNames.length && <p className="text-sm text-slate-400">No batteries in the database yet (Database &amp; Settings › Batteries).</p>}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-4 text-sm">
+                          <label className="flex items-center gap-2"><input type="checkbox" className="accent-amber-600" checked={autoBatt.onlyBlank} onChange={e => setAutoBatt(a => ({ ...a, onlyBlank: e.target.checked }))} data-batt-onlyblank="1" />Only flights with no battery yet</label>
+                          <label className="flex items-center gap-2"><input type="checkbox" className="accent-amber-600" checked={autoBatt.capacityCheck} onChange={e => setAutoBatt(a => ({ ...a, capacityCheck: e.target.checked }))} />Skip a pack if the flight used more mAh than it holds</label>
+                          {sel.length > 1 && <label className="flex items-center gap-2">Start with
+                            <select value={autoBatt.start} onChange={e => setAutoBatt(a => ({ ...a, start: +e.target.value }))} className="border border-slate-300 rounded px-1.5 py-1 text-xs font-mono" data-batt-start="1">
+                              {sel.map((b, i) => <option key={b} value={i}>{b}</option>)}</select></label>}
+                        </div>
+                        <div className="border border-slate-200 rounded-lg max-h-64 overflow-y-auto">
+                          <table className="w-full text-xs"><thead className="bg-slate-50 sticky top-0"><tr><th className="text-left px-2 py-1">#</th><th className="text-left px-2 py-1">Flight</th><th className="text-right px-2 py-1">Used</th><th className="text-left px-2 py-1">Now</th><th className="text-left px-2 py-1">Will be</th></tr></thead>
+                            <tbody>{order.map(({ f, i }) => { const p = plan.out[f.id], t = f.telemetry || {}; return (
+                              <tr key={f.id} className="border-t border-slate-100" data-batt-row={i}>
+                                <td className="px-2 py-1 text-slate-400">{i + 1}</td><td className="px-2 py-1">{f.label || 'Flight ' + (i + 1)}</td>
+                                <td className="px-2 py-1 text-right font-mono text-slate-500">{t.mahUsed != null ? t.mahUsed + ' mAh' : '—'}</td>
+                                <td className="px-2 py-1 font-mono text-slate-500">{f.batteries || '—'}</td>
+                                <td className="px-2 py-1 font-mono font-bold">{p ? <span className="text-amber-800">{p}</span> : plan.warn.includes(f.id) ? <span className="text-rose-600">no pack fits</span> : <span className="text-slate-400">unchanged</span>}</td>
+                              </tr>); })}</tbody></table>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs text-slate-500">{sel.length} pack{sel.length === 1 ? '' : 's'} selected · {nPlan} flight{nPlan === 1 ? '' : 's'} will be filled{plan.warn.length ? ` · ${plan.warn.length} with no pack that fits` : ''}</span>
+                          <div className="flex gap-2">
+                            <button onClick={() => setAutoBatt(null)} className="px-3 py-2 rounded-lg text-sm border border-slate-300 text-slate-600">Cancel</button>
+                            <button onClick={apply} disabled={!nPlan} data-batt-apply="1" className="px-3 py-2 rounded-lg text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40">Assign to {nPlan} flight{nPlan === 1 ? '' : 's'}</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>);
+              })()}
 
               {flights.map((fl, idx) => {
                 const peakFt = fl.segments ? Math.max(0,...fl.segments.map(s=>parseFloat(s.maxFt)||0)) : 0;
