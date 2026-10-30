@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { getSupabase } from './client.js';
 import { cloudAvailable } from './config.js';
+import { PilotInduction, CrpInductions } from './Induction.jsx';
 
 const ROLE_LABEL = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
 const ROLE_STYLE = { crp: 'bg-violet-100 text-violet-800', pilot: 'bg-sky-100 text-sky-800', observer: 'bg-emerald-100 text-emerald-800' };
@@ -227,10 +228,33 @@ function AccountPanel() {
     refresh();
     return () => { dead = true; };
   }, [sb, me]);
+  // v6.3 (Chunk 3): inductions waiting for the CRP show as a badge on the account button
+  const [awaiting, setAwaiting] = useState(0);
+  useEffect(() => {
+    if (!(me && me.active && me.role === 'crp')) { setAwaiting(0); return; }
+    sb.from('signoff_records').select('id').eq('type', 'pilot_induction').eq('status', 'awaiting_crp').then(({ data }) => setAwaiting((data || []).length));
+  }, [sb, me]);
+  // The CRP's planner publishes the fleet's RPA types so pilots can pick them in their induction
+  useEffect(() => {
+    if (!(me && me.active && me.role === 'crp')) return;
+    let last = '';
+    const push = async () => {
+      const names = Array.isArray(window.wdFleetTypes) ? [...new Set(window.wdFleetTypes.map(n => String(n).trim()).filter(Boolean))].sort() : null;
+      if (!names || !names.length || names.join('|') === last) return;
+      last = names.join('|');
+      await sb.from('fleet_types').upsert(names.map(name => ({ name, active: true, updated_at: new Date().toISOString() })), { onConflict: 'name' });
+      const { data } = await sb.from('fleet_types').select('name').eq('active', true);
+      const gone = (data || []).map(x => x.name).filter(n => !names.includes(n));
+      for (const name of gone) await sb.from('fleet_types').update({ active: false }).eq('name', name);
+    };
+    const safe = () => { push().catch(() => {}); };
+    safe(); window.addEventListener('wd-fleet', safe);
+    return () => window.removeEventListener('wd-fleet', safe);
+  }, [sb, me]);
   const chip = (
     <button type="button" onClick={() => setOpen(true)} data-testid="account-chip"
       className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-      {session ? <><span className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center text-[10px] font-bold">{initials(me && me.full_name, session.user.email)}</span><span className="max-w-[9rem] truncate">{(me && me.full_name) || session.user.email}</span>{me && me.role && <span className="text-[10px] font-bold uppercase opacity-80">{ROLE_LABEL[me.role]}</span>}</>
+      {session ? <><span className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center text-[10px] font-bold">{initials(me && me.full_name, session.user.email)}</span><span className="max-w-[9rem] truncate">{(me && me.full_name) || session.user.email}</span>{me && me.role && <span className="text-[10px] font-bold uppercase opacity-80">{ROLE_LABEL[me.role]}</span>}{awaiting > 0 && <span data-testid="awaiting-badge" title="Inductions waiting for you" className="ml-0.5 text-[10px] font-bold bg-amber-400 text-amber-950 rounded-full px-1.5">{awaiting}</span>}</>
         : <><i className="fa-solid fa-user"></i>{loading ? '…' : 'Sign in'}</>}
     </button>
   );
@@ -243,7 +267,9 @@ function AccountPanel() {
                   <button type="button" onClick={signOut} className={btn + ' border border-slate-300 text-slate-600'} data-testid="signout">Sign out</button>
                 </div>
                 {me && !me.active && <div className="text-sm bg-amber-50 text-amber-900 border border-amber-200 rounded-lg px-3 py-2" data-testid="inactive-note">Your login isn't active. Ask the CRP to invite or activate you.</div>}
+                {me && me.active && me.role === 'crp' && <CrpInductions sb={sb} me={me} onCount={setAwaiting} />}
                 {me && me.active && me.role === 'crp' && <CrewAdmin sb={sb} me={me} />}
+                {me && me.active && me.role === 'pilot' && <PilotInduction sb={sb} me={me} />}
                 {me && me.active && me.role !== 'crp' && <MyProfile sb={sb} me={me} onSaved={() => loadMe(session)} />}
                 <p className="text-[11px] text-slate-400"><i className="fa-solid fa-circle-info mr-1"></i>Jobs and plans are still saved on this device for now; cloud sync of jobs comes in a later update.</p>
               </div>

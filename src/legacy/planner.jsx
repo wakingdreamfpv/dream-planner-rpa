@@ -167,7 +167,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.2';
+        const APP_VERSION = '6.3';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8492,6 +8492,8 @@ View in the Database & Settings tab.`);
             return () => { clearTimeout(t); clearTimeout(pend); mo && mo.disconnect(); window.removeEventListener('scroll', onScroll); };
           }, [activeTab]); // eslint-disable-line
           const dbSectionsRef = useRef([]); dbSectionsRef.current = dbSections;
+          // v6.3: publish the fleet's RPA types for the cloud (pilots pick them in their induction)
+          useEffect(() => { try { window.wdFleetTypes = Object.keys(db.fleet || {}); window.dispatchEvent(new Event('wd-fleet')); } catch (e) {} }, [db.fleet]);
           // v6.2: login status per crew member (from the account panel's bridge; CRP only, hosted app only)
           const [, setCloudTick] = useState(0);
           useEffect(() => { const h = () => setCloudTick(t => t + 1); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
