@@ -30,7 +30,7 @@ public/                    app icons
 scripts/vendor-fa.mjs      regenerates the trimmed Font Awesome CSS when upgrading
 supabase/migrations/       database schema + row-level security (run in Supabase SQL Editor)
 supabase/functions/        edge functions (invite-user)
-supabase/tests/            RLS tests: `cd supabase/tests && npm i @electric-sql/pglite && node rls.test.mjs`
+supabase/tests/            RLS tests: `cd supabase/tests && npm i @electric-sql/pglite && node rls.test.mjs && node rls2.test.mjs`
 ```
 
 The app version is `APP_VERSION` in `src/legacy/planner.jsx`; the page title uses it automatically.
