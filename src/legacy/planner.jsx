@@ -169,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.4';
+        const APP_VERSION = '6.5';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5014,7 +5014,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               r2('Start Date & Time',fmtD(ov.operationDate)+' '+(ov.startTime||''),'End Date & Time',fmtD(ov.operationEndDate||ov.operationDate)+' '+(ov.endTime||'')),
               cRow('Task Overview',ov.taskOverview),
               r2('Location / Site',ov.location,'Max Height Planned',ov.maxHeightPlanned?ov.maxHeightPlanned+' ft AGL':'—'),
-              r2('RPAS Fleet',(ov.rpaTypes||[]).join(', ')||'—','Remote Pilot Station',ov.remotePilotStation||'—'),
+              r2('RPAS Fleet',(ov.rpaTypes||[]).map(t=>{const x=(db.fleet||{})[t]||{};const id=[x.registrationNo,x.serial&&('S/N '+x.serial)].filter(Boolean).join(', ');return t+(id?' ('+id+')':'');}).join(', ')||'—','Remote Pilot Station',ov.remotePilotStation||'—'),
               r2('RPIC',ov.rpic+((db.pilots||[]).find(p=>p.name===ov.rpic&&p.arn)?' (ARN '+(db.pilots.find(p=>p.name===ov.rpic).arn)+')':''),'Crew / Support',ov.supportPersonnel),
               r2('Flight Mode',(jsa.operationTypes||[]).join(', ')+(jsa.timeOfDay&&jsa.timeOfDay!=='DAY'?' · '+jsa.timeOfDay.toLowerCase():''),'Client',ov.clientName)));
             P.push(sitesHtml);
@@ -8648,6 +8648,38 @@ View in the Database & Settings tab.`);
             card.classList.add('wd-req-flash'); setTimeout(() => card.classList.remove('wd-req-flash'), 1400);
           };
 
+          const fleetLogged = loggedTimeStats(db.completedFlights).acft;
+
+          // ── v6.5 First-time setup wizard: company, you (CRP), fleet with CASA registration, batteries ──
+          const [wiz, setWiz] = useState(null);
+          const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
+          const openSetupWizard = () => {
+            const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
+            const fleet = Object.entries(db.fleet || {}).map(([name, x]) => ({ key: name, name, weight: x.weight ?? '', cells: x.cells || '', registrationNo: x.registrationNo || '', registrationExpiry: x.registrationExpiry || '', serial: x.serial || '', keep: true }));
+            const owner = {}; Object.entries(db.rpaBatteries || {}).forEach(([rpa, list]) => (list || []).forEach(b => { if (!owner[b]) owner[b] = rpa; }));
+            const batt = [...new Set([...(db.batteries || []), ...Object.keys(owner)])].filter(Boolean).map(b => ({ name: b, rpa: owner[b] || '', keep: true }));
+            setWiz({ step: 0, co, me: { name: co.crpName || '', arn: '', phone: co.phone || '', email: co.email || '' }, fleet, batt, gen: { prefix: '', count: 6, start: 1, rpa: '' }, dropSamplePilots: (db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) });
+          };
+          const finishSetupWizard = () => {
+            const w = wiz;
+            setDb(prev => {
+              const co = { ...(prev.companyProfile || {}), ...w.co, crpName: w.me.name.trim() };
+              let pilots = (prev.pilots || []).filter(p => !(w.dropSamplePilots && SAMPLE_PILOTS.includes(p.name)));
+              if (w.me.name.trim()) { const i = pilots.findIndex(p => p.name.toLowerCase() === w.me.name.trim().toLowerCase()); const me = { ...(i >= 0 ? pilots[i] : {}), name: w.me.name.trim(), arn: w.me.arn.trim(), phone: w.me.phone.trim(), email: w.me.email.trim() };
+                if (i >= 0) pilots[i] = me; else pilots = [me, ...pilots]; }
+              const fleet = {}; const renamed = {};
+              w.fleet.filter(x => x.keep && x.name.trim()).forEach(x => { const old = (prev.fleet || {})[x.key] || {}; const nm = x.name.trim(); if (x.key && x.key !== nm) renamed[x.key] = nm;
+                fleet[nm] = { area: 0.05, cd: 1.2, ...old, weight: parseFloat(x.weight) || old.weight || 0, cells: x.cells, registrationNo: String(x.registrationNo || '').trim().toUpperCase(), registrationExpiry: x.registrationExpiry, serial: x.serial }; });
+              const keptB = w.batt.filter(b => b.keep && b.name.trim());
+              const rpaBatteries = {}; keptB.forEach(b => { const rpa = renamed[b.rpa] || b.rpa; if (rpa && fleet[rpa]) (rpaBatteries[rpa] = rpaBatteries[rpa] || []).push(b.name.trim()); });
+              const next = { ...prev, companyProfile: co, pilots, fleet, batteries: keptB.map(b => b.name.trim()), rpaBatteries, setupDoneAt: new Date().toISOString() };
+              if (dbSaveTimer.current) clearTimeout(dbSaveTimer.current);
+              dbSaveTimer.current = setTimeout(() => { if (dbReadyRef.current) wdStore.save(next); }, 300);
+              return next;
+            });
+            setWiz(null);
+          };
+
           // ==========================================
           // --- RENDER COMPONENT ---
           // ==========================================
@@ -8731,6 +8763,10 @@ View in the Database & Settings tab.`);
                           <span><span className="block font-semibold text-slate-800">Import a single job</span><span className="block text-xs text-slate-600">A plan file (.json) exported from the planner. It's added to your drafts.</span></span>
                           <input type="file" accept=".json" className="hidden" onChange={(e) => { close(); handleImportPlan(e); }} />
                         </label>
+                        <button type="button" data-welcome-setup="1" onClick={() => { close(); openSetupWizard(); }} className="w-full flex items-start gap-3 border border-violet-200 bg-violet-50 hover:bg-violet-100 rounded-xl px-4 py-3 text-left">
+                          <i className="fa-solid fa-wand-magic-sparkles text-violet-600 mt-1"></i>
+                          <span><span className="block font-semibold text-violet-900">Set up my company (about 3 minutes)</span><span className="block text-xs text-violet-800">Company and ReOC details, you as CRP, your aircraft with CASA registration, and your batteries.</span></span>
+                        </button>
                         <button type="button" data-welcome-start="1" onClick={close} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
                           <i className="fa-solid fa-plane-departure text-emerald-600 mt-1"></i>
                           <span><span className="block font-semibold text-slate-800">Start a new job</span><span className="block text-xs text-slate-600">Set up your company, fleet and crew any time in Database &amp; Settings.</span></span>
@@ -8740,6 +8776,95 @@ View in the Database & Settings tab.`);
                     </div>
                   </div>
                 );
+              })()}
+              {wiz && (() => {
+                const w = wiz, set = (patch) => setWiz(p => ({ ...p, ...patch }));
+                const STEPS = ['Company', 'You (CRP)', 'Fleet', 'Batteries', 'Finish'];
+                const inp = 'w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-violet-300 focus:outline-none';
+                const lb = 'block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-0.5';
+                const F = (obj, k, label, ph, type = 'text', key) => (<div><label className={lb}>{label}</label><input type={type} className={inp} value={w[obj][k] || ''} placeholder={ph} data-wiz={key || (obj + '.' + k)}
+                  onChange={e => set({ [obj]: { ...w[obj], [k]: e.target.value } })} /></div>);
+                const setRow = (list, i, patch) => set({ [list]: w[list].map((x, j) => j === i ? { ...x, ...patch } : x) });
+                const fleetNames = w.fleet.filter(x => x.keep && x.name.trim()).map(x => x.name.trim());
+                const genNames = () => { const g = w.gen, p = g.prefix.trim(); if (!p) return []; const n = Math.max(1, Math.min(60, parseInt(g.count) || 0)), s0 = Math.max(0, parseInt(g.start) || 1);
+                  return Array.from({ length: n }, (_, i) => p + '-' + String(s0 + i).padStart(2, '0')); };
+                const keptF = w.fleet.filter(x => x.keep), keptB = w.batt.filter(b => b.keep);
+                const noRego = keptF.filter(x => !String(x.registrationNo || '').trim());
+                return (
+                  <div className="fixed inset-0 z-[4850] bg-slate-900/60 flex items-start sm:items-center justify-center p-3 overflow-y-auto print:hidden" data-testid="setup-wizard">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6 overflow-hidden">
+                      <div className="px-6 py-4 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <div className="flex items-center gap-3"><h2 className="text-xl font-bold flex-1">Set up your planner</h2><button onClick={() => setWiz(null)} className="text-white/70 hover:text-white text-xl"><i className="fa-solid fa-xmark"></i></button></div>
+                        <div className="flex gap-1.5 mt-3 flex-wrap">{STEPS.map((t, i) => <button key={t} type="button" onClick={() => set({ step: i })} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${i === w.step ? 'bg-white text-violet-900' : i < w.step ? 'bg-white/30 text-white' : 'bg-white/10 text-white/70'}`}>{i + 1}. {t}</button>)}</div>
+                      </div>
+                      <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto">
+                        {w.step === 0 && (<>
+                          <p className="text-sm text-slate-600">Your company details print on every plan and flight record.</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {F('co', 'name', 'Company / trading name', 'e.g. Waking Dream FPV')}{F('co', 'reocNumber', 'ReOC number', 'e.g. ReOC 9037')}
+                            {F('co', 'companyArn', 'Company (operator) ARN', 'e.g. 1266519')}{F('co', 'phone', 'Phone', '+61 4xx xxx xxx')}
+                            {F('co', 'email', 'Email', 'ops@yourcompany.com.au', 'email')}{F('co', 'address', 'Address', 'Street, suburb, state')}
+                          </div></>)}
+                        {w.step === 1 && (<>
+                          <p className="text-sm text-slate-600">You as Chief Remote Pilot. You're added to the pilot list, and your name fills the CRP sign-off.</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {F('me', 'name', 'Your full name', 'e.g. Michael Rubio')}{F('me', 'arn', 'Your ARN', 'e.g. 1209476')}
+                            {F('me', 'phone', 'Mobile', '04xx xxx xxx')}{F('me', 'email', 'Email', 'you@company.com', 'email')}
+                          </div>
+                          {(db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={w.dropSamplePilots} onChange={e => set({ dropSamplePilots: e.target.checked })} />Remove the sample pilots ({SAMPLE_PILOTS.join(', ')})</label>}
+                          <p className="text-xs text-slate-500">Add other pilots and observers later in Database &amp; Settings › Crew &amp; users.</p></>)}
+                        {w.step === 2 && (<>
+                          <p className="text-sm text-slate-600">Your aircraft, with their CASA registration. Untick any you don't fly. Weight sets the kinetic energy limits; cells match radio logs to the aircraft.</p>
+                          <div className="space-y-2">{w.fleet.map((x, i) => (
+                            <div key={i} className={`grid grid-cols-2 sm:grid-cols-12 gap-2 items-end border rounded-lg p-2 ${x.keep ? 'border-slate-200' : 'border-slate-100 bg-slate-50 opacity-60'}`} data-wiz-fleet={i}>
+                              <label className="col-span-2 sm:col-span-1 flex items-center gap-1 text-xs pb-2"><input type="checkbox" checked={x.keep} onChange={e => setRow('fleet', i, { keep: e.target.checked })} />Fly</label>
+                              <div className="col-span-2 sm:col-span-3"><label className={lb}>Aircraft</label><input className={inp} value={x.name} onChange={e => setRow('fleet', i, { name: e.target.value })} data-wiz-fname={i} /></div>
+                              <div className="sm:col-span-2"><label className={lb}>Weight kg</label><input className={inp} type="number" step="0.001" value={x.weight} onChange={e => setRow('fleet', i, { weight: e.target.value })} /></div>
+                              <div className="sm:col-span-1"><label className={lb}>Cells</label><select className={inp} value={x.cells} onChange={e => setRow('fleet', i, { cells: e.target.value })}><option value="">–</option>{[1,2,3,4,5,6,8,12,14].map(n => <option key={n} value={String(n)}>{n}S</option>)}<option value="none">DJI</option></select></div>
+                              <div className="sm:col-span-2"><label className={lb}>CASA rego no.</label><input className={inp + ' font-mono uppercase'} value={x.registrationNo} placeholder="PF…" onChange={e => setRow('fleet', i, { registrationNo: e.target.value.toUpperCase() })} data-wiz-rego={i} /></div>
+                              <div className="sm:col-span-2"><label className={lb}>Rego expiry</label><input className={inp} type="date" value={x.registrationExpiry} onChange={e => setRow('fleet', i, { registrationExpiry: e.target.value })} data-wiz-regoexp={i} /></div>
+                              <div className="sm:col-span-1"><label className={lb}>Serial</label><input className={inp} value={x.serial} onChange={e => setRow('fleet', i, { serial: e.target.value })} /></div>
+                            </div>))}</div>
+                          <div className="flex gap-2 flex-wrap">
+                            <button type="button" data-wiz-addfleet="1" onClick={() => set({ fleet: [...w.fleet, { key: '', name: '', weight: '', cells: '', registrationNo: '', registrationExpiry: '', serial: '', keep: true }] })} className="text-sm font-semibold px-3 py-1.5 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50"><i className="fa-solid fa-plus mr-1"></i>Add aircraft</button>
+                            <button type="button" onClick={() => set({ fleet: w.fleet.map(x => ({ ...x, keep: !!String(x.registrationNo || '').trim() })) })} className="text-sm px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50">Keep only aircraft with a CASA rego</button>
+                          </div>
+                          <p className="text-xs text-slate-500">Registration expiry dates feed the Compliance Calendar and the expiry check on each job. Aircraft that only fly under the excluded category can be left without a number.</p></>)}
+                        {w.step === 3 && (<>
+                          <p className="text-sm text-slate-600">Your battery packs and the aircraft they belong to. Name packs with the cells and capacity (e.g. <span className="font-mono">3S-720-11</span>) so the planner can auto-assign them to flights.</p>
+                          <div className="border border-violet-200 bg-violet-50/50 rounded-lg p-3 grid grid-cols-2 sm:grid-cols-12 gap-2 items-end">
+                            <div className="col-span-2 sm:col-span-4"><label className={lb}>Name start</label><input className={inp + ' font-mono'} placeholder="e.g. 3S-720" value={w.gen.prefix} onChange={e => set({ gen: { ...w.gen, prefix: e.target.value } })} data-wiz-gen-prefix="1" /></div>
+                            <div className="sm:col-span-2"><label className={lb}>How many</label><input className={inp} type="number" min="1" max="60" value={w.gen.count} onChange={e => set({ gen: { ...w.gen, count: e.target.value } })} data-wiz-gen-count="1" /></div>
+                            <div className="sm:col-span-2"><label className={lb}>First no.</label><input className={inp} type="number" min="0" value={w.gen.start} onChange={e => set({ gen: { ...w.gen, start: e.target.value } })} /></div>
+                            <div className="col-span-2 sm:col-span-3"><label className={lb}>Aircraft</label><select className={inp} value={w.gen.rpa} onChange={e => set({ gen: { ...w.gen, rpa: e.target.value } })} data-wiz-gen-rpa="1"><option value="">—</option>{fleetNames.map(n => <option key={n}>{n}</option>)}</select></div>
+                            <button type="button" className="col-span-2 sm:col-span-1 px-2 py-1.5 rounded-md bg-violet-600 text-white text-sm font-semibold" data-wiz-gen-add="1"
+                              onClick={() => { const add = genNames().filter(n => !w.batt.some(b => b.name === n)).map(n => ({ name: n, rpa: w.gen.rpa, keep: true })); set({ batt: [...w.batt, ...add] }); }}>Add</button>
+                            {genNames().length > 0 && <div className="col-span-2 sm:col-span-12 text-[11px] text-slate-500">Adds {genNames()[0]} … {genNames()[genNames().length - 1]}</div>}
+                          </div>
+                          <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">{w.batt.map((b, i) => (
+                            <div key={i} className={`flex items-center gap-2 px-2 py-1 text-sm ${b.keep ? '' : 'opacity-50'}`}>
+                              <input type="checkbox" checked={b.keep} onChange={e => setRow('batt', i, { keep: e.target.checked })} />
+                              <span className="font-mono flex-1 truncate">{b.name}</span>
+                              <select className="text-xs border border-slate-200 rounded px-1 py-0.5 max-w-[45%]" value={b.rpa} onChange={e => setRow('batt', i, { rpa: e.target.value })}><option value="">No aircraft</option>{fleetNames.map(n => <option key={n}>{n}</option>)}</select>
+                            </div>))}
+                            {!w.batt.length && <div className="p-3 text-sm text-slate-400">No batteries yet. Use the row above to add a set.</div>}</div></>)}
+                        {w.step === 4 && (
+                          <div className="space-y-2 text-sm" data-wiz-summary="1">
+                            <div><b>Company:</b> {w.co.name || '—'}{w.co.reocNumber ? ' · ' + w.co.reocNumber : ''}{w.co.companyArn ? ' · ARN ' + w.co.companyArn : ''}</div>
+                            <div><b>CRP:</b> {w.me.name || '—'}{w.me.arn ? ' · ARN ' + w.me.arn : ''}</div>
+                            <div><b>Fleet:</b> {keptF.length} aircraft{noRego.length ? <span className="text-amber-700"> · {noRego.length} without a CASA rego number ({noRego.map(x => x.name).join(', ')})</span> : ''}</div>
+                            <div><b>Batteries:</b> {keptB.length} pack{keptB.length === 1 ? '' : 's'}</div>
+                            <p className="text-xs text-slate-500 pt-2">Nothing is saved until you click Finish. You can run this again any time from Database &amp; Settings.</p>
+                          </div>)}
+                      </div>
+                      <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2">
+                        <button type="button" onClick={() => w.step ? set({ step: w.step - 1 }) : setWiz(null)} className="px-3 py-2 rounded-lg text-sm border border-slate-300 text-slate-600">{w.step ? 'Back' : 'Cancel'}</button>
+                        {w.step < 4 ? <button type="button" data-wiz-next="1" onClick={() => set(w.step === 2
+                          ? { step: 3, batt: w.batt.map(b => (b.rpa && !fleetNames.includes(b.rpa)) ? { ...b, keep: false } : b) } : { step: w.step + 1 })} className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700">Next</button>
+                          : <button type="button" data-wiz-finish="1" onClick={finishSetupWizard} className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700">Finish</button>}
+                      </div>
+                    </div>
+                  </div>);
               })()}
               {logDump && (() => {
                 const d = logDump, fleetNames = Object.keys(db.fleet || {}).sort((a, b) => a.localeCompare(b));
@@ -12825,6 +12950,11 @@ View in the Database & Settings tab.`);
                           </div>
                         </div>
 
+                        <div className="flex items-center justify-between gap-3 flex-wrap border border-violet-200 bg-violet-50/60 rounded-xl px-4 py-3">
+                          <div className="text-sm text-violet-900"><b>Setup wizard</b> · company, you as CRP, fleet with CASA registration, batteries{db.setupDoneAt ? <span className="text-xs text-violet-700"> · last run {new Date(db.setupDoneAt).toLocaleDateString('en-AU')}</span> : null}</div>
+                          <button type="button" data-open-setup="1" onClick={openSetupWizard} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Run setup wizard</button>
+                        </div>
+
                         {/* Company Profile */}
                         <div className="border border-blue-200 rounded-xl overflow-hidden shadow-sm">
                           <div className="bg-blue-50 px-4 py-3 border-b border-blue-200 flex items-center gap-2">
@@ -13057,7 +13187,15 @@ View in the Database & Settings tab.`);
                                                 />
                                                 <span className="text-xs text-slate-400">m²</span>
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">Airframe: <strong className="text-indigo-600">{db.fleet[rpa].totalFlightTime || 0} mins</strong></div>
+                                            {(() => { const st = (fleetLogged[rpa] || { sec: 0, flights: 0 }), prior = (parseFloat(db.fleet[rpa].priorMinutes) || 0) + (parseFloat(db.fleet[rpa].totalFlightTime) || 0); return (
+                                              <div className="text-xs text-slate-500 mt-1" data-fleet-logged={rpa}>Airframe: <strong className="text-indigo-600">{fmtHrsMin(st.sec + prior * 60)}</strong>
+                                                <span className="text-[10px] text-slate-400"> · {st.flights} logged flight{st.flights === 1 ? '' : 's'}{prior ? ` + ${prior} min before the planner` : ''}</span></div>); })()}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <label className="text-[10px] uppercase font-bold text-slate-400 w-14 flex-shrink-0" title="Airframe time flown before you started logging in the planner">Prior</label>
+                                                <input type="number" min="0" step="1" value={db.fleet[rpa].priorMinutes || ''} placeholder="0" data-fleet-prior={rpa}
+                                                    onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], priorMinutes: e.target.value}})}
+                                                    className="w-20 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" /><span className="text-xs text-slate-400">min</span>
+                                            </div>
 
                                             {db.fleet[rpa].batteries && <span className="text-xs text-slate-500 block mb-1 truncate" title={db.fleet[rpa].batteries}>Batts: {db.fleet[rpa].batteries}</span>}
                                             {db.fleet[rpa].disclaimer && <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-1 rounded border border-amber-100 leading-tight mt-1">{db.fleet[rpa].disclaimer}</span>}
@@ -13082,10 +13220,22 @@ View in the Database & Settings tab.`);
                                                 </div>
                                             </div>
 
-                                            {/* Compliance: registration & maintenance due dates */}
+                                            {/* Compliance: CASA registration, serial, expiry & maintenance due dates */}
                                             <div className="mt-1.5 pt-1.5 border-t border-slate-200 space-y-1">
                                                 <div className="flex items-center gap-2">
-                                                    <label className="text-[10px] uppercase font-bold text-slate-400 w-20 flex-shrink-0">Registration</label>
+                                                    <label className="text-[10px] uppercase font-bold text-slate-400 w-20 flex-shrink-0" title="CASA RPA registration number (e.g. PF1234567)">CASA rego</label>
+                                                    <input type="text" value={db.fleet[rpa].registrationNo || ''} placeholder="e.g. PF1234567" data-fleet-rego={rpa}
+                                                        onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], registrationNo: e.target.value.toUpperCase()}})}
+                                                        className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-[10px] uppercase font-bold text-slate-400 w-20 flex-shrink-0" title="Serial number or your own ID for this airframe">Serial / ID</label>
+                                                    <input type="text" value={db.fleet[rpa].serial || ''} placeholder="Serial or airframe ID" data-fleet-serial={rpa}
+                                                        onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], serial: e.target.value}})}
+                                                        className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-[10px] uppercase font-bold text-slate-400 w-20 flex-shrink-0">Rego expiry</label>
                                                     <input
                                                         type="date"
                                                         value={db.fleet[rpa].registrationExpiry || ''}
@@ -13114,51 +13264,6 @@ View in the Database & Settings tab.`);
                                                     );
                                                 })()}
                                             </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-                                    <div className="col-span-2"><label className="text-[10px] uppercase font-bold text-slate-500">Model Name</label><input type="text" value={dbInputFleet.name} onChange={e=>setDbInputFleet(prev=>({...prev, name: e.target.value}))} placeholder="Model" className="w-full text-sm border rounded px-2 py-1.5" /></div>
-                                    <div><label className="text-[10px] uppercase font-bold text-slate-500">Weight(kg)</label><input type="number" step="0.01" value={dbInputFleet.weight} onChange={e=>setDbInputFleet(prev=>({...prev, weight: parseFloat(e.target.value)}))} placeholder="Kg" className="w-full text-sm border rounded px-2 py-1.5" /></div>
-                                    <div><label className="text-[10px] uppercase font-bold text-slate-500">Battery type</label><input type="text" value={dbInputFleet.batteries} onChange={e=>setDbInputFleet(prev=>({...prev, batteries: e.target.value}))} placeholder="Battery" className="w-full text-sm border rounded px-2 py-1.5" /></div>
-                                    <div className="col-span-2 md:col-span-4"><button onClick={() => {if(dbInputFleet.name) {updateDb('fleet', {...db.fleet, [dbInputFleet.name]: {weight: dbInputFleet.weight, batteries: dbInputFleet.batteries, area: 0.05, cd: 1.2, totalFlightTime: 0}}); setDbInputFleet({name:'', weight:'', area:'0.05', cd:'1.2', batteries:''});}}} className="bg-indigo-600 hover:bg-indigo-700 text-white w-full py-1.5 rounded text-sm font-medium transition-colors shadow-sm"><i className="fa-solid fa-plus mr-1"></i> Add to Fleet</button></div>
-                                </div>
-                            </div>
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-plane-departure text-slate-400"></i> RPAS Fleet (Aircraft Times)</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4 max-h-[400px] overflow-y-auto pr-1">
-                                    {Object.keys(db.fleet).map((rpa, i) => (
-                                        <div key={i} className="flex flex-col text-sm bg-slate-50 border border-slate-200 px-3 py-2 rounded relative">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <span className="font-bold text-slate-800">{rpa}</span>
-                                                <button onClick={() => { const newFleet={...db.fleet}; delete newFleet[rpa]; updateDb('fleet', newFleet); }} className="text-slate-400 hover:text-red-500 transition-colors"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                            </div>
-                                                                                        {/* Editable weight */}
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <label className="text-[10px] uppercase font-bold text-slate-400 w-14 flex-shrink-0">Weight</label>
-                                                <input
-                                                    type="number" step="0.001" min="0"
-                                                    value={db.fleet[rpa].weight || ''}
-                                                    onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], weight: parseFloat(e.target.value)||0}})}
-                                                    className="w-20 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white focus:ring-blue-400 focus:border-blue-400 font-mono"
-                                                />
-                                                <span className="text-xs text-slate-400">kg</span>
-                                            </div>
-                                            {/* Editable area */}
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <label className="text-[10px] uppercase font-bold text-slate-400 w-14 flex-shrink-0">Area</label>
-                                                <input
-                                                    type="number" step="0.001" min="0"
-                                                    value={db.fleet[rpa].area || ''}
-                                                    onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], area: parseFloat(e.target.value)||0}})}
-                                                    className="w-20 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white focus:ring-blue-400 focus:border-blue-400 font-mono"
-                                                />
-                                                <span className="text-xs text-slate-400">m²</span>
-                                            </div>
-                                            <div className="text-xs text-slate-500 mt-1">Airframe: <strong className="text-indigo-600">{db.fleet[rpa].totalFlightTime || 0} mins</strong></div>
-
-                                            {db.fleet[rpa].batteries && <span className="text-xs text-slate-500 block mb-1 truncate" title={db.fleet[rpa].batteries}>Batts: {db.fleet[rpa].batteries}</span>}
-                                            {db.fleet[rpa].disclaimer && <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-1 rounded border border-amber-100 leading-tight mt-1">{db.fleet[rpa].disclaimer}</span>}
                                         </div>
                                     ))}
                                 </div>
