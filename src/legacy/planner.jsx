@@ -169,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.5';
+        const APP_VERSION = '6.6';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8486,8 +8486,8 @@ View in the Database & Settings tab.`);
               event.target.value = '';
           };
 
-          const handleResetForm = () => {
-              if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Are you sure you want to clear the current form and start a new operation? This will wipe all current flight data (but will safely keep your saved Database).")) {
+          // v6.6: the reset itself, without asking (used by the sample-job tour)
+          const handleResetFormQuiet = () => {
                   quietUntilRef.current = Date.now() + 2500; setDirty(false); wdStore.clearWorking();
                   setOverview(getInitialOverview());
                   setChecklist(getInitialChecklist());
@@ -8504,7 +8504,10 @@ View in the Database & Settings tab.`);
                   setKeData({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
                   setExtraKe([]); setOonpToolsOpen(false);
                   setActiveTab('preliminary');
-              }
+          };
+          const handleResetForm = () => {
+              if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Are you sure you want to clear the current form and start a new operation? This will wipe all current flight data (but will safely keep your saved Database)."))
+                  handleResetFormQuiet();
           };
 
           // ── v6.0 Mandatory record items ───────────────────────────────────────
@@ -8650,15 +8653,108 @@ View in the Database & Settings tab.`);
 
           const fleetLogged = loggedTimeStats(db.completedFlights).acft;
 
+
+          // ── v6.6 Guided tour with a sample job (first part of the setup wizard) ──────────────────
+          const SAMPLE_AIRCRAFT = {
+            mini: { name: 'DJI Mini 4 Pro', spec: { weight: 0.249, area: 0.010, cd: 1.0, cells: 'none', batteries: 'Intelligent Flight Battery' }, batt: ['MINI 4-01', 'MINI 4-02', 'MINI 4-03'], label: 'DJI Mini 4 Pro', blurb: '249 g camera drone' },
+            whoop: { name: 'Custom 3.5" Cinewhoop (FPV)', spec: { weight: 0.28, area: 0.02, cd: 1.15, cells: '4', batteries: '4S 650 mAh LiPo' }, batt: ['4S-650-01', '4S-650-02', '4S-650-03', '4S-650-04'], label: 'Custom 3.5" FPV cinewhoop', blurb: '4S FPV, ~280 g' },
+          };
+          const [tour, setTour] = useState(null); // { kind, step }
+          const makeSamplePlan = (kind) => {
+            const A = SAMPLE_AIRCRAFT[kind], today = localISODate();
+            const lat = -27.9631, lng = 153.4272; // Doug Jennings Park, The Spit (Gold Coast) — open grass by the water
+            const P = (dLat, dLng) => ({ lat: +(lat + dLat).toFixed(6), lng: +(lng + dLng).toFixed(6), x: 50, y: 50 });
+            const ov = { ...getInitialOverview(), operationName: 'SAMPLE — Park promo shoot', clientName: 'Sample Client Pty Ltd', assessor: 'Sample Pilot', rpic: 'Sample Pilot',
+              taskOverview: 'Sample job: short promotional video of the park and foreshore for a client. ' + (kind === 'whoop' ? 'FPV cinewhoop flying low along the paths, VLOS with a spotter.' : 'Mini camera drone, orbits and reveals, VLOS.'),
+              location: `${lat}, ${lng}`, operationDate: today, operationEndDate: today, startTime: '07:00', endTime: '09:00', rpaTypes: [A.name], maxHeightPlanned: kind === 'whoop' ? '60' : '200',
+              remotePilotStation: kind === 'whoop' ? 'RadioMaster TX15 (ELRS 2.4 GHz) + DJI Goggles 3' : 'DJI RC 2', supportPersonnel: 'Sample Spotter',
+              launchSites: [{ id: 1, label: 'Primary Launch', coords: `${(lat + 0.0003).toFixed(6)}, ${(lng - 0.0004).toFixed(6)}` }],
+              recoverySites: [{ id: 1, label: 'Primary Recovery', coords: `${(lat + 0.0003).toFixed(6)}, ${(lng - 0.0004).toFixed(6)}` }], sample: true };
+            const cl = getInitialChecklist(); Object.keys(cl).forEach(k => { cl[k] = true; });
+            const cn = getInitialChecklistNotes();
+            if (kind === 'whoop') { cl.vlos = true; }
+            const R = (refNo, hazard, desc, ctrl, iL, iC, add, rL, rC) => ({ id: Date.now() + Math.random(), refNo, dateAdded: today, hazard, riskDescription: desc, existingControls: ctrl, initL: iL, initC: iC, additionalControls: add, resL: rL, resC: rC, riskOwner: 'RPIC' });
+            const risks = [
+              R('001', 'Members of the public walking into the area', 'Park users on paths could come within 30 m', 'Walk the site first; spotter watches the paths', '3', 'C', 'Pause or hold over grass when people approach; signage at entry points', '2', 'D'),
+              R('002', 'Loss of control link / video', kind === 'whoop' ? 'ELRS or video loss near trees' : 'RC link loss behind trees', 'Failsafe set and checked; fly in open areas', '2', 'C', 'Keep line of sight; land early if link warnings', '1', 'D'),
+              R('003', 'Wind gusts off the water', 'Small RPA drifting toward people or water', 'Check forecast and on-site wind before flying', '3', 'D', 'Stop flying above the wind limit for the aircraft', '2', 'E'),
+              R('004', 'Battery failure or low voltage', 'Forced landing in an unsuitable spot', 'Charged and checked packs; land at 3.6 V/cell', '2', 'C', 'Battery log; retire puffy packs', '1', 'D'),
+              R('005', 'Birds (gulls, pelicans) near the water', 'Bird strike or harassment', 'Watch for birds; give way', '2', 'D', 'Land if birds approach the aircraft', '1', 'E'),
+            ];
+            const seg = (ft) => [{ id: 1, name: 'Take-Off', maxFt: '5', minFt: '', useRange: false }, { id: 2, name: 'Movement to Ops Area', maxFt: String(Math.round(ft / 2)), minFt: '', useRange: false }, { id: 3, name: 'Flight Operation', maxFt: String(ft), minFt: '', useRange: false }, { id: 4, name: 'Movement to Landing Area', maxFt: String(Math.round(ft / 2)), minFt: '', useRange: false }, { id: 5, name: 'Landing', maxFt: '5', minFt: '', useRange: false }];
+            const hts = kind === 'whoop' ? [25, 40, 55] : [120, 180, 150];
+            const flights = hts.map((ft, i) => ({ id: Date.now() + i + Math.random(), label: `Sample flight ${i + 1}`, duration: String(kind === 'whoop' ? 4 + i : 12 + i * 2), batteries: A.batt[i % A.batt.length], showHeights: false, segments: seg(ft), source: 'manual' }));
+            return {
+              id: 'sample-' + kind, status: 'draft', title: 'SAMPLE — Park promo shoot', overview: ov, checklist: cl, checklistNotes: cn,
+              jsa: { ...getInitialJsa(), airspaceClass: 'Class G', maxOperatingHeightAgl: ov.maxHeightPlanned, operationTypes: ['VLOS'], timeOfDay: 'DAY',
+                nearbyAerodromes: 'Gold Coast Seaway HLS — check NOTAMs', airspaceHazards: 'Helicopter traffic along the Broadwater', groundHazards: 'Park users on paths, trees, water' },
+              risks,
+              approval: { ...getInitialApproval(), sopMitigatesAll: true, jsaCorrect: true, releaseServiceable: true, notams: 'Nil relevant (sample)', approvedDates: today, approvedTypes: [A.name] },
+              log: { ...getInitialLog(), rpaLogs: { [A.name]: { duration: '', batteries: '', fpvEnabled: false, flights } } },
+              mapData: { launches: [{ id: 1, label: 'Launch 1', ...P(0.0003, -0.0004) }], recoveries: [{ id: 2, label: 'Recovery 1', ...P(0.0003, -0.0004) }], signage: [],
+                areaPolygon: [P(0.0012, -0.0012), P(0.0012, 0.0010), P(-0.0010, 0.0012), P(-0.0011, -0.0011)], crowdZones: [], exclusionZones: [] },
+              oonp: {}, oonpMode: false, keData: { enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 }, extraKe: [], ballistic: { enabled: false, height: 5, speed: 5 },
+            };
+          };
+          const startTour = (kind) => {
+            const A = SAMPLE_AIRCRAFT[kind];
+            if (dirty && !window.confirm('Starting the tour replaces the job that is open now. Unsaved changes will be lost.\n\nContinue?')) return;
+            setDb(prev => {
+              const fleet = { ...(prev.fleet || {}) };
+              if (!fleet[A.name]) fleet[A.name] = { ...A.spec, sample: true };
+              const rb = { ...(prev.rpaBatteries || {}) }; if (!rb[A.name]) rb[A.name] = A.batt;
+              return { ...prev, fleet, rpaBatteries: rb };
+            });
+            setTimeout(() => { handleLoadPlan(makeSamplePlan(kind), { silent: true }); setTour({ kind, step: 0 }); }, 60);
+          };
+          const endTour = (thenSetup) => {
+            const kind = tour && tour.kind; setTour(null);
+            quietUntilRef.current = Date.now() + 2500; handleResetFormQuiet();
+            if (!thenSetup) setDb(prev => { const fleet = { ...(prev.fleet || {}) }, rb = { ...(prev.rpaBatteries || {}) };
+              Object.keys(fleet).forEach(n => { if (fleet[n] && fleet[n].sample) { delete fleet[n]; delete rb[n]; } }); return { ...prev, fleet, rpaBatteries: rb }; });
+            if (thenSetup) openSetupWizard(kind, 1);
+          };
+          const TOUR_STEPS = [
+            { tab: 'preliminary', sel: '[data-req-strip=preliminary]', title: 'Section 1 — the job', body: 'This sample job is filled in for you. The box at the top lists any mandatory item still missing (CASA MOS 10.04 and your Form F.1). Tap an item and it jumps you to the field.' },
+            { tab: 'preliminary', sel: '[data-tour=map]', title: 'Map the site', body: 'Draw the ops area, drop launch and recovery pins, signage and exclusion zones on satellite imagery. Pin coordinates fill the flight record automatically.' },
+            { tab: 'preliminary', sel: '[data-req-anchor=prelim]', title: 'Preliminary checklist', body: 'Answer Yes or No for each standard condition. A No opens a box for the reason or the approval that covers it, and the JSA is flagged.' },
+            { tab: 'jsa', sel: '[data-req-anchor=risks]', title: 'JSA and risk register', body: 'Load a risk template (VLOS, night, EVLOS, OONP…) or write your own. Likelihood × consequence gives the rating, before and after your controls.' },
+            { tab: 'jsa', sel: '[data-oonp-tools-closed]', title: 'Tools appear when you need them', body: 'Tick OONP and the kinetic energy limits, per-drone speed/height limits and ballistic splash area appear. On a VLOS job they stay out of the way.' },
+            { tab: 'approval', sel: '[data-approve-panel]', title: 'Authorise the flight', body: 'The CRP and RPIC sign (or send the plan to the RPIC to sign on their phone), then switch on Approved for Flight. The plan locks once approved.' },
+            { tab: 'log', sel: '[data-req-strip=log]', title: 'Log the flights', body: 'After flying: weather, on-site check, then each flight with its length and height. Import EdgeTX/ELRS logs for real telemetry, and auto-assign the batteries you cycled through.' },
+            { tab: 'log', sel: '[data-header-actions]', title: 'Export the record', body: 'Export PDF gives you the full plan and flight record for the client or CASA. Save Draft keeps the job in Database & Settings.' },
+          ];
+          // The highlight is a ring drawn over the target's position (the target itself may re-render), kept in step while scrolling.
+          const [tourRect, setTourRect] = useState(null);
+          useEffect(() => {
+            if (!tour) { setTourRect(null); return; }
+            const st = TOUR_STEPS[tour.step]; if (!st) return;
+            if (activeTab !== st.tab) setActiveTab(st.tab);
+            const t = setTimeout(() => { const el = document.querySelector(st.sel); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 250);
+            const measure = () => {
+              const el = document.querySelector(st.sel);
+              if (!el || !el.offsetParent && el.getClientRects().length === 0) { setTourRect(null); return; }
+              const r = el.getBoundingClientRect();
+              setTourRect(p => (p && Math.abs(p.x - r.left) < 1 && Math.abs(p.y - r.top) < 1 && Math.abs(p.w - r.width) < 1 && Math.abs(p.h - r.height) < 1) ? p : { x: r.left, y: r.top, w: r.width, h: r.height });
+            };
+            const iv = setInterval(measure, 150);
+            window.addEventListener('scroll', measure, { passive: true }); window.addEventListener('resize', measure);
+            return () => { clearTimeout(t); clearInterval(iv); window.removeEventListener('scroll', measure); window.removeEventListener('resize', measure); };
+          }, [tour]); // eslint-disable-line
+
           // ── v6.5 First-time setup wizard: company, you (CRP), fleet with CASA registration, batteries ──
           const [wiz, setWiz] = useState(null);
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
-          const openSetupWizard = () => {
+          const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
             const fleet = Object.entries(db.fleet || {}).map(([name, x]) => ({ key: name, name, weight: x.weight ?? '', cells: x.cells || '', registrationNo: x.registrationNo || '', registrationExpiry: x.registrationExpiry || '', serial: x.serial || '', keep: true }));
             const owner = {}; Object.entries(db.rpaBatteries || {}).forEach(([rpa, list]) => (list || []).forEach(b => { if (!owner[b]) owner[b] = rpa; }));
             const batt = [...new Set([...(db.batteries || []), ...Object.keys(owner)])].filter(Boolean).map(b => ({ name: b, rpa: owner[b] || '', keep: true }));
-            setWiz({ step: 0, co, me: { name: co.crpName || '', arn: '', phone: co.phone || '', email: co.email || '' }, fleet, batt, gen: { prefix: '', count: 6, start: 1, rpa: '' }, dropSamplePilots: (db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) });
+            if (kind && SAMPLE_AIRCRAFT[kind]) { const A = SAMPLE_AIRCRAFT[kind]; const i = fleet.findIndex(x => x.name === A.name);
+              if (i >= 0) fleet[i] = { ...fleet[i], keep: true, highlight: true }; else fleet.unshift({ key: '', name: A.name, weight: A.spec.weight, cells: A.spec.cells, registrationNo: '', registrationExpiry: '', serial: '', keep: true, highlight: true });
+              fleet.forEach(x => { if (!x.highlight && (db.fleet[x.key] || {}).sample) x.keep = false; }); }
+            else fleet.forEach(x => { if ((db.fleet[x.key] || {}).sample) x.keep = false; });
+            setWiz({ step: startStep || 0, co, me: { name: co.crpName || '', arn: '', phone: co.phone || '', email: co.email || '' }, fleet, batt, gen: { prefix: '', count: 6, start: 1, rpa: '' }, dropSamplePilots: (db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) });
           };
           const finishSetupWizard = () => {
             const w = wiz;
@@ -8669,7 +8765,7 @@ View in the Database & Settings tab.`);
                 if (i >= 0) pilots[i] = me; else pilots = [me, ...pilots]; }
               const fleet = {}; const renamed = {};
               w.fleet.filter(x => x.keep && x.name.trim()).forEach(x => { const old = (prev.fleet || {})[x.key] || {}; const nm = x.name.trim(); if (x.key && x.key !== nm) renamed[x.key] = nm;
-                fleet[nm] = { area: 0.05, cd: 1.2, ...old, weight: parseFloat(x.weight) || old.weight || 0, cells: x.cells, registrationNo: String(x.registrationNo || '').trim().toUpperCase(), registrationExpiry: x.registrationExpiry, serial: x.serial }; });
+                fleet[nm] = { area: 0.05, cd: 1.2, ...old, sample: undefined, weight: parseFloat(x.weight) || old.weight || 0, cells: x.cells, registrationNo: String(x.registrationNo || '').trim().toUpperCase(), registrationExpiry: x.registrationExpiry, serial: x.serial }; });
               const keptB = w.batt.filter(b => b.keep && b.name.trim());
               const rpaBatteries = {}; keptB.forEach(b => { const rpa = renamed[b.rpa] || b.rpa; if (rpa && fleet[rpa]) (rpaBatteries[rpa] = rpaBatteries[rpa] || []).push(b.name.trim()); });
               const next = { ...prev, companyProfile: co, pilots, fleet, batteries: keptB.map(b => b.name.trim()), rpaBatteries, setupDoneAt: new Date().toISOString() };
@@ -8765,7 +8861,7 @@ View in the Database & Settings tab.`);
                         </label>
                         <button type="button" data-welcome-setup="1" onClick={() => { close(); openSetupWizard(); }} className="w-full flex items-start gap-3 border border-violet-200 bg-violet-50 hover:bg-violet-100 rounded-xl px-4 py-3 text-left">
                           <i className="fa-solid fa-wand-magic-sparkles text-violet-600 mt-1"></i>
-                          <span><span className="block font-semibold text-violet-900">Set up my company (about 3 minutes)</span><span className="block text-xs text-violet-800">Company and ReOC details, you as CRP, your aircraft with CASA registration, and your batteries.</span></span>
+                          <span><span className="block font-semibold text-violet-900">Get started: sample job tour, then set up my company</span><span className="block text-xs text-violet-800">See a sample job planned with a DJI Mini or a 3.5" FPV cinewhoop (2 minutes, skip any time), then add your company, ReOC, aircraft with CASA registration and batteries.</span></span>
                         </button>
                         <button type="button" data-welcome-start="1" onClick={close} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
                           <i className="fa-solid fa-plane-departure text-emerald-600 mt-1"></i>
@@ -8779,7 +8875,7 @@ View in the Database & Settings tab.`);
               })()}
               {wiz && (() => {
                 const w = wiz, set = (patch) => setWiz(p => ({ ...p, ...patch }));
-                const STEPS = ['Company', 'You (CRP)', 'Fleet', 'Batteries', 'Finish'];
+                const STEPS = ['Try it', 'Company', 'You (CRP)', 'Fleet', 'Batteries', 'Finish'];
                 const inp = 'w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-violet-300 focus:outline-none';
                 const lb = 'block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-0.5';
                 const F = (obj, k, label, ph, type = 'text', key) => (<div><label className={lb}>{label}</label><input type={type} className={inp} value={w[obj][k] || ''} placeholder={ph} data-wiz={key || (obj + '.' + k)}
@@ -8798,14 +8894,26 @@ View in the Database & Settings tab.`);
                         <div className="flex gap-1.5 mt-3 flex-wrap">{STEPS.map((t, i) => <button key={t} type="button" onClick={() => set({ step: i })} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${i === w.step ? 'bg-white text-violet-900' : i < w.step ? 'bg-white/30 text-white' : 'bg-white/10 text-white/70'}`}>{i + 1}. {t}</button>)}</div>
                       </div>
                       <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto">
-                        {w.step === 0 && (<>
+                        {w.step === 0 && (
+                          <div className="space-y-3" data-wiz-intro="1">
+                            <p className="text-sm text-slate-600">New here? Take a 2-minute tour with a <b>sample job</b> first: a short park shoot, already planned, so you can see each section, the risk register, authorisation, the flight log and the PDF. Nothing in your records changes. Pick the aircraft for the sample:</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {Object.entries(SAMPLE_AIRCRAFT).map(([k, A]) => (
+                                <button key={k} type="button" data-tour-start={k} onClick={() => { setWiz(null); startTour(k); }} className="text-left border-2 border-violet-200 hover:border-violet-500 hover:bg-violet-50 rounded-xl p-4">
+                                  <div className="text-2xl mb-1"><i className={`fa-solid ${k === 'mini' ? 'fa-camera' : 'fa-vr-cardboard'} text-violet-600`}></i></div>
+                                  <div className="font-bold text-slate-800">{A.label}</div><div className="text-xs text-slate-500">{A.blurb} · sample park shoot</div>
+                                </button>))}
+                            </div>
+                            <p className="text-xs text-slate-500">You can skip the tour at any time. Or go straight to setting up your company with <b>Next</b>.</p>
+                          </div>)}
+                        {w.step === 1 && (<>
                           <p className="text-sm text-slate-600">Your company details print on every plan and flight record.</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {F('co', 'name', 'Company / trading name', 'e.g. Waking Dream FPV')}{F('co', 'reocNumber', 'ReOC number', 'e.g. ReOC 9037')}
                             {F('co', 'companyArn', 'Company (operator) ARN', 'e.g. 1266519')}{F('co', 'phone', 'Phone', '+61 4xx xxx xxx')}
                             {F('co', 'email', 'Email', 'ops@yourcompany.com.au', 'email')}{F('co', 'address', 'Address', 'Street, suburb, state')}
                           </div></>)}
-                        {w.step === 1 && (<>
+                        {w.step === 2 && (<>
                           <p className="text-sm text-slate-600">You as Chief Remote Pilot. You're added to the pilot list, and your name fills the CRP sign-off.</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {F('me', 'name', 'Your full name', 'e.g. Michael Rubio')}{F('me', 'arn', 'Your ARN', 'e.g. 1209476')}
@@ -8813,10 +8921,10 @@ View in the Database & Settings tab.`);
                           </div>
                           {(db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={w.dropSamplePilots} onChange={e => set({ dropSamplePilots: e.target.checked })} />Remove the sample pilots ({SAMPLE_PILOTS.join(', ')})</label>}
                           <p className="text-xs text-slate-500">Add other pilots and observers later in Database &amp; Settings › Crew &amp; users.</p></>)}
-                        {w.step === 2 && (<>
+                        {w.step === 3 && (<>
                           <p className="text-sm text-slate-600">Your aircraft, with their CASA registration. Untick any you don't fly. Weight sets the kinetic energy limits; cells match radio logs to the aircraft.</p>
                           <div className="space-y-2">{w.fleet.map((x, i) => (
-                            <div key={i} className={`grid grid-cols-2 sm:grid-cols-12 gap-2 items-end border rounded-lg p-2 ${x.keep ? 'border-slate-200' : 'border-slate-100 bg-slate-50 opacity-60'}`} data-wiz-fleet={i}>
+                            <div key={i} className={`grid grid-cols-2 sm:grid-cols-12 gap-2 items-end border rounded-lg p-2 ${x.highlight ? 'border-violet-400 bg-violet-50' : x.keep ? 'border-slate-200' : 'border-slate-100 bg-slate-50 opacity-60'}`} data-wiz-fleet={i}>
                               <label className="col-span-2 sm:col-span-1 flex items-center gap-1 text-xs pb-2"><input type="checkbox" checked={x.keep} onChange={e => setRow('fleet', i, { keep: e.target.checked })} />Fly</label>
                               <div className="col-span-2 sm:col-span-3"><label className={lb}>Aircraft</label><input className={inp} value={x.name} onChange={e => setRow('fleet', i, { name: e.target.value })} data-wiz-fname={i} /></div>
                               <div className="sm:col-span-2"><label className={lb}>Weight kg</label><input className={inp} type="number" step="0.001" value={x.weight} onChange={e => setRow('fleet', i, { weight: e.target.value })} /></div>
@@ -8830,7 +8938,7 @@ View in the Database & Settings tab.`);
                             <button type="button" onClick={() => set({ fleet: w.fleet.map(x => ({ ...x, keep: !!String(x.registrationNo || '').trim() })) })} className="text-sm px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50">Keep only aircraft with a CASA rego</button>
                           </div>
                           <p className="text-xs text-slate-500">Registration expiry dates feed the Compliance Calendar and the expiry check on each job. Aircraft that only fly under the excluded category can be left without a number.</p></>)}
-                        {w.step === 3 && (<>
+                        {w.step === 4 && (<>
                           <p className="text-sm text-slate-600">Your battery packs and the aircraft they belong to. Name packs with the cells and capacity (e.g. <span className="font-mono">3S-720-11</span>) so the planner can auto-assign them to flights.</p>
                           <div className="border border-violet-200 bg-violet-50/50 rounded-lg p-3 grid grid-cols-2 sm:grid-cols-12 gap-2 items-end">
                             <div className="col-span-2 sm:col-span-4"><label className={lb}>Name start</label><input className={inp + ' font-mono'} placeholder="e.g. 3S-720" value={w.gen.prefix} onChange={e => set({ gen: { ...w.gen, prefix: e.target.value } })} data-wiz-gen-prefix="1" /></div>
@@ -8848,7 +8956,7 @@ View in the Database & Settings tab.`);
                               <select className="text-xs border border-slate-200 rounded px-1 py-0.5 max-w-[45%]" value={b.rpa} onChange={e => setRow('batt', i, { rpa: e.target.value })}><option value="">No aircraft</option>{fleetNames.map(n => <option key={n}>{n}</option>)}</select>
                             </div>))}
                             {!w.batt.length && <div className="p-3 text-sm text-slate-400">No batteries yet. Use the row above to add a set.</div>}</div></>)}
-                        {w.step === 4 && (
+                        {w.step === 5 && (
                           <div className="space-y-2 text-sm" data-wiz-summary="1">
                             <div><b>Company:</b> {w.co.name || '—'}{w.co.reocNumber ? ' · ' + w.co.reocNumber : ''}{w.co.companyArn ? ' · ARN ' + w.co.companyArn : ''}</div>
                             <div><b>CRP:</b> {w.me.name || '—'}{w.me.arn ? ' · ARN ' + w.me.arn : ''}</div>
@@ -8859,9 +8967,30 @@ View in the Database & Settings tab.`);
                       </div>
                       <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2">
                         <button type="button" onClick={() => w.step ? set({ step: w.step - 1 }) : setWiz(null)} className="px-3 py-2 rounded-lg text-sm border border-slate-300 text-slate-600">{w.step ? 'Back' : 'Cancel'}</button>
-                        {w.step < 4 ? <button type="button" data-wiz-next="1" onClick={() => set(w.step === 2
-                          ? { step: 3, batt: w.batt.map(b => (b.rpa && !fleetNames.includes(b.rpa)) ? { ...b, keep: false } : b) } : { step: w.step + 1 })} className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700">Next</button>
+                        {w.step < 5 ? <button type="button" data-wiz-next="1" onClick={() => set(w.step === 3
+                          ? { step: 4, batt: w.batt.map(b => (b.rpa && !fleetNames.includes(b.rpa)) ? { ...b, keep: false } : b) } : { step: w.step + 1 })} className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700">Next</button>
                           : <button type="button" data-wiz-finish="1" onClick={finishSetupWizard} className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700">Finish</button>}
+                      </div>
+                    </div>
+                  </div>);
+              })()}
+              {tour && tourRect && <div data-tour-ring="1" className="fixed pointer-events-none z-[4690] rounded-xl print:hidden" style={{ left: tourRect.x - 6, top: tourRect.y - 6, width: tourRect.w + 12, height: tourRect.h + 12, outline: '3px solid #8b5cf6', boxShadow: '0 0 0 9999px rgba(15,23,42,0.28)', transition: 'width .2s, height .2s' }} />}
+              {tour && (() => {
+                const st = TOUR_STEPS[tour.step], last = tour.step === TOUR_STEPS.length - 1;
+                return (
+                  <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[4700] w-[min(560px,calc(100vw-24px))] print:hidden" data-tour-card="1">
+                    <div className="bg-slate-900 text-white rounded-2xl shadow-2xl p-4 border border-violet-500/60">
+                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-violet-300 font-bold mb-1">
+                        <span>Sample job tour · {tour.step + 1} of {TOUR_STEPS.length}</span>
+                        <button type="button" data-allow-locked="1" data-tour-skip="1" onClick={() => endTour(false)} className="ml-auto normal-case tracking-normal text-slate-400 hover:text-white font-semibold">Skip tour ✕</button>
+                      </div>
+                      <div className="font-bold text-base">{st.title}</div>
+                      <p className="text-sm text-slate-300 mt-1">{st.body}</p>
+                      <div className="flex items-center gap-2 mt-3">
+                        <div className="flex gap-1 flex-1">{TOUR_STEPS.map((_, i) => <span key={i} className={`h-1.5 flex-1 rounded-full ${i <= tour.step ? 'bg-violet-400' : 'bg-slate-700'}`} />)}</div>
+                        {tour.step > 0 && <button type="button" data-allow-locked="1" onClick={() => setTour(t => ({ ...t, step: t.step - 1 }))} className="px-3 py-1.5 rounded-lg text-sm bg-slate-700 hover:bg-slate-600">Back</button>}
+                        {!last ? <button type="button" data-allow-locked="1" data-tour-next="1" onClick={() => setTour(t => ({ ...t, step: t.step + 1 }))} className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-violet-600 hover:bg-violet-500">Next</button>
+                          : <button type="button" data-allow-locked="1" data-tour-setup="1" onClick={() => endTour(true)} className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500">Set up my company</button>}
                       </div>
                     </div>
                   </div>);
@@ -9422,7 +9551,7 @@ View in the Database & Settings tab.`);
                           )}
 
                           <div
-                            ref={opsMapRef}
+                            ref={opsMapRef} data-tour="map"
                             style={{ height: mapSize === 'tall' ? 'max(700px, 85vh)' : '680px' }}
                             className={`relative w-full bg-gray-200 rounded-lg overflow-hidden shadow-inner border border-gray-300 print:shadow-none print:border-slate-400 select-none ${
                               opsMapSubTab === 'heatmap'
@@ -12952,7 +13081,7 @@ View in the Database & Settings tab.`);
 
                         <div className="flex items-center justify-between gap-3 flex-wrap border border-violet-200 bg-violet-50/60 rounded-xl px-4 py-3">
                           <div className="text-sm text-violet-900"><b>Setup wizard</b> · company, you as CRP, fleet with CASA registration, batteries{db.setupDoneAt ? <span className="text-xs text-violet-700"> · last run {new Date(db.setupDoneAt).toLocaleDateString('en-AU')}</span> : null}</div>
-                          <button type="button" data-open-setup="1" onClick={openSetupWizard} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Run setup wizard</button>
+                          <button type="button" data-open-setup="1" onClick={() => openSetupWizard()} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Run setup wizard</button>
                         </div>
 
                         {/* Company Profile */}
