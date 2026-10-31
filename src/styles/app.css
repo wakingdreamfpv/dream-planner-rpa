@@ -9,3 +9,23 @@
 
 /* v6.1: hide the offline note once the account panel has rendered into the settings slot */
 .wd-acct-slot:not(:empty) + .wd-acct-offline { display: none; }
+
+/* v6.7 phones ------------------------------------------------------------ */
+/* iOS Safari zooms in on any field under 16px and doesn't zoom back out: keep fields at 16px on phones */
+@media (max-width: 767px) {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]), select, textarea { font-size: 16px !important; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { overflow-x: hidden; }
+  /* the tour card sits above the home indicator */
+  [data-tour-card] { bottom: max(0.75rem, env(safe-area-inset-bottom)) !important; }
+}
+html.wd-modal-open, html.wd-modal-open body { overflow: hidden; }
+button, a, label, select { -webkit-tap-highlight-color: rgba(124, 58, 237, 0.15); }
+/* v6.7: cards nest 3–4 deep in Database & Settings; tighter padding on phones keeps the content readable */
+@media (max-width: 639px) {
+  .p-6 { padding: 0.875rem; }
+  .p-5 { padding: 0.75rem; }
+  .p-4 { padding: 0.625rem; }
+  .px-6 { padding-left: 0.875rem; padding-right: 0.875rem; }
+  .px-5 { padding-left: 0.75rem; padding-right: 0.75rem; }
+}

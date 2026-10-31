@@ -14,58 +14,80 @@ const input = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus
 
 function Modal({ title, onClose, children }) {
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  useEffect(() => { document.documentElement.classList.add('wd-modal-open'); return () => document.documentElement.classList.remove('wd-modal-open'); }, []);
   return (
-    <div className="fixed inset-0 z-[4900] bg-slate-900/60 flex items-start sm:items-center justify-center p-3 overflow-y-auto print:hidden" data-testid="account-modal" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6">
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200">
+    <div className="fixed inset-0 z-[4900] bg-slate-900/60 flex items-stretch sm:items-center justify-center p-0 sm:p-3 print:hidden" data-testid="account-modal" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col h-[100dvh] sm:h-auto sm:max-h-[calc(100dvh-1.5rem)]">
+        <div className="flex items-center gap-3 px-4 sm:px-5 py-2 border-b border-slate-200 shrink-0" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
           <h2 className="font-bold text-slate-800 flex-1">{title}</h2>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl px-1" aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          <button type="button" onClick={onClose} className="flex items-center gap-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-10 text-sm font-semibold" aria-label="Close"><i className="fa-solid fa-xmark text-lg"></i><span>Close</span></button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain flex-1 min-h-0" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>{children}</div>
       </div>
     </div>
   );
 }
 
 function SignIn({ sb, onDone }) {
-  const [email, setEmail] = useState(''), [pw, setPw] = useState(''), [mode, setMode] = useState('link'), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  // v6.7: password first (phones offer to save it), emailed link and reset as the fallbacks
+  const [email, setEmail] = useState(() => { try { return localStorage.getItem('wd_last_email') || ''; } catch (e) { return ''; } });
+  const [pw, setPw] = useState(''), [show, setShow] = useState(false), [mode, setMode] = useState('password'), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
   const go = async (e) => {
     e.preventDefault(); setBusy(true); setMsg(null);
+    const em = email.trim();
+    try { localStorage.setItem('wd_last_email', em); } catch (x) {}
     try {
       if (mode === 'link') {
-        const { error } = await sb.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+        const { error } = await sb.auth.signInWithOtp({ email: em, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
         if (error) throw error;
-        setMsg({ ok: true, t: `Check ${email.trim()} for a sign-in link. Open it on this device.` });
+        setMsg({ ok: true, t: `Check ${em} for a sign-in link. On a phone, open it in the same browser you're using now (if your mail app opens its own browser, choose "Open in Safari/Chrome").` });
       } else if (mode === 'password') {
-        const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password: pw });
+        const { error } = await sb.auth.signInWithPassword({ email: em, password: pw });
         if (error) throw error;
+        try { sessionStorage.setItem('wd_just_signed_in', '1'); } catch (x) {}
         onDone && onDone();
       } else {
-        const { error } = await sb.auth.resetPasswordForEmail(email.trim(), { redirectTo: location.origin + location.pathname });
+        const { error } = await sb.auth.resetPasswordForEmail(em, { redirectTo: location.origin + location.pathname });
         if (error) throw error;
-        setMsg({ ok: true, t: `If ${email.trim()} has a login, a password reset link is on its way.` });
+        setMsg({ ok: true, t: `If ${em} has a login, a password reset link is on its way.` });
       }
     } catch (err) {
       const m = err.message || String(err);
-      setMsg({ ok: false, t: /signups not allowed|not found|user not found/i.test(m) ? `There's no login for ${email.trim()} yet. Logins are invite-only: the CRP invites this email (Users & logins › Invite crew, or Supabase › Authentication › Users › Send invitation), then you accept the email.`
-        : /Invalid login/i.test(m) ? 'Wrong email or password. Try "Email me a link" or "Forgot password".'
+      setMsg({ ok: false, t: /signups not allowed|not found|user not found/i.test(m) ? `There's no login for ${em} yet. Logins are invite-only: the CRP invites this email (Database & Settings › Crew & users), then you accept the email.`
+        : /Invalid login/i.test(m) ? 'Wrong email or password. If you never set a password, use "Email me a sign-in link" below.'
         : /rate limit|too many/i.test(m) ? 'Too many emails sent just now. Wait a minute and try again.'
         : /not confirmed/i.test(m) ? 'This login hasn\'t been accepted yet. Open the invitation email and click Accept invitation first.'
         : m });
     } finally { setBusy(false); }
   };
+  const big = 'w-full px-3.5 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-violet-300';
+  const swap = (m) => { setMode(m); setMsg(null); };
   return (
-    <form onSubmit={go} className="space-y-3" data-testid="signin-form">
-      <p className="text-sm text-slate-600">Sign in to see your crew record and sign-offs. Logins are by invitation from the CRP.</p>
-      <div className="flex gap-1 text-xs">
-        {[['link', 'Email me a link'], ['password', 'Password'], ['reset', 'Forgot password']].map(([k, l]) => (
-          <button key={k} type="button" onClick={() => { setMode(k); setMsg(null); }} className={`px-2.5 py-1 rounded-full border ${mode === k ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300 text-slate-600'}`}>{l}</button>
-        ))}
-      </div>
-      <input type="email" required autoComplete="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className={input} data-testid="signin-email" />
-      {mode === 'password' && <input type="password" required autoComplete="current-password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} className={input} />}
-      <button type="submit" disabled={busy} className={btn + ' w-full bg-violet-600 text-white hover:bg-violet-700'} data-testid="signin-submit">{busy ? 'Please wait…' : mode === 'link' ? 'Send sign-in link' : mode === 'password' ? 'Sign in' : 'Send reset link'}</button>
+    <form onSubmit={go} className="space-y-3 max-w-sm mx-auto" data-testid="signin-form" method="post" action="#">
+      <p className="text-sm text-slate-600">{mode === 'password' ? 'Sign in with your email and password.' : mode === 'link' ? 'We\'ll email you a link that signs you in, no password needed.' : 'We\'ll email you a link to choose a new password.'}</p>
+      <label className="block">
+        <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Email</span>
+        <input type="email" name="email" required autoComplete="username" inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} className={big} data-testid="signin-email" />
+      </label>
+      {mode === 'password' && (
+        <label className="block">
+          <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Password</span>
+          <div className="relative">
+            <input type={show ? 'text' : 'password'} name="password" required autoComplete="current-password" placeholder="Password"
+              value={pw} onChange={e => setPw(e.target.value)} className={big + ' pr-16'} data-testid="signin-password" />
+            <button type="button" onClick={() => setShow(v => !v)} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-violet-700 px-2.5 py-2">{show ? 'Hide' : 'Show'}</button>
+          </div>
+        </label>
+      )}
+      <button type="submit" disabled={busy} className="w-full py-3 rounded-xl text-base font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50" data-testid="signin-submit">{busy ? 'Please wait…' : mode === 'link' ? 'Email me a sign-in link' : mode === 'password' ? 'Sign in' : 'Send reset link'}</button>
       {msg && <div className={`text-sm rounded-lg px-3 py-2 ${msg.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`} data-testid="signin-msg">{msg.t}</div>}
+      <div className="flex flex-col items-center gap-1 pt-1 text-sm">
+        {mode !== 'password' && <button type="button" onClick={() => swap('password')} className="text-violet-700 font-semibold py-1.5" data-signin-mode="password">Sign in with a password</button>}
+        {mode !== 'link' && <button type="button" onClick={() => swap('link')} className="text-violet-700 font-semibold py-1.5" data-signin-mode="link">Email me a sign-in link instead</button>}
+        {mode !== 'reset' && <button type="button" onClick={() => swap('reset')} className="text-slate-500 py-1.5" data-signin-mode="reset">Forgot password?</button>}
+      </div>
+      <p className="text-[11px] text-slate-400 text-center">Logins are by invitation from the Chief Remote Pilot. You stay signed in on this device until you sign out.</p>
     </form>
   );
 }
@@ -253,14 +275,19 @@ function AccountPanel() {
   }, [sb, me]);
   const chip = (
     <button type="button" onClick={() => setOpen(true)} data-testid="account-chip"
-      className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-      {session ? <><span className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center text-[10px] font-bold">{initials(me && me.full_name, session.user.email)}</span><span className="max-w-[9rem] truncate">{(me && me.full_name) || session.user.email}</span>{me && me.role && <span className="text-[10px] font-bold uppercase opacity-80">{ROLE_LABEL[me.role]}</span>}{awaiting > 0 && <span data-testid="awaiting-badge" title="Inductions waiting for you" className="ml-0.5 text-[10px] font-bold bg-amber-400 text-amber-950 rounded-full px-1.5">{awaiting}</span>}</>
+      className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-2.5 sm:px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+      {session ? <><span className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center text-[10px] font-bold">{initials(me && me.full_name, session.user.email)}</span><span className="hidden sm:inline max-w-[9rem] truncate">{(me && me.full_name) || session.user.email}</span>{me && me.role && <span className="text-[10px] font-bold uppercase opacity-80">{ROLE_LABEL[me.role]}</span>}{awaiting > 0 && <span data-testid="awaiting-badge" title="Inductions waiting for you" className="ml-0.5 text-[10px] font-bold bg-amber-400 text-amber-950 rounded-full px-1.5">{awaiting}</span>}</>
         : <><i className="fa-solid fa-user"></i>{loading ? '…' : 'Sign in'}</>}
     </button>
   );
+  const [justIn, setJustIn] = useState(false);
+  useEffect(() => { if (!session) return; try { if (sessionStorage.getItem('wd_just_signed_in')) { sessionStorage.removeItem('wd_just_signed_in'); setJustIn(true); } } catch (e) {} }, [session]);
+  // v6.7: the welcome screen (and anything else) can open the sign-in panel
+  useEffect(() => { const h = () => setOpen(true); window.addEventListener('wd-open-account', h); return () => window.removeEventListener('wd-open-account', h); }, []);
   const account = session && (
               <div className="space-y-5">
-                <div className="flex items-center gap-3">
+                {justIn && <div className="text-sm bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg px-3 py-2 flex items-start gap-2" data-testid="signed-in-note"><i className="fa-solid fa-circle-check mt-0.5"></i><span><b>You're signed in.</b> You'll stay signed in on this device until you tap Sign out.</span></div>}
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="w-11 h-11 rounded-full bg-violet-600 text-white flex items-center justify-center font-bold">{initials(me && me.full_name, session.user.email)}</span>
                   <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800">{(me && me.full_name) || session.user.email}</div><div className="text-xs text-slate-500">{session.user.email}</div></div>
                   {me && me.role && <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${ROLE_STYLE[me.role]}`} data-testid="my-role">{ROLE_LABEL[me.role]}</span>}

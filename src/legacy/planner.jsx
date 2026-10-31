@@ -169,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.6';
+        const APP_VERSION = '6.7';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1753,7 +1753,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           if (!visible) return null;
           return (
             <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50 print:hidden" onClick={onClose}>
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div className="bg-amber-50 border-b border-amber-200 px-6 py-4 flex items-center justify-between rounded-t-2xl">
                   <div className="flex items-center gap-2">
@@ -2566,7 +2566,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const ft = (m) => Math.round(m * 3.28084);
           return (
             <div className="fixed inset-0 z-[4500] bg-slate-900/70 flex items-center justify-center p-2 sm:p-4 print:hidden" data-testid="tlm-detail" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-              <div className="bg-slate-50 rounded-xl shadow-2xl w-full max-w-6xl max-h-[96vh] flex flex-col overflow-hidden">
+              <div className="bg-slate-50 rounded-xl shadow-2xl w-full max-w-6xl max-h-[96dvh] flex flex-col overflow-hidden">
                 <div className="px-5 py-3 bg-white border-b border-slate-200 flex items-center gap-3">
                   <i className="fa-solid fa-satellite-dish text-cyan-600"></i>
                   <div className="flex-1 min-w-0">
@@ -8645,7 +8645,7 @@ View in the Database & Settings tab.`);
           const jumpToDbSection = (id) => {
             const h = document.getElementById(id); if (!h) return;
             const card = h.closest('.rounded-xl, .rounded-lg') || h;
-            const y = card.getBoundingClientRect().top + window.scrollY - 16;
+            const y = card.getBoundingClientRect().top + window.scrollY - (window.innerWidth < 768 ? 68 : 16); // v6.7: clear the sticky section picker on phones
             window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
             setDbActiveSection(id);
             card.classList.add('wd-req-flash'); setTimeout(() => card.classList.remove('wd-req-flash'), 1400);
@@ -8744,6 +8744,10 @@ View in the Database & Settings tab.`);
 
           // ── v6.5 First-time setup wizard: company, you (CRP), fleet with CASA registration, batteries ──
           const [wiz, setWiz] = useState(null);
+          // v6.7: each wizard step starts at the top (the body scrolls on its own on phones)
+          useEffect(() => { const el = document.querySelector('[data-wiz-body]'); if (el) el.scrollTop = 0; }, [wiz && wiz.step]); // eslint-disable-line
+          // v6.7: no page scrolling behind a full-screen panel on phones
+          useEffect(() => { const lock = !!(wiz || showWelcome); document.documentElement.classList.toggle('wd-modal-open', lock); return () => document.documentElement.classList.remove('wd-modal-open'); }, [!!wiz, showWelcome]); // eslint-disable-line
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
           const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
@@ -8815,7 +8819,7 @@ View in the Database & Settings tab.`);
 
               {ok2fly && (
                 <div className="fixed inset-0 z-[3000] bg-slate-900/60 flex items-center justify-center p-2 sm:p-4 print:hidden" data-testid="ok2fly-panel">
-                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[94vh] flex flex-col overflow-hidden">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[94dvh] flex flex-col overflow-hidden">
                     <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                       <i className="fa-solid fa-map-location-dot text-sky-600"></i>
                       <h3 className="font-semibold text-slate-800">OK2FLY</h3>
@@ -8840,15 +8844,22 @@ View in the Database & Settings tab.`);
               {showWelcome && (() => {
                 const close = () => { try { localStorage.setItem('wd_welcomed', new Date().toISOString()); } catch (e) {} setShowWelcome(false); };
                 return (
-                  <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-center justify-center p-4 print:hidden" data-testid="welcome">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-                      <div className="px-6 py-5 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
-                        <div className="text-xs uppercase tracking-widest opacity-75">{(db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA'}</div>
-                        <h2 className="text-2xl font-bold mt-1">Welcome to Dream Planner</h2>
+                  <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain print:hidden" data-testid="welcome" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden my-2 sm:my-6">
+                      <div className="px-5 sm:px-6 py-4 sm:py-5 text-white relative" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <button type="button" onClick={close} data-welcome-close="1" aria-label="Close" className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 text-xl"><i className="fa-solid fa-xmark"></i></button>
+                        <div className="text-xs uppercase tracking-widest opacity-75 pr-10">{(db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA'}</div>
+                        <h2 className="text-xl sm:text-2xl font-bold mt-1 pr-8">Welcome to Dream Planner</h2>
                         <p className="text-sm opacity-85 mt-1">RPAS operations planner, JSA and Flight Records · v{APP_VERSION}</p>
                       </div>
-                      <div className="p-6 space-y-3">
+                      <div className="p-4 sm:p-6 space-y-3">
                         <p className="text-sm text-slate-600">This is a new planner on this device. How would you like to start?</p>
+                        {typeof window !== 'undefined' && /^https?:$/.test(location.protocol) && (
+                          <button type="button" data-welcome-signin="1" onClick={() => { close(); window.dispatchEvent(new Event('wd-open-account')); }} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
+                            <i className="fa-solid fa-right-to-bracket text-violet-600 mt-1"></i>
+                            <span><span className="block font-semibold text-slate-800">Sign in</span><span className="block text-xs text-slate-600">If you've been invited as crew, or you're the CRP signing in on another device. Your jobs and settings stay on the device they were made on until cloud sync arrives; use Import my backup to bring them across.</span></span>
+                          </button>
+                        )}
                         <label className="flex items-start gap-3 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 rounded-xl px-4 py-3 cursor-pointer">
                           <i className="fa-solid fa-database text-indigo-600 mt-1"></i>
                           <span><span className="block font-semibold text-indigo-900">Import my backup</span><span className="block text-xs text-indigo-800">Bring across everything from another copy of the planner: in the old one, go to Database &amp; Settings › Export backup, then choose that file here.</span></span>
@@ -8887,13 +8898,13 @@ View in the Database & Settings tab.`);
                 const keptF = w.fleet.filter(x => x.keep), keptB = w.batt.filter(b => b.keep);
                 const noRego = keptF.filter(x => !String(x.registrationNo || '').trim());
                 return (
-                  <div className="fixed inset-0 z-[4850] bg-slate-900/60 flex items-start sm:items-center justify-center p-3 overflow-y-auto print:hidden" data-testid="setup-wizard">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6 overflow-hidden">
-                      <div className="px-6 py-4 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
-                        <div className="flex items-center gap-3"><h2 className="text-xl font-bold flex-1">Set up your planner</h2><button onClick={() => setWiz(null)} className="text-white/70 hover:text-white text-xl"><i className="fa-solid fa-xmark"></i></button></div>
-                        <div className="flex gap-1.5 mt-3 flex-wrap">{STEPS.map((t, i) => <button key={t} type="button" onClick={() => set({ step: i })} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${i === w.step ? 'bg-white text-violet-900' : i < w.step ? 'bg-white/30 text-white' : 'bg-white/10 text-white/70'}`}>{i + 1}. {t}</button>)}</div>
+                  <div className="fixed inset-0 z-[4850] bg-slate-900/60 flex items-stretch sm:items-center justify-center p-0 sm:p-4 print:hidden" data-testid="setup-wizard">
+                    <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden h-[100dvh] sm:h-auto sm:max-h-[calc(100dvh-2rem)]">
+                      <div className="px-4 sm:px-6 py-3 sm:py-4 text-white shrink-0" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)', paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+                        <div className="flex items-center gap-3"><h2 className="text-lg sm:text-xl font-bold flex-1">Set up your planner</h2><button type="button" data-wiz-close="1" aria-label="Close" onClick={() => setWiz(null)} className="flex items-center gap-1.5 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-full px-3 h-10 text-sm font-semibold"><i className="fa-solid fa-xmark text-lg"></i><span>Close</span></button></div>
+                        <div className="flex gap-1.5 mt-3 flex-nowrap sm:flex-wrap overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-0.5" style={{ scrollbarWidth: 'none' }}>{STEPS.map((t, i) => <button key={t} type="button" onClick={() => set({ step: i })} className={`shrink-0 whitespace-nowrap text-[11px] font-semibold px-2.5 py-1 rounded-full ${i === w.step ? 'bg-white text-violet-900' : i < w.step ? 'bg-white/30 text-white' : 'bg-white/10 text-white/70'}`}>{i + 1}. {t}</button>)}</div>
                       </div>
-                      <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto">
+                      <div className="p-4 sm:p-6 space-y-4 flex-1 min-h-0 overflow-y-auto overscroll-contain" data-wiz-body="1">
                         {w.step === 0 && (
                           <div className="space-y-3" data-wiz-intro="1">
                             <p className="text-sm text-slate-600">New here? Take a 2-minute tour with a <b>sample job</b> first: a short park shoot, already planned, so you can see each section, the risk register, authorisation, the flight log and the PDF. Nothing in your records changes. Pick the aircraft for the sample:</p>
@@ -8965,7 +8976,7 @@ View in the Database & Settings tab.`);
                             <p className="text-xs text-slate-500 pt-2">Nothing is saved until you click Finish. You can run this again any time from Database &amp; Settings.</p>
                           </div>)}
                       </div>
-                      <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2">
+                      <div className="px-4 sm:px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0 bg-white" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                         <button type="button" onClick={() => w.step ? set({ step: w.step - 1 }) : setWiz(null)} className="px-3 py-2 rounded-lg text-sm border border-slate-300 text-slate-600">{w.step ? 'Back' : 'Cancel'}</button>
                         {w.step < 5 ? <button type="button" data-wiz-next="1" onClick={() => set(w.step === 3
                           ? { step: 4, batt: w.batt.map(b => (b.rpa && !fleetNames.includes(b.rpa)) ? { ...b, keep: false } : b) } : { step: w.step + 1 })} className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700">Next</button>
@@ -9004,7 +9015,7 @@ View in the Database & Settings tab.`);
                 const fmtD = (ms) => new Date(ms).toLocaleString('en-AU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
                 return (
                   <div className="fixed inset-0 z-[3000] bg-slate-900/60 flex items-center justify-center p-3 print:hidden" data-testid="log-dump">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[92dvh] flex flex-col">
                       <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-3">
                         <i className="fa-solid fa-boxes-stacked text-indigo-600"></i>
                         <div className="flex-1">
@@ -9083,35 +9094,36 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               <header className="print:hidden" style={{background:"linear-gradient(135deg,#1a0533 0%,#2d0a5e 50%,#1a0533 100%)",boxShadow:"0 4px 24px rgba(139,92,246,0.3)"}}>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 flex flex-col md:flex-row justify-between items-center gap-3 md:gap-4">
-                  <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
-                      <i className="fa-solid fa-plane-departure text-2xl" style={{color:"#c084fc"}}></i>
-                      {(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Dream Planner RPA'}
+                <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 md:py-6 flex flex-col md:flex-row justify-between md:items-center gap-2.5 md:gap-4" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+                  <div className="min-w-0">
+                    <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2 text-white min-w-0">
+                      <i className="fa-solid fa-plane-departure text-lg sm:text-2xl shrink-0" style={{color:"#c084fc"}}></i>
+                      <span className="truncate">{(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Dream Planner RPA'}</span>
                     </h1>
-                    <p className="text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
+                    <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>
-                  <div className="flex flex-wrap justify-center md:justify-end gap-2 md:gap-3" data-header-actions="1">
-                    <span id="wd-account-slot" className="self-center"></span>
-                    <button onClick={handleResetForm} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 text-slate-300 hover:text-white">
+                  <div className="flex flex-nowrap md:flex-wrap items-center md:justify-end gap-1.5 sm:gap-2 md:gap-3" data-header-actions="1">
+                    <span id="wd-account-slot" className="self-center min-w-0 shrink"></span>
+                    <span className="flex-1 md:hidden"></span>
+                    <button onClick={handleResetForm} className="shrink-0 flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 text-slate-300 hover:text-white">
                       <i className="fa-solid fa-rotate-left"></i> <span className="hidden sm:inline">New Operation</span><span className="sm:hidden">New</span>
                     </button>
-                    <span data-save-state={dirty ? 'dirty' : 'clean'} className={`self-center text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap ${dirty ? 'bg-amber-400 text-amber-950' : 'bg-white/10 text-slate-300'}`} title={dirty ? 'Changes since the last save are kept in an autosaved working copy until you Save Draft' : ''}>
+                    <span data-save-state={dirty ? 'dirty' : 'clean'} className={`${(dirty || lastSavedAt) ? 'hidden sm:inline-flex' : 'hidden'} self-center items-center text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap ${dirty ? 'bg-amber-400 text-amber-950' : 'bg-white/10 text-slate-300'}`} title={dirty ? 'Changes since the last save are kept in an autosaved working copy until you Save Draft' : ''}>
                       {dirty ? <><i className="fa-solid fa-circle text-[7px] mr-1 align-middle"></i>Unsaved changes</> : lastSavedAt ? <><i className="fa-solid fa-check mr-1"></i>Saved {new Date(lastSavedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</> : null}
                     </span>
-                    <button onClick={handleSaveDraftPlan} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-amber-600 text-white print:hidden">
-                      <i className="fa-solid fa-pen-to-square"></i> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Save</span>
+                    <button onClick={handleSaveDraftPlan} className="shrink-0 relative flex items-center gap-2 bg-amber-700 hover:bg-amber-600 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-amber-600 text-white print:hidden">
+                      <i className="fa-solid fa-pen-to-square"></i> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Save</span>{dirty && <span data-save-dot="1" className="sm:hidden absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-300 ring-2 ring-[#2d0a5e]" title="Unsaved changes"></span>}
                     </button>
-                    <button onClick={() => generatePDF()} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors print:hidden">
+                    <button onClick={() => generatePDF()} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors print:hidden">
                       <i className="fa-solid fa-file-pdf"></i> <span className="hidden sm:inline">Export PDF</span><span className="sm:hidden">PDF</span>
                     </button>
                   </div>
                 </div>
               </header>
 
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 grid grid-cols-1 md:grid-cols-4 gap-8">
+              <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-3 md:mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-8 pb-24 md:pb-0">
                 
-                <div className="md:col-span-1 print:hidden">
+                <div className="hidden md:block md:col-span-1 print:hidden">
                   <div className="md:sticky md:top-8 space-y-3">
                   <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
                     <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'preliminary' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
@@ -9150,7 +9162,7 @@ View in the Database & Settings tab.`);
                       <div className="px-4 py-2.5 border-b border-slate-100 text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
                         <i className="fa-solid fa-list text-indigo-500"></i> Jump to a section
                       </div>
-                      <div className="overflow-y-auto p-2 space-y-0.5 wd-db-menu" style={{ maxHeight: 'calc(100vh - 31rem)', minHeight: '10rem' }}>
+                      <div className="overflow-y-auto p-2 space-y-0.5 wd-db-menu" style={{ maxHeight: 'calc(100dvh - 31rem)', minHeight: '10rem' }}>
                         {dbSections.map(sec => (
                           <button key={sec.id} type="button" data-allow-locked="1" data-db-jump={sec.id} onClick={() => jumpToDbSection(sec.id)}
                             className={`w-full text-left text-[13px] px-3 py-1.5 rounded-md transition-colors ${dbActiveSection === sec.id ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
@@ -9163,7 +9175,30 @@ View in the Database & Settings tab.`);
                   </div>
                 </div>
 
-                <div className="md:col-span-3 space-y-8 print:col-span-4 print:space-y-0">
+                {/* v6.7: phone tab bar, always on screen (the sidebar is hidden below 768 px) */}
+                {!tour && (
+                  <nav data-mobile-tabs="1" className="md:hidden fixed bottom-0 inset-x-0 z-[1200] bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] print:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                    <div className="grid grid-cols-6">
+                      {[['preliminary', 'fa-circle-check', 'Plan', reqMissing('preliminary').length, 'rose'],
+                        ['jsa', 'fa-triangle-exclamation', 'JSA', reqMissing('jsa').length, 'rose'],
+                        ['approval', 'fa-file-signature', 'Approve', reqMissing('approval').length, 'rose'],
+                        ['log', 'fa-clipboard-list', 'Log', reqMissing('log').length, 'rose'],
+                        ['compliance', 'fa-calendar-check', 'Calendar', (complianceCalendarAlerts && complianceCalendarAlerts.total) || 0, 'amber'],
+                        ['database', 'fa-database', 'Settings', (complianceAlerts && complianceAlerts.length) || 0, 'red']].map(([k, ic, label, n, col]) => (
+                        <button key={k} type="button" data-allow-locked="1" data-mtab={k} aria-label={label} aria-current={activeTab === k ? 'page' : undefined}
+                          onClick={() => { setActiveTab(k); try { window.scrollTo({ top: 0 }); } catch (e) {} }}
+                          className={`relative flex flex-col items-center justify-center gap-0.5 pt-2 pb-1.5 min-h-[56px] text-[10.5px] font-semibold ${activeTab === k ? 'text-violet-700' : 'text-slate-500'}`}>
+                          {activeTab === k && <span className="absolute top-0 left-3 right-3 h-0.5 rounded-full bg-violet-600"></span>}
+                          <i className={`fa-solid ${ic} text-[17px]`}></i>
+                          <span className="leading-none">{label}</span>
+                          {n > 0 && <span data-mtab-left={k} className={`absolute top-1 left-1/2 ml-1.5 min-w-[17px] h-[17px] px-1 rounded-full text-[10px] leading-[17px] text-center font-bold ${col === 'amber' ? 'bg-amber-400 text-amber-950' : col === 'red' ? 'bg-red-500 text-white' : 'bg-rose-500 text-white'}`}>{n}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
+                )}
+
+                <div className="md:col-span-3 space-y-5 md:space-y-8 print:col-span-4 print:space-y-0">
                   
                   {/* SECTION 1: PRELIMINARY */}
                   <div className={activeTab === 'preliminary' ? 'block' : 'hidden print:block print:mb-8'} {...lockProps}>
@@ -12578,9 +12613,9 @@ View in the Database & Settings tab.`);
                   <div className={`${activeTab === 'database' ? 'block' : 'hidden'} print:hidden`} data-db-root="1">
                     {dbSections.length > 0 && (
                       <div className="md:hidden sticky top-0 z-20 -mx-1 mb-3 bg-slate-50/95 backdrop-blur px-1 py-2">
-                        <select data-db-jump-select="1" value="" onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
-                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white shadow-sm">
-                          <option value="">Jump to a section…</option>
+                        <select data-db-jump-select="1" value={dbActiveSection || ''} onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
+                          className="w-full px-3 py-2.5 text-sm font-semibold text-indigo-900 border border-indigo-200 rounded-lg bg-white shadow-sm">
+                          <option value="">☰ Jump to a section…</option>
                           {dbSections.map(sec => <option key={sec.id} value={sec.id}>{sec.label}</option>)}
                         </select>
                       </div>
