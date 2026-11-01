@@ -1,6 +1,7 @@
 /* Waking Dream FPV — Dream Planner RPA. Original single-file app, moved into Vite unchanged (Chunk 0).
    React, ReactDOM and Leaflet (L) are globals set up in src/globals.js / index.html. */
 
+import Dashboard from '../dashboard/Dashboard.jsx';
         // Extract React Hooks
         const { useState, useEffect, useRef } = React;
 
@@ -169,7 +170,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.9';
+        const APP_VERSION = '7.0';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -3912,7 +3913,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         }
 
         function FlightRecordApp() {
-          const [activeTab, setActiveTab] = useState('preliminary');
+          const [activeTab, setActiveTab] = useState(() => (typeof window !== 'undefined' && window.__WD_START_TAB) || 'home'); // v7.0: opens on the Home dashboard
           const planLoadingRef = React.useRef(false); // true while a saved plan is being restored
           const amendmentsRef = React.useRef([]);      // amendment history of the plan in the form
           const generatePDFRef = React.useRef(null);
@@ -8704,6 +8705,99 @@ View in the Database & Settings tab.`);
             if (inv) return <span data-login="invited" className={`${pill} bg-amber-100 text-amber-800`} title={inv.email}><i className="fa-solid fa-envelope"></i>Invited · not signed in yet</span>;
             return <button type="button" data-login="none" data-invite-person={name} onClick={send} className={`${pill} bg-violet-100 text-violet-800 hover:bg-violet-200`}><i className="fa-solid fa-user-plus"></i>Invite to log in</button>;
           };
+          // v6.8/v7.0: getting-started items (Plan tab checklist and the Home dashboard)
+          const getSetupItems = () => {
+            const fl = Object.values(db.fleet || {}).filter(f => f && !f.sample);
+            const jobs = (db.draftPlans || []).length + (db.savedPlans || []).length + (db.completedFlights || []).length;
+            const items = [
+              { id: 'company', label: 'Company details', sub: 'Name, ReOC, ARN: prints on every plan', done: !!(db.companyProfile && db.companyProfile.name), go: () => openSetupWizard(null, 1), cta: 'Add' },
+              { id: 'fleet', label: 'Aircraft with CASA registration', sub: 'Rego and expiry, serial, weight', done: fl.some(f => String(f.registrationNo || '').trim()), go: () => openSetupWizard(null, 3), cta: 'Add' },
+              { id: 'batt', label: 'Batteries', sub: 'Pack names like 4S-1500-01', done: !!db.setupDoneAt || (db.completedFlights || []).length > 0 || (db.batteries || []).some(b => !/^3S-550-2025-\d+$/.test(b)), go: () => openSetupWizard(null, 4), cta: 'Add' },
+              ...(signedIn && auth.role === 'crp' ? [{ id: 'crew', label: 'Invite your crew', sub: 'Pilots and observers who sign plans or log flights', done: cloudCrew > 0, go: () => { setActiveTab('database'); setTimeout(() => jumpToDbSection('dbsec-crew-users'), 350); }, cta: 'Invite' }] : []),
+              { id: 'job', label: 'Plan your first job', sub: 'Fill in Section 1 below, then Save', done: jobs > 0, go: () => { setActiveTab('preliminary'); setTimeout(() => { const el = document.querySelector('[data-operator-block]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 250); }, cta: 'Start' },
+                    ];
+            return items;
+          };
+          // ── v7.0 Home dashboard: data and actions ──
+          const [awaitingInd, setAwaitingInd] = useState(0);
+          useEffect(() => { const h = () => setAwaitingInd(window.wdAwaitingCount || 0); h(); window.addEventListener('wd-awaiting', h); return () => window.removeEventListener('wd-awaiting', h); }, []);
+          const planFileRef = useRef(null);
+          const buildDashData = () => {
+            const today = cToday(), todayIso = cYmd(today);
+            const parseLL = (txt) => { const m = String(txt || '').match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/); return m ? { lat: +m[1], lng: +m[2] } : null; };
+            const siteOf = (ov, md) => { const l = (md && md.launches || []).find(x => x && x.lat != null); if (l) return { lat: +l.lat, lng: +l.lng };
+              const p = ((ov && ov.launchSites) || []).map(x => parseLL(x.coords)).find(Boolean); return p || null; };
+            const nm = (p) => String((p.overview && p.overview.operationName) || '').trim() || p.title || (p.overview && p.overview.identifier) || 'Untitled job';
+            // drafts and approved plans, newest first (one row per job)
+            const byId = {};
+            [...(db.draftPlans || []).map(p => ({ p, approved: false })), ...(db.savedPlans || []).filter(p => p.status !== 'completed').map(p => ({ p, approved: true }))].forEach(({ p, approved }) => {
+              const prev = byId[p.id]; if (!prev || Date.parse(p.savedAt || 0) > Date.parse(prev.plan.savedAt || 0)) byId[p.id] = { plan: p, approved };
+            });
+            const doneIds = new Set((db.completedFlights || []).map(r => r.overview && r.overview.identifier).filter(Boolean));
+            const drafts = Object.values(byId).filter(x => !doneIds.has(x.plan.id)).map(({ plan, approved }) => ({ key: plan.id, id: plan.id, name: nm(plan), date: (plan.overview || {}).operationDate || '', client: (plan.overview || {}).clientName || '',
+              savedAt: plan.savedAt, approved: approved || !!(plan.approval && plan.approval.flightAuthApproved), rpName: (plan.approval || {}).rpName, rpSigned: !!(plan.approval || {}).rpSigned, plan, ...(siteOf(plan.overview, plan.mapData) || {}) }))
+              .sort((x, y) => Date.parse(y.savedAt || 0) - Date.parse(x.savedAt || 0));
+            const completed = [...(db.completedFlights || [])].sort((x, y) => Date.parse(y.completedAt || 0) - Date.parse(x.completedAt || 0)).slice(0, 12).map(r => {
+              const st = loggedTimeStats([r]).acft; const fl = Object.values(st).reduce((t, x) => t + x.flights, 0), sec = Object.values(st).reduce((t, x) => t + x.sec, 0);
+              return { key: r.id, id: r.id, name: nm(r), date: (r.overview || {}).operationDate || (r.completedAt || '').slice(0, 10), flights: fl, sec, plan: r, completed: true };
+            });
+            // the open job counts too
+            const curStarted = !!(String(overview.operationName || '').trim() || dirty || lastSavedAt);
+            const curMissing = reqItems.filter(i => !i.ok && i.stage === 'release').length;
+            const cur = { current: true, key: 'current', id: overview.identifier, name: String(overview.operationName || '').trim() || 'Current job', date: overview.operationDate || '', client: overview.clientName || '',
+              approved: !!approval.flightAuthApproved, missing: curMissing, rpName: approval.rpName, rpSigned: !!approval.rpSigned, ...(siteOf(overview, mapData) || {}) };
+            const upcoming = [...(curStarted ? [cur] : []), ...drafts.filter(x => x.id !== overview.identifier || !curStarted)].filter(x => x.date && x.date >= todayIso).sort((x, y) => x.date.localeCompare(y.date));
+            // hours
+            const all = loggedTimeStats(db.completedFlights), cut = Date.now() - 90 * 864e5;
+            const r90 = loggedTimeStats((db.completedFlights || []).filter(r => Date.parse(r.completedAt || 0) >= cut));
+            const pilots = Object.entries(all.pil).map(([name, x]) => ({ name, ...x, d90: (r90.pil[name] || {}).sec || 0 })).sort((x, y) => y.sec - x.sec).slice(0, 8);
+            const fleetRows = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0, last: 0 };
+              const exp = f.registrationExpiry ? cParse(f.registrationExpiry) : null;
+              return { name, flights: x.flights, last: x.last, sec: x.sec + (Number(f.priorMinutes) || 0) * 60, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', regoDays: exp ? cDiff(exp, today) : null }; })
+              .sort((x, y) => y.sec - x.sec);
+            // compliance: calendar tasks, expiries, and fleet registration
+            const comp = [];
+            COMPLIANCE_TASKS.forEach(t => { const st = cTaskStatus(t, ((db.compliance || {}).done || {})[t.id]); if (!st.done && st.due) comp.push({ label: t.title, date: cYmd(st.due), days: st.days, kind: 'Task' }); });
+            ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).forEach(e => { const st = cExpiryStatus(e); if (st.d) comp.push({ label: e.label, date: cYmd(st.d), days: st.days, kind: 'Expiry' }); });
+            fleetRows.forEach(f => { if (f.regoDays != null) comp.push({ label: f.name + ': CASA registration', date: f.regoExp, days: f.regoDays, kind: 'Aircraft' }); });
+            comp.sort((x, y) => x.days - y.days);
+            // awaiting action
+            const aw = [];
+            if (awaitingInd > 0) aw.push({ icon: 'fa-id-card', color: 'text-violet-600', label: `${awaitingInd} pilot induction${awaitingInd === 1 ? '' : 's'} to review`, sub: 'Check, sign and certify', cta: 'Review', act: () => window.dispatchEvent(new Event('wd-open-account')) });
+            if (curStarted && curMissing > 0) aw.push({ icon: 'fa-asterisk', color: 'text-rose-500', label: `${curMissing} mandatory item${curMissing === 1 ? '' : 's'} left on “${cur.name}”`, cta: 'Fix', act: () => setActiveTab('preliminary') });
+            drafts.forEach(x => { if (x.approved && x.rpName && !x.rpSigned) aw.push({ icon: 'fa-signature', color: 'text-sky-600', label: `RPIC signature pending: ${x.name}`, sub: x.rpName, act: () => openDashJob(x) }); });
+            drafts.forEach(x => { if (x.date && x.date < todayIso) aw.push({ icon: 'fa-clipboard-list', color: 'text-amber-500', label: `Flown? Log and complete: ${x.name}`, sub: fmtDate(x.date), cta: 'Log', act: () => { openDashJob(x); setTimeout(() => setActiveTab('log'), 300); } }); });
+            // batteries and monthly activity
+            const batteries = Object.entries(all.bat).map(([name, x]) => ({ name, ...x })).sort((x, y) => y.flights - x.flights);
+            const monthly = []; for (let k = 5; k >= 0; k--) { const d0 = new Date(today.getFullYear(), today.getMonth() - k, 1); const key = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0');
+              const recs = (db.completedFlights || []).filter(r => (((r.overview || {}).operationDate) || (r.completedAt || '')).slice(0, 7) === key); const st = loggedTimeStats(recs).acft;
+              monthly.push({ key, label: d0.toLocaleDateString('en-AU', { month: 'short' }), jobs: recs.length, flights: Object.values(st).reduce((t, x) => t + x.flights, 0), sec: Object.values(st).reduce((t, x) => t + x.sec, 0) }); }
+            const setupItems = getSetupItems();
+            const jl = siteOf(overview, mapData);
+            const hr = new Date().getHours(), first = String(auth.name || (db.companyProfile || {}).crpName || '').split(' ')[0];
+            return {
+              free: isFree, greeting: (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (first ? ', ' + first : ''),
+              company: isFree ? ((overview.operatorProfile || {}).name || '') : ((db.companyProfile || {}).name || ''),
+              current: { started: curStarted, name: String(overview.operationName || '').trim() },
+              jobLoc: jl ? { ...jl, label: (String(overview.operationName || '').trim() || 'Current job') + ' site' } : null,
+              nextJob: upcoming[0] || null, drafts, completed, pilots, fleet: fleetRows, compliance: comp, awaiting: aw, batteries, monthly,
+              setup: { items: setupItems, done: setupItems.filter(i => i.done).length, total: setupItems.length },
+              fleetLimits: fleetRows.map(f => /mini|air ?3|mavic/i.test(f.name) ? { name: f.name, wind: 38, gust: 45 } : /whoop|avata|fpv|pavo|cine/i.test(f.name) ? { name: f.name, wind: 25, gust: 32 } : { name: f.name, wind: 30, gust: 38 }),
+            };
+          };
+          const openDashJob = (j) => {
+            if (j.current || j.id === overview.identifier) { setActiveTab('preliminary'); return; }
+            if (dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return;
+            handleLoadPlan(j.plan, { silent: true }); setTimeout(() => setActiveTab('preliminary'), 60);
+          };
+          const dashActions = {
+            newJob: () => { if (isFree) handleResetForm(); else { if (!dirty || window.confirm('Start a new operation? Unsaved changes to the open job will be lost.')) handleResetFormQuiet(); } },
+            continueJob: () => setActiveTab('preliminary'),
+            goTab: (t) => setActiveTab(t),
+            exportBackup: () => handleExportDb(),
+            openPlanFile: () => planFileRef.current && planFileRef.current.click(),
+            openJob: openDashJob,
+          };
           const jumpToDbSection = (id) => {
             const h = document.getElementById(id); if (!h) return;
             const card = h.closest('.rounded-xl, .rounded-lg') || h;
@@ -8950,7 +9044,7 @@ View in the Database & Settings tab.`);
                           <button type="button" data-free-tour="mini" onClick={() => { done(); startTour('mini'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-camera text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">DJI Mini 4 Pro</span></button>
                           <button type="button" data-free-tour="whoop" onClick={() => { done(); startTour('whoop'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-vr-cardboard text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">3.5" FPV cinewhoop</span></button>
                         </div>
-                        <button type="button" data-free-start="1" onClick={done} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start planning</button>
+                        <button type="button" data-free-start="1" onClick={() => { done(); setActiveTab('preliminary'); }} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start planning</button>
                       </div>
                     </div>
                   </div>
@@ -9013,7 +9107,7 @@ View in the Database & Settings tab.`);
                           <i className="fa-solid fa-wand-magic-sparkles text-violet-600 mt-1"></i>
                           <span><span className="block font-semibold text-violet-900">Get started: sample job tour, then set up my company</span><span className="block text-xs text-violet-800">See a sample job planned with a DJI Mini or a 3.5" FPV cinewhoop (2 minutes, skip any time), then add your company, ReOC, aircraft with CASA registration and batteries.</span></span>
                         </button>
-                        <button type="button" data-welcome-start="1" onClick={close} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
+                        <button type="button" data-welcome-start="1" onClick={() => { close(); setActiveTab('preliminary'); }} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
                           <i className="fa-solid fa-plane-departure text-emerald-600 mt-1"></i>
                           <span><span className="block font-semibold text-slate-800">Start a new job</span><span className="block text-xs text-slate-600">Set up your company, fleet and crew any time in Database &amp; Settings.</span></span>
                         </button>
@@ -9298,6 +9392,10 @@ View in the Database & Settings tab.`);
                 <div className="hidden md:block md:col-span-1 print:hidden">
                   <div className="md:sticky md:top-16 space-y-3">
                   <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
+                    <button data-allow-locked="1" data-nav-home="1" onClick={() => setActiveTab('home')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'home' ? 'bg-violet-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
+                      <i className={`fa-solid fa-house text-lg w-6 ${activeTab === 'home' ? '' : 'text-violet-600'}`}></i> Home
+                    </button>
+                    <div className="border-t border-slate-100 my-2"></div>
                     <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'preliminary' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-circle-check text-lg w-6"></i> Preliminary
                       {reqMissing('preliminary').length > 0 && <span data-sidebar-left="preliminary" className="ml-auto bg-rose-100 text-rose-700 py-0.5 px-2 rounded-full text-xs font-bold" title="Mandatory items still to record">{reqMissing('preliminary').length} left</span>}
@@ -9350,8 +9448,9 @@ View in the Database & Settings tab.`);
                 {/* v6.7: phone tab bar, always on screen (the sidebar is hidden below 768 px) */}
                 {!tour && (
                   <nav data-mobile-tabs="1" className="md:hidden fixed bottom-0 inset-x-0 z-[1200] bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] print:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-                    <div className="grid grid-cols-6">
-                      {[['preliminary', 'fa-circle-check', 'Plan', reqMissing('preliminary').length, 'rose'],
+                    <div className="grid grid-cols-7">
+                      {[['home', 'fa-house', 'Home', 0, 'rose'],
+                        ['preliminary', 'fa-circle-check', 'Plan', reqMissing('preliminary').length, 'rose'],
                         ['jsa', 'fa-triangle-exclamation', 'JSA', reqMissing('jsa').length, 'rose'],
                         ['approval', 'fa-file-signature', 'Approve', reqMissing('approval').length, 'rose'],
                         ['log', 'fa-clipboard-list', 'Log', reqMissing('log').length, 'rose'],
@@ -9359,8 +9458,8 @@ View in the Database & Settings tab.`);
                         ['database', 'fa-database', 'Settings', (complianceAlerts && complianceAlerts.length) || 0, 'red']].map(([k, ic, label, n, col]) => (
                         <button key={k} type="button" data-allow-locked="1" data-mtab={k} aria-label={label} aria-current={activeTab === k ? 'page' : undefined}
                           onClick={() => { setActiveTab(k); try { window.scrollTo({ top: 0 }); } catch (e) {} }}
-                          className={`relative flex flex-col items-center justify-center gap-0.5 pt-2 pb-1.5 min-h-[56px] text-[10.5px] font-semibold ${activeTab === k ? 'text-violet-700' : 'text-slate-500'}`}>
-                          {activeTab === k && <span className="absolute top-0 left-3 right-3 h-0.5 rounded-full bg-violet-600"></span>}
+                          className={`relative flex flex-col items-center justify-center gap-0.5 pt-2 pb-1.5 min-h-[56px] text-[10px] font-semibold ${activeTab === k ? 'text-violet-700' : 'text-slate-500'}`}>
+                          {activeTab === k && <span className="absolute top-0 left-2 right-2 h-0.5 rounded-full bg-violet-600"></span>}
                           <i className={`fa-solid ${ic} text-[17px]`}></i>
                           <span className="leading-none">{label}</span>
                           {n > 0 && <span data-mtab-left={k} className={`absolute top-1 left-1/2 ml-1.5 min-w-[17px] h-[17px] px-1 rounded-full text-[10px] leading-[17px] text-center font-bold ${col === 'amber' ? 'bg-amber-400 text-amber-950' : col === 'red' ? 'bg-red-500 text-white' : 'bg-rose-500 text-white'}`}>{n}</span>}
@@ -9371,17 +9470,12 @@ View in the Database & Settings tab.`);
                 )}
 
                 <div className="md:col-span-3 space-y-5 md:space-y-8 print:col-span-4 print:space-y-0">
+                  {/* v7.0: Home dashboard */}
+                  {activeTab === 'home' && <div className="print:hidden" data-home="1"><Dashboard d={buildDashData()} a={dashActions} /></div>}
+                  <input type="file" accept=".json" className="hidden" ref={planFileRef} onChange={(e) => { handleImportPlan(e); e.target.value = ''; setActiveTab('preliminary'); }} />
                   {/* v6.8: getting-started checklist (account / offline edition, CRP). Replaces popping the crew invite form up first. */}
                   {activeTab === 'preliminary' && !isFree && !tour && !isCrewRole && !gsHidden && (() => {
-                    const fl = Object.values(db.fleet || {}).filter(f => f && !f.sample);
-                    const jobs = (db.draftPlans || []).length + (db.savedPlans || []).length + (db.completedFlights || []).length;
-                    const items = [
-                      { id: 'company', label: 'Company details', sub: 'Name, ReOC, ARN: prints on every plan', done: !!(db.companyProfile && db.companyProfile.name), go: () => openSetupWizard(null, 1), cta: 'Add' },
-                      { id: 'fleet', label: 'Aircraft with CASA registration', sub: 'Rego and expiry, serial, weight', done: fl.some(f => String(f.registrationNo || '').trim()), go: () => openSetupWizard(null, 3), cta: 'Add' },
-                      { id: 'batt', label: 'Batteries', sub: 'Pack names like 4S-1500-01', done: !!db.setupDoneAt || (db.completedFlights || []).length > 0 || (db.batteries || []).some(b => !/^3S-550-2025-\d+$/.test(b)), go: () => openSetupWizard(null, 4), cta: 'Add' },
-                      ...(signedIn && auth.role === 'crp' ? [{ id: 'crew', label: 'Invite your crew', sub: 'Pilots and observers who sign plans or log flights', done: cloudCrew > 0, go: () => { setActiveTab('database'); setTimeout(() => jumpToDbSection('dbsec-crew-users'), 350); }, cta: 'Invite' }] : []),
-                      { id: 'job', label: 'Plan your first job', sub: 'Fill in Section 1 below, then Save', done: jobs > 0, go: () => { const el = document.querySelector('[data-operator-block]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, cta: 'Start' },
-                    ];
+                    const items = getSetupItems();
                     const n = items.filter(i => i.done).length;
                     if (n === items.length) return null;
                     return (

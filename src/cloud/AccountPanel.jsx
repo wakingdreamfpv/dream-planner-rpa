@@ -274,6 +274,7 @@ function AccountPanel() {
   }, [sb, me]);
   // v6.3 (Chunk 3): inductions waiting for the CRP show as a badge on the account button
   const [awaiting, setAwaiting] = useState(0);
+  useEffect(() => { window.wdAwaitingCount = awaiting; window.dispatchEvent(new Event('wd-awaiting')); }, [awaiting]);
   useEffect(() => {
     if (!(me && me.active && me.role === 'crp')) { setAwaiting(0); return; }
     sb.from('signoff_records').select('id').eq('type', 'pilot_induction').eq('status', 'awaiting_crp').then(({ data }) => setAwaiting((data || []).length));
