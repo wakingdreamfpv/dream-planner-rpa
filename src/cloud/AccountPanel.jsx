@@ -117,7 +117,8 @@ function SetPassword({ sb, onDone, why }) {
   );
 }
 
-function CrewAdmin({ sb, me }) {
+function CrewAdmin({ sb, me, defaultOpen = true }) {
+  const [show, setShow] = useState(defaultOpen);
   const [people, setPeople] = useState([]), [invites, setInvites] = useState([]), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [note, setNote] = useState(null);
   const [form, setForm] = useState({ full_name: '', email: '', role: 'pilot' });
   const load = useCallback(async () => {
@@ -143,6 +144,13 @@ function CrewAdmin({ sb, me }) {
     if (error) setNote({ ok: false, t: error.message }); else { load(); window.wdCloud && window.wdCloud.refresh(); }
   };
   const pending = invites.filter(i => !i.accepted_user_id);
+  if (!show) return (
+    <button type="button" data-testid="crew-admin-toggle" onClick={() => setShow(true)} className="w-full flex items-center gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
+      <i className="fa-solid fa-users text-violet-600"></i>
+      <span className="flex-1"><span className="block font-semibold text-slate-800 text-sm">Crew logins &amp; invites</span><span className="block text-xs text-slate-500">{people.length} with logins{pending.length ? ` · ${pending.length} invited` : ''}. Invite pilots and observers, change roles.</span></span>
+      <i className="fa-solid fa-chevron-right text-slate-400"></i>
+    </button>
+  );
   return (
     <div className="space-y-5" data-testid="crew-admin">
       <form onSubmit={invite} className="border border-violet-200 bg-violet-50/50 rounded-xl p-4 space-y-2">
@@ -228,6 +236,15 @@ function AccountPanel() {
     return () => sub && sub.subscription && sub.subscription.unsubscribe();
   }, [sb, loadMe]);
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
+  // v6.8: the planner routes first-time users by sign-in state and role
+  useEffect(() => {
+    const v = loading ? { state: 'loading' } : !session ? { state: 'out' }
+      : { state: 'in', email: session.user.email, name: (me && me.full_name) || '', role: (me && me.active && me.role) || null, ready: !!me };
+    window.wdAuth = v; window.dispatchEvent(new Event('wd-auth'));
+    if (session) { try { localStorage.removeItem('wd_edition'); } catch (e) {} }
+  }, [loading, session, me]);
+  const [toast, setToast] = useState('');
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 5000); return () => clearTimeout(t); }, [toast]);
   // v6.2: share the CRP's view of logins with the planner (Crew & users shows login status and Invite per person)
   useEffect(() => {
     let dead = false;
@@ -281,10 +298,10 @@ function AccountPanel() {
     </button>
   );
   const [justIn, setJustIn] = useState(false);
-  useEffect(() => { if (!session) return; try { if (sessionStorage.getItem('wd_just_signed_in')) { sessionStorage.removeItem('wd_just_signed_in'); setJustIn(true); } } catch (e) {} }, [session]);
+  useEffect(() => { if (!session) return; try { if (sessionStorage.getItem('wd_just_signed_in')) { sessionStorage.removeItem('wd_just_signed_in'); setJustIn(true); setToast('You\'re signed in as ' + session.user.email + '. You\'ll stay signed in on this device until you sign out.'); } } catch (e) {} }, [session]);
   // v6.7: the welcome screen (and anything else) can open the sign-in panel
   useEffect(() => { const h = () => setOpen(true); window.addEventListener('wd-open-account', h); return () => window.removeEventListener('wd-open-account', h); }, []);
-  const account = session && (
+  const accountView = (inlineCtx) => session && (
               <div className="space-y-5">
                 {justIn && <div className="text-sm bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg px-3 py-2 flex items-start gap-2" data-testid="signed-in-note"><i className="fa-solid fa-circle-check mt-0.5"></i><span><b>You're signed in.</b> You'll stay signed in on this device until you tap Sign out.</span></div>}
                 <div className="flex flex-wrap items-center gap-3">
@@ -295,7 +312,7 @@ function AccountPanel() {
                 </div>
                 {me && !me.active && <div className="text-sm bg-amber-50 text-amber-900 border border-amber-200 rounded-lg px-3 py-2" data-testid="inactive-note">Your login isn't active. Ask the CRP to invite or activate you.</div>}
                 {me && me.active && me.role === 'crp' && <CrpInductions sb={sb} me={me} onCount={setAwaiting} />}
-                {me && me.active && me.role === 'crp' && <CrewAdmin sb={sb} me={me} />}
+                {me && me.active && me.role === 'crp' && <CrewAdmin sb={sb} me={me} defaultOpen={!!inlineCtx} />}
                 {me && me.active && me.role === 'pilot' && <PilotInduction sb={sb} me={me} />}
                 {me && me.active && me.role !== 'crp' && <MyProfile sb={sb} me={me} onSaved={() => loadMe(session)} />}
                 <p className="text-[11px] text-slate-400"><i className="fa-solid fa-circle-info mr-1"></i>Jobs and plans are still saved on this device for now; cloud sync of jobs comes in a later update.</p>
@@ -305,7 +322,7 @@ function AccountPanel() {
     <div data-testid="account-inline">
       {loading ? <p className="text-sm text-slate-500">Checking your login…</p>
         : !session ? <SignIn sb={sb} onDone={() => {}} />
-        : account}
+        : accountView(true)}
     </div>, slot2);
   const floating = !slot && (
     <div className="fixed bottom-3 left-3 z-[1500] print:hidden" style={{ background: '#2d0a5e', borderRadius: 10 }}>{chip}</div>
@@ -313,12 +330,13 @@ function AccountPanel() {
   return (
     <>
       {slot ? createPortal(chip, slot) : floating}
+      {toast && <div data-testid="signin-toast" className="fixed top-3 left-1/2 -translate-x-1/2 z-[5100] w-[min(460px,calc(100vw-24px))] bg-emerald-600 text-white text-sm font-medium rounded-xl shadow-2xl px-4 py-3 flex items-start gap-2 print:hidden" style={{ marginTop: 'env(safe-area-inset-top)' }}><i className="fa-solid fa-circle-check mt-0.5"></i><span className="flex-1">{toast}</span><button type="button" onClick={() => setToast('')} aria-label="Dismiss" className="opacity-80 px-1"><i className="fa-solid fa-xmark"></i></button></div>}
       {inline}
       {open && (
         <Modal title={needPw ? 'Set your password' : session ? 'Account & crew' : 'Sign in'} onClose={() => setOpen(false)}>
           {needPw && session ? <SetPassword sb={sb} why={needPw} onDone={() => { setNeedPw(null); history.replaceState(null, '', location.pathname + location.search); }} />
-            : !session ? <SignIn sb={sb} onDone={() => {}} />
-            : account
+            : !session ? <SignIn sb={sb} onDone={() => setOpen(false)} />
+            : accountView(false)
 }
         </Modal>
       )}

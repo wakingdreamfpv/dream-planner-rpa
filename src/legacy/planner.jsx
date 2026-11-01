@@ -169,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.7';
+        const APP_VERSION = '6.8';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4252,12 +4252,50 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // A brand-new database on this device (no saved data anywhere): upgrade notices stay quiet and a welcome screen shows (v5.53)
           const freshDbRef = useRef(false);
           const [showWelcome, setShowWelcome] = useState(false);
+          // ── v6.8 Editions & first-time journey ──────────────────────────────────
+          // Hosted: sign in first (full edition) or "Use free on this device". The offline file is always the full edition.
+          const IS_HOSTED = typeof location !== 'undefined' && /^https?:$/.test(location.protocol);
+          const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+          const lsSet = (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {} };
+          const [auth, setAuth] = useState(() => (typeof window !== 'undefined' && window.wdAuth) || { state: IS_HOSTED ? 'loading' : 'none' });
+          const [editionPick, setEditionPick] = useState(() => lsGet('wd_edition'));
+          const [editionTest, setEditionTest] = useState(() => lsGet('wd_edition_test'));
+          useEffect(() => {
+            const h = () => { const a = window.wdAuth || { state: 'none' }; setAuth(a); if (a.state === 'in') setEditionPick(''); };
+            h(); window.addEventListener('wd-auth', h);
+            // a hosted page whose account panel never reports (no cloud) falls back to "not signed in"
+            const t = IS_HOSTED ? setTimeout(() => { if (!window.wdAuth) setAuth({ state: 'out' }); }, 6000) : null;
+            return () => { window.removeEventListener('wd-auth', h); if (t) clearTimeout(t); };
+          }, []); // eslint-disable-line
+          const signedIn = auth.state === 'in';
+          const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && editionPick === 'free');
+          const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
+          const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
+          const setTestEdition = (v) => { lsSet('wd_edition_test', v); setEditionTest(v); };
+          const [freeIntroSeen, setFreeIntroSeen] = useState(() => !!lsGet('wd_free_intro'));
+          const roleKey = 'wd_role_welcomed:' + (auth.email || '');
+          const [roleWelcomed, setRoleWelcomed] = useState(() => !!lsGet(roleKey));
+          useEffect(() => { setRoleWelcomed(!!lsGet(roleKey)); }, [roleKey]); // eslint-disable-line
+          const isCrewRole = signedIn && auth.ready && auth.role && auth.role !== 'crp';
+          const [opOpen, setOpOpen] = useState(false);
+          const [gsHidden, setGsHidden] = useState(() => !!lsGet('wd_gs_hidden'));
+          // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
+          const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...(db.companyProfile || {}) };
+            Object.keys(op).forEach(k => { if (String(op[k] || '').trim()) out[k] = op[k]; }); return out; };
+          const [cloudCrew, setCloudCrew] = useState(0);
+          useEffect(() => { const h = () => { const c = window.wdCloud; setCloudCrew(c ? ((c.people || []).length - 1) + (c.invites || []).filter(i => !i.accepted_user_id).length : 0); };
+            h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
           useEffect(() => {
             let cancelled = false;
             wdStore.load().then(stored => {
               if (cancelled) return;
               if (stored) {
-                setDb(parseStoredDb(stored));
+                const pd = parseStoredDb(stored);
+                setDb(pd);
+                // v6.8: a planner that was opened (e.g. at the sign-in screen) but never set up still gets the welcome
+                let seen = false; try { seen = !!localStorage.getItem('wd_welcomed'); } catch (e) {}
+                const empty = !(pd.companyProfile && pd.companyProfile.name) && !(pd.draftPlans || []).length && !(pd.savedPlans || []).length && !(pd.completedFlights || []).length;
+                if (!seen && empty && !wdStore.locked) setShowWelcome(true);
               } else {
                 // first run on this version: move the localStorage data into IndexedDB
                 let legacy = null; try { legacy = localStorage.getItem('rpas_database'); } catch (e) {}
@@ -4503,7 +4541,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const heatmapDataUrl = null; // heat layer is now re-drawn from GPS data inside the PDF
             const hasHeatContent = heatStrokes.some(d => !d.e) || heatExclZones.length > 0;
             const _generatePDF = (heatmapDataUrl, hasHeatContent) => {
-            const co={...(db.companyProfile||{}),...((overview&&overview.operatorProfile)||{})};
+            const co=companyFor(overview);
             const ov=overview;
             const fmtD=(iso)=>{if(!iso)return'—';try{const[y,m,d]=iso.split('-');return d+'/'+m+'/'+y;}catch(e){return iso;}};
             const val=(v)=>(v&&String(v).trim())?String(v):'—';
@@ -5243,6 +5281,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
 
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
+            if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner (free edition) · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
             const html=P.join('\n');
@@ -5271,8 +5310,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               ...buildPlanSnapshot(ov),
             };
             const newDb = { ...db,
-              savedPlans: [plan, ...(db.savedPlans || []).filter(p => p.id !== plan.id)],
-              draftPlans: (db.draftPlans || []).filter(p => p.id !== plan.id) };
+              savedPlans: [plan, ...(isFree ? [] : (db.savedPlans || []).filter(p => p.id !== plan.id))],
+              draftPlans: isFree ? [] : (db.draftPlans || []).filter(p => p.id !== plan.id) };
             if (!(await persistDbNow(newDb))) return;
             setDb(newDb);
             { const problem = await verifySaved('savedPlans', plan); if (problem) { alert(`⚠ Plan saved, but the check after saving failed: ${problem}.\n\nExport a backup from Database & Settings before closing.`); return; } }
@@ -6886,6 +6925,14 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               if (Date.parse(w.savedAt) > newest + 1000) setWorkingOffer(w); else wdStore.clearWorking();
             });
           }, [dbReady]); // eslint-disable-line
+          // v6.8: free mode has no saved-jobs list, so its one job reopens by itself
+          const freeOpenedRef = useRef(false);
+          useEffect(() => {
+            if (!dbReady || !isFree || freeOpenedRef.current) return;
+            freeOpenedRef.current = true;
+            const j = (db.draftPlans || [])[0] || (db.savedPlans || [])[0];
+            if (j && overview.identifier !== j.id && !dirty) { quietUntilRef.current = Date.now() + 2500; handleLoadPlan(j, { silent: true }); setTimeout(() => setDirty(false), 50); }
+          }, [dbReady, isFree]); // eslint-disable-line
           const markSaved = () => { setDirty(false); setLastSavedAt(new Date().toISOString()); if (workingTimer.current) clearTimeout(workingTimer.current); wdStore.clearWorking(); quietUntilRef.current = Date.now() + 1500; };
           // Read the database back after a save and confirm the record really holds what's on screen
           const verifySaved = async (listKey, rec) => {
@@ -6907,12 +6954,15 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               savedAt: new Date().toISOString(), status: 'draft',
               ...buildPlanSnapshot(ov),
             };
-            const newDb = { ...db, draftPlans: [draft, ...(db.draftPlans || []).filter(p => p.id !== draft.id)] };
+            const newDb = isFree
+              ? { ...db, draftPlans: [draft], savedPlans: (db.savedPlans || []).filter(p => p.id === draft.id) } // v6.8: free keeps one job
+              : { ...db, draftPlans: [draft, ...(db.draftPlans || []).filter(p => p.id !== draft.id)] };
             if (!(await persistDbNow(newDb))) return;
             setDb(newDb);
             const problem = await verifySaved('draftPlans', draft);
             if (problem) { alert(`⚠ Draft saved, but the check after saving failed: ${problem}.\n\nDon't close the planner. Export a backup from Database & Settings and tell Claude what you were editing.`); return; }
             markSaved();
+            if (isFree) { alert(`Saved on this device: "${title}"\n\nFree mode keeps this one job until you start a new one. Come back any time to finish the flight log, and keep your exported PDFs.`); return; }
             const hasApproved = (db.savedPlans || []).some(p => p.id === draft.id);
             alert(`Draft saved and checked: "${title}" (${draft.id})\n\nResume it any time from the Database & Settings tab.`
               + (hasApproved ? `\n\nNote: this job also has an APPROVED plan. That copy hasn't changed; open the draft (or save it as approved again) to see these edits.` : ''));
@@ -7288,6 +7338,7 @@ ${'<'}/script>
               return (rl.flights || []).some(f => parseInt(f.duration) > 0);
             });
             if (!hasLog) { alert('Enter at least one flight duration in the Post-Flight Log before logging.'); return; }
+            if (isFree) { if (window.confirm('Free mode doesn\'t keep a library of flight records on this device. The exported PDF is your record of this job: keep it with your records.\n\nExport the PDF now?')) generatePDF(); return; }
             const record = {
               id: `${overview.identifier}-${Date.now()}`, title,
               completedAt: new Date().toISOString(), status: 'completed',
@@ -7396,6 +7447,7 @@ View in the Database & Settings tab.`);
           const handleChecklistNoteChange = (key, value) => setChecklistNotes(prev => ({ ...prev, [key]: value }));
 
           const handleAutoSave = (collection, value, isObj = false) => {
+            if (isFree) return; // v6.8: free mode doesn't build saved lists
               if (!value || value.trim() === '') return;
               const safeValue = value.trim();
               const currentList = db[collection] || [];
@@ -7575,7 +7627,7 @@ View in the Database & Settings tab.`);
             if (!risks.some(r => String(r.hazard || '').trim())) { if (!window.confirm('The risk register is empty. Send for signing anyway?')) return; }
             const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
             let pdfHtml = ''; try { pdfHtml = generatePDF({ capture: true }) || ''; } catch (e) {}
-            const co = { ...(db.companyProfile || {}), ...((overview && overview.operatorProfile) || {}) };
+            const co = companyFor(overview);
             const ops = (jsa.operationTypes || []).join(', ') + (oonpMode && jsa.oonpPathway ? ' · OONP ' + jsa.oonpPathway : '');
             const win = opWindow(overview);
             const requestId = 'R' + Date.now().toString(36);
@@ -8409,6 +8461,12 @@ View in the Database & Settings tab.`);
               return null;
           };
 
+          // v6.8: one job as a plan file (open it on another device with Import a single job / Open a plan file)
+          const handleExportPlanFile = () => {
+            const title = getOpTitle(overview);
+            downloadJson({ _type: 'wd_plan', id: overview.identifier, title, status: approval.flightAuthApproved ? 'approved' : 'draft', savedAt: new Date().toISOString(), ...buildPlanSnapshot() },
+              'Plan_' + (overview.identifier || 'job') + '_' + fileSafe(title) + '.json');
+          };
           const handleImportPlan = (event) => {
               const file = event.target.files[0];
               if (!file) return;
@@ -8423,6 +8481,7 @@ View in the Database & Settings tab.`);
                           return;
                       }
                       const plan = {
+                          ...imported,
                           id: imported.id || imported.overview.identifier,
                           title: imported.title || getOpTitle(imported.overview),
                           status: imported.status || 'draft',
@@ -8439,6 +8498,8 @@ View in the Database & Settings tab.`);
                           oonpMode: imported.oonpMode,
                           mapData: imported.mapData || { launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] },
                       };
+                      if (isFree) { const pl = { ...plan, status: plan.status === 'approved' ? 'approved' : 'draft' }; setDb(prev => ({ ...prev, draftPlans: pl.status === 'draft' ? [pl] : [], savedPlans: pl.status === 'approved' ? [pl] : [] }));
+                        handleLoadPlan(pl, { silent: true }); alert(`Opened "${plan.title}".\n\nFree mode keeps one job at a time on this device.`); return; }
                       const targetList = plan.status === 'completed' ? 'completedFlights' : (plan.status === 'approved' ? 'savedPlans' : 'draftPlans');
                       updateDb(targetList, [plan, ...(db[targetList] || []).filter(p => p.id !== plan.id)]);
                       const targetLabel = targetList === 'draftPlans' ? 'Draft Flight Plans' : targetList === 'savedPlans' ? 'Saved Approved Plans' : 'Completed Flight Records';
@@ -8506,6 +8567,7 @@ View in the Database & Settings tab.`);
                   setActiveTab('preliminary');
           };
           const handleResetForm = () => {
+              if (isFree) { if (window.confirm('Start a new job?\n\nFree mode keeps one job at a time, so this replaces the job that\'s open now' + (dirty ? ' (it has unsaved changes)' : '') + '.\n\nExport its PDF first if you haven\'t (and use Settings › Export this job if you want to come back to it).')) { handleResetFormQuiet(); setDb(prev => ({ ...prev, draftPlans: [], savedPlans: [] })); } return; }
               if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Are you sure you want to clear the current form and start a new operation? This will wipe all current flight data (but will safely keep your saved Database)."))
                   handleResetFormQuiet();
           };
@@ -8708,6 +8770,7 @@ View in the Database & Settings tab.`);
             setTimeout(() => { handleLoadPlan(makeSamplePlan(kind), { silent: true }); setTour({ kind, step: 0 }); }, 60);
           };
           const endTour = (thenSetup) => {
+            if (isFree) thenSetup = false; // free mode: straight into a blank job
             const kind = tour && tour.kind; setTour(null);
             quietUntilRef.current = Date.now() + 2500; handleResetFormQuiet();
             if (!thenSetup) setDb(prev => { const fleet = { ...(prev.fleet || {}) }, rb = { ...(prev.rpaBatteries || {}) };
@@ -8747,7 +8810,7 @@ View in the Database & Settings tab.`);
           // v6.7: each wizard step starts at the top (the body scrolls on its own on phones)
           useEffect(() => { const el = document.querySelector('[data-wiz-body]'); if (el) el.scrollTop = 0; }, [wiz && wiz.step]); // eslint-disable-line
           // v6.7: no page scrolling behind a full-screen panel on phones
-          useEffect(() => { const lock = !!(wiz || showWelcome); document.documentElement.classList.toggle('wd-modal-open', lock); return () => document.documentElement.classList.remove('wd-modal-open'); }, [!!wiz, showWelcome]); // eslint-disable-line
+          useEffect(() => { const lock = !!(wiz || (showWelcome && !showGate && !isFree && !isCrewRole) || showGate); document.documentElement.classList.toggle('wd-modal-open', lock); return () => document.documentElement.classList.remove('wd-modal-open'); }, [!!wiz, showWelcome, showGate, isFree, isCrewRole]); // eslint-disable-line
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
           const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
@@ -8792,14 +8855,14 @@ View in the Database & Settings tab.`);
                   <div>
                     {/* Company name — most prominent */}
                     <div style={{fontSize:'22pt', fontWeight:900, color:'#1e3a5f', letterSpacing:'-0.02em', lineHeight:1.0}}>
-                      {(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Your Company Name'}
+                      {(companyFor(overview) && companyFor(overview).name) ? companyFor(overview).name : 'Your Company Name'}
                     </div>
                     {/* ReOC / ARN line */}
-                    {db.companyProfile && (db.companyProfile.reocNumber || db.companyProfile.companyArn) && (
+                    {companyFor(overview) && (companyFor(overview).reocNumber || companyFor(overview).companyArn) && (
                       <div style={{fontSize:'8.5pt', color:'#475569', marginTop:'2pt', fontWeight:600}}>
-                        {db.companyProfile.reocNumber && `ReOC: ${db.companyProfile.reocNumber}`}
-                        {db.companyProfile.reocNumber && db.companyProfile.companyArn && '  ·  '}
-                        {db.companyProfile.companyArn && `ARN: ${db.companyProfile.companyArn}`}
+                        {companyFor(overview).reocNumber && `ReOC: ${companyFor(overview).reocNumber}`}
+                        {companyFor(overview).reocNumber && companyFor(overview).companyArn && '  ·  '}
+                        {companyFor(overview).companyArn && `ARN: ${companyFor(overview).companyArn}`}
                       </div>
                     )}
                     {/* App subtitle — less prominent */}
@@ -8811,8 +8874,8 @@ View in the Database & Settings tab.`);
                     <div style={{fontSize:'8pt', color:'#64748b', fontWeight:600}}>Operation ID</div>
                     <div style={{fontSize:'11pt', fontWeight:700, color:'#1e3a5f', fontFamily:'monospace'}}>{overview.identifier || '—'}</div>
                     <div style={{fontSize:'7.5pt', color:'#94a3b8', marginTop:'2pt'}}>{new Date().toLocaleDateString('en-AU', {day:'2-digit',month:'long',year:'numeric'})}</div>
-                    {db.companyProfile && db.companyProfile.phone && <div style={{fontSize:'7.5pt', color:'#94a3b8'}}>{db.companyProfile.phone}</div>}
-                    {db.companyProfile && db.companyProfile.email && <div style={{fontSize:'7.5pt', color:'#94a3b8'}}>{db.companyProfile.email}</div>}
+                    {companyFor(overview) && companyFor(overview).phone && <div style={{fontSize:'7.5pt', color:'#94a3b8'}}>{companyFor(overview).phone}</div>}
+                    {companyFor(overview) && companyFor(overview).email && <div style={{fontSize:'7.5pt', color:'#94a3b8'}}>{companyFor(overview).email}</div>}
                   </div>
                 </div>
               </div>
@@ -8841,7 +8904,83 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               <WdProgressOverlay />
-              {showWelcome && (() => {
+              {/* v6.8: sign in first (hosted) */}
+              {showGate && (
+                <div className="fixed inset-0 z-[4880] overflow-y-auto print:hidden" data-testid="gate" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                  <div className="min-h-full flex flex-col items-center justify-center px-4 py-8" style={{ paddingTop: 'max(2rem, env(safe-area-inset-top))', paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}>
+                    <div className="text-center text-white mb-6">
+                      <i className="fa-solid fa-plane-departure text-4xl" style={{ color: '#c084fc' }}></i>
+                      <h1 className="text-2xl sm:text-3xl font-extrabold mt-3">Dream Flight RPA Planner</h1>
+                      <p className="text-sm text-violet-200 mt-1">Flight plans, JSA, risk and flight records for CASA RPAS operations</p>
+                    </div>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 sm:p-6 space-y-3">
+                      <button type="button" data-gate-signin="1" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="w-full py-3.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold">Sign in</button>
+                      <p className="text-xs text-slate-500 text-center">Invited as crew? Open the invitation email on this device and tap <b>Accept invitation</b>.</p>
+                      <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-400 font-bold py-1"><span className="flex-1 border-t border-slate-200"></span>or<span className="flex-1 border-t border-slate-200"></span></div>
+                      <button type="button" data-gate-free="1" onClick={chooseFree} className="w-full py-3 rounded-xl border-2 border-violet-200 hover:bg-violet-50 text-violet-800 text-base font-bold">Use free on this device</button>
+                      <ul className="text-xs text-slate-600 space-y-1 pt-1">
+                        <li><i className="fa-solid fa-check text-emerald-600 w-4"></i>Plan a job, JSA, risk register, approve, log flights, export the PDF</li>
+                        <li><i className="fa-solid fa-check text-emerald-600 w-4"></i>Free for commercial jobs, no account needed</li>
+                        <li><i className="fa-solid fa-circle-info text-slate-400 w-4"></i>Keeps one job at a time on this device. Your PDFs are your records.</li>
+                      </ul>
+                    </div>
+                    <p className="text-[11px] text-violet-200/80 mt-5 text-center max-w-md">With an account: your company, fleet, crew and every job saved and available on all your devices, plus inductions, sign-offs and the compliance calendar.</p>
+                  </div>
+                </div>
+              )}
+              {isFree && !freeIntroSeen && !tour && (() => {
+                const done = () => { lsSet('wd_free_intro', new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setFreeIntroSeen(true); setShowWelcome(false); };
+                return (
+                  <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden" data-testid="free-intro">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden my-2 sm:my-6">
+                      <div className="px-5 py-4 text-white relative" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <button type="button" onClick={done} data-free-intro-close="1" aria-label="Close" className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 text-xl"><i className="fa-solid fa-xmark"></i></button>
+                        <div className="text-xs uppercase tracking-widest opacity-75">Free on this device</div>
+                        <h2 className="text-xl font-bold mt-1 pr-8">Plan your job, fly, log it, export the PDF</h2>
+                      </div>
+                      <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700">
+                        <ul className="space-y-2">
+                          <li className="flex gap-2"><i className="fa-solid fa-check text-emerald-600 mt-1"></i><span>Everything for <b>one job</b>: plan, JSA and risk, approval, flight log and the PDF. Use it for paid work.</span></li>
+                          <li className="flex gap-2"><i className="fa-solid fa-floppy-disk text-violet-600 mt-1"></i><span>The job stays <b>saved on this device</b> until you start a new one, so you can plan now and come back after the flight to finish the log.</span></li>
+                          <li className="flex gap-2"><i className="fa-solid fa-file-pdf text-violet-600 mt-1"></i><span><b>Keep your PDFs.</b> Free mode doesn't keep a records library: the PDF is your record.</span></li>
+                          <li className="flex gap-2"><i className="fa-solid fa-mobile-screen text-violet-600 mt-1"></i><span>Planning on a laptop and logging on your phone? Use <b>Settings › Export this job</b>, then open the file on the phone.</span></li>
+                        </ul>
+                        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-1">See it with a sample job first (2 minutes)</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button type="button" data-free-tour="mini" onClick={() => { done(); startTour('mini'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-camera text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">DJI Mini 4 Pro</span></button>
+                          <button type="button" data-free-tour="whoop" onClick={() => { done(); startTour('whoop'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-vr-cardboard text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">3.5" FPV cinewhoop</span></button>
+                        </div>
+                        <button type="button" data-free-start="1" onClick={done} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start planning</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              {isCrewRole && !roleWelcomed && (() => {
+                const done = () => { lsSet(roleKey, new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setRoleWelcomed(true); setShowWelcome(false); };
+                const first = String(auth.name || '').split(' ')[0];
+                return (
+                  <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden" data-testid="role-welcome">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden my-2 sm:my-6">
+                      <div className="px-5 py-4 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <div className="text-xs uppercase tracking-widest opacity-75">{auth.role === 'pilot' ? 'Pilot' : 'Observer'}</div>
+                        <h2 className="text-xl font-bold mt-1">Welcome{first ? ', ' + first : ''}</h2>
+                        <p className="text-sm opacity-85 mt-1">You've been invited to fly with this operator as {auth.role === 'pilot' ? 'a pilot' : 'an observer'}.</p>
+                      </div>
+                      <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700">
+                        {auth.role === 'pilot' ? (<>
+                          <p>First step: your <b>pilot induction</b>. Your details, next of kin, hours, RePL and the aircraft you'll fly, then the declaration (about 10 minutes). The Chief Remote Pilot checks it and certifies you.</p>
+                          <button type="button" data-role-induction="1" onClick={() => { done(); window.dispatchEvent(new Event('wd-open-account')); }} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start my induction</button>
+                        </>) : (
+                          <p>When you're added to a job you'll see its plan and can log flights. Your account and sign-offs are under the button with your initials, top right.</p>
+                        )}
+                        <button type="button" data-role-later="1" onClick={done} className="w-full py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold">{auth.role === 'pilot' ? 'Later, show me the planner' : 'Go to the planner'}</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              {showWelcome && !showGate && !isFree && !isCrewRole && auth.state !== 'loading' && (() => {
                 const close = () => { try { localStorage.setItem('wd_welcomed', new Date().toISOString()); } catch (e) {} setShowWelcome(false); };
                 return (
                   <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain print:hidden" data-testid="welcome" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -8849,12 +8988,12 @@ View in the Database & Settings tab.`);
                       <div className="px-5 sm:px-6 py-4 sm:py-5 text-white relative" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
                         <button type="button" onClick={close} data-welcome-close="1" aria-label="Close" className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 text-xl"><i className="fa-solid fa-xmark"></i></button>
                         <div className="text-xs uppercase tracking-widest opacity-75 pr-10">{(db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA'}</div>
-                        <h2 className="text-xl sm:text-2xl font-bold mt-1 pr-8">Welcome to Dream Planner</h2>
+                        <h2 className="text-xl sm:text-2xl font-bold mt-1 pr-8">{signedIn && auth.name ? `Welcome, ${String(auth.name).split(' ')[0]}` : 'Welcome to Dream Planner'}</h2>
                         <p className="text-sm opacity-85 mt-1">RPAS operations planner, JSA and Flight Records · v{APP_VERSION}</p>
                       </div>
                       <div className="p-4 sm:p-6 space-y-3">
                         <p className="text-sm text-slate-600">This is a new planner on this device. How would you like to start?</p>
-                        {typeof window !== 'undefined' && /^https?:$/.test(location.protocol) && (
+                        {IS_HOSTED && !signedIn && (
                           <button type="button" data-welcome-signin="1" onClick={() => { close(); window.dispatchEvent(new Event('wd-open-account')); }} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
                             <i className="fa-solid fa-right-to-bracket text-violet-600 mt-1"></i>
                             <span><span className="block font-semibold text-slate-800">Sign in</span><span className="block text-xs text-slate-600">If you've been invited as crew, or you're the CRP signing in on another device. Your jobs and settings stay on the device they were made on until cloud sync arrives; use Import my backup to bring them across.</span></span>
@@ -9001,7 +9140,7 @@ View in the Database & Settings tab.`);
                         <div className="flex gap-1 flex-1">{TOUR_STEPS.map((_, i) => <span key={i} className={`h-1.5 flex-1 rounded-full ${i <= tour.step ? 'bg-violet-400' : 'bg-slate-700'}`} />)}</div>
                         {tour.step > 0 && <button type="button" data-allow-locked="1" onClick={() => setTour(t => ({ ...t, step: t.step - 1 }))} className="px-3 py-1.5 rounded-lg text-sm bg-slate-700 hover:bg-slate-600">Back</button>}
                         {!last ? <button type="button" data-allow-locked="1" data-tour-next="1" onClick={() => setTour(t => ({ ...t, step: t.step + 1 }))} className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-violet-600 hover:bg-violet-500">Next</button>
-                          : <button type="button" data-allow-locked="1" data-tour-setup="1" onClick={() => endTour(true)} className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500">Set up my company</button>}
+                          : <button type="button" data-allow-locked="1" data-tour-setup="1" onClick={() => endTour(true)} className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500">{isFree ? 'Start my first job' : 'Set up my company'}</button>}
                       </div>
                     </div>
                   </div>);
@@ -9098,7 +9237,7 @@ View in the Database & Settings tab.`);
                   <div className="min-w-0">
                     <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2 text-white min-w-0">
                       <i className="fa-solid fa-plane-departure text-lg sm:text-2xl shrink-0" style={{color:"#c084fc"}}></i>
-                      <span className="truncate">{(db.companyProfile && db.companyProfile.name) ? db.companyProfile.name : 'Dream Planner RPA'}</span>
+                      <span className="truncate">{(isFree ? (overview.operatorProfile || {}).name : (db.companyProfile && db.companyProfile.name)) || 'Dream Planner RPA'}</span>
                     </h1>
                     <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>
@@ -9120,6 +9259,15 @@ View in the Database & Settings tab.`);
                   </div>
                 </div>
               </header>
+              {isFree && (
+                <div data-free-banner="1" className="print:hidden bg-violet-50 border-b border-violet-200 text-violet-900 text-xs sm:text-sm">
+                  <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+                    <span className="flex-1 min-w-0"><b>Free mode</b> · one job at a time on this device · keep your PDFs</span>
+                    <button type="button" data-allow-locked="1" onClick={() => setActiveTab('database')} className="underline">What's included</button>
+                    {IS_HOSTED && <button type="button" data-allow-locked="1" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="font-semibold bg-violet-600 text-white rounded-full px-3 py-1">Sign in</button>}
+                  </div>
+                </div>
+              )}
 
               <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-3 md:mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-8 pb-24 md:pb-0">
                 
@@ -9199,6 +9347,47 @@ View in the Database & Settings tab.`);
                 )}
 
                 <div className="md:col-span-3 space-y-5 md:space-y-8 print:col-span-4 print:space-y-0">
+                  {/* v6.8: getting-started checklist (account / offline edition, CRP). Replaces popping the crew invite form up first. */}
+                  {activeTab === 'preliminary' && !isFree && !tour && !isCrewRole && !gsHidden && (() => {
+                    const fl = Object.values(db.fleet || {}).filter(f => f && !f.sample);
+                    const jobs = (db.draftPlans || []).length + (db.savedPlans || []).length + (db.completedFlights || []).length;
+                    const items = [
+                      { id: 'company', label: 'Company details', sub: 'Name, ReOC, ARN: prints on every plan', done: !!(db.companyProfile && db.companyProfile.name), go: () => openSetupWizard(null, 1), cta: 'Add' },
+                      { id: 'fleet', label: 'Aircraft with CASA registration', sub: 'Rego and expiry, serial, weight', done: fl.some(f => String(f.registrationNo || '').trim()), go: () => openSetupWizard(null, 3), cta: 'Add' },
+                      { id: 'batt', label: 'Batteries', sub: 'Pack names like 4S-1500-01', done: !!db.setupDoneAt || (db.completedFlights || []).length > 0 || (db.batteries || []).some(b => !/^3S-550-2025-\d+$/.test(b)), go: () => openSetupWizard(null, 4), cta: 'Add' },
+                      ...(signedIn && auth.role === 'crp' ? [{ id: 'crew', label: 'Invite your crew', sub: 'Pilots and observers who sign plans or log flights', done: cloudCrew > 0, go: () => { setActiveTab('database'); setTimeout(() => jumpToDbSection('dbsec-crew-users'), 350); }, cta: 'Invite' }] : []),
+                      { id: 'job', label: 'Plan your first job', sub: 'Fill in Section 1 below, then Save', done: jobs > 0, go: () => { const el = document.querySelector('[data-operator-block]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, cta: 'Start' },
+                    ];
+                    const n = items.filter(i => i.done).length;
+                    if (n === items.length) return null;
+                    return (
+                      <div data-getting-started="1" className="print:hidden bg-white rounded-xl shadow-sm border border-violet-200 overflow-hidden">
+                        <div className="px-4 sm:px-5 py-3 flex items-center gap-3 border-b border-violet-100 bg-violet-50/60">
+                          <i className="fa-solid fa-list-check text-violet-600"></i>
+                          <div className="flex-1 min-w-0"><div className="font-semibold text-violet-900 text-sm">Getting started</div><div className="text-xs text-violet-700">{n} of {items.length} done</div></div>
+                          <div className="hidden sm:block w-28 h-1.5 rounded-full bg-violet-100 overflow-hidden"><div className="h-full bg-violet-600" style={{ width: Math.round(100 * n / items.length) + '%' }}></div></div>
+                          <button type="button" data-gs-hide="1" onClick={() => { lsSet('wd_gs_hidden', '1'); setGsHidden(true); }} className="text-xs text-slate-500 hover:text-slate-800 px-1">Hide</button>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                          {items.map(it => (
+                            <div key={it.id} data-gs-item={it.id} data-done={it.done ? '1' : '0'} className="flex items-center gap-3 px-4 sm:px-5 py-2.5">
+                              <i className={`fa-solid ${it.done ? 'fa-circle-check text-emerald-500' : 'fa-circle text-slate-200'} text-lg`}></i>
+                              <div className="flex-1 min-w-0"><div className={`text-sm font-medium ${it.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{it.label}</div>{!it.done && <div className="text-xs text-slate-500">{it.sub}</div>}</div>
+                              {!it.done && <button type="button" data-gs-go={it.id} onClick={it.go} className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white">{it.cta}</button>}
+                            </div>
+                          ))}
+                          {(db.completedFlights || []).length === 0 && (
+                            <label className="flex items-center gap-3 px-4 sm:px-5 py-2.5 cursor-pointer hover:bg-slate-50" data-gs-item="import">
+                              <i className="fa-solid fa-database text-indigo-400 text-lg"></i>
+                              <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800">Already using the planner on another device?</div><div className="text-xs text-slate-500">Bring everything across: in the other copy use Database &amp; Settings › Export backup, then choose that file here.</div></div>
+                              <span className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-300 text-indigo-700">Import backup</span>
+                              <input type="file" accept=".json" className="hidden" onChange={handleImportDb} />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   
                   {/* SECTION 1: PRELIMINARY */}
                   <div className={activeTab === 'preliminary' ? 'block' : 'hidden print:block print:mb-8'} {...lockProps}>
@@ -9299,6 +9488,40 @@ View in the Database & Settings tab.`);
                       </div>
                       
                       <div className="p-6 space-y-6 print:px-0">
+
+                        {/* v6.8: operator printed on this job. Free mode enters it per job; accounts use the company profile (or override it for one job). */}
+                        {(() => {
+                          const op = overview.operatorProfile || {}, co = db.companyProfile || {};
+                          const setOp = (k, v) => setOverview(prev => ({ ...prev, operatorProfile: { ...(prev.operatorProfile || {}), [k]: v } }));
+                          const overridden = Object.values(op).some(v => String(v || '').trim());
+                          const fields = isFree || opOpen || overridden;
+                          const inp = 'w-full px-3 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-violet-300 focus:outline-none';
+                          const F = (k, label, ph) => (<label className="block"><span className="block text-xs font-medium text-slate-600 mb-1">{label}</span><input type="text" className={inp} data-operator={k} value={op[k] || ''} placeholder={(!isFree && co[k]) || ph} onChange={e => setOp(k, e.target.value)} /></label>);
+                          return (
+                            <div data-operator-block="1" className="print:hidden rounded-xl border border-violet-200 bg-violet-50/60 px-4 py-3">
+                              <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+                                <i className="fa-solid fa-building text-violet-600"></i>
+                                <span className="font-semibold text-violet-900 text-sm">Operator</span>
+                                {!fields && <span className="text-sm text-slate-700 min-w-0 flex-1 truncate" data-operator-summary="1">{co.name ? <>{co.name}{co.reocNumber ? <span className="text-slate-500"> · ReOC {co.reocNumber}</span> : null}</> : <span className="text-slate-500">No company set up yet</span>}</span>}
+                                {fields && <span className="text-xs text-violet-700 flex-1 min-w-0">{isFree ? 'Prints on the PDF. Entered for this job only.' : 'A different operator for this job only (e.g. flying under another ReOC).'}</span>}
+                                {!isFree && !isCrewRole && !co.name && !fields && <button type="button" onClick={() => openSetupWizard(null, 1)} className="text-xs font-semibold text-violet-700 underline">Set up company</button>}
+                                {!isFree && !isCrewRole && (fields
+                                  ? <button type="button" data-operator-reset="1" onClick={() => { setOpOpen(false); setOverview(prev => ({ ...prev, operatorProfile: {} })); }} className="text-xs font-semibold text-violet-700 underline">Use my company</button>
+                                  : <button type="button" data-operator-other="1" onClick={() => setOpOpen(true)} className="text-xs font-semibold text-violet-700 underline">Different operator for this job</button>)}
+                              </div>
+                              {fields && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+                                  {F('name', 'Operator / company name', 'e.g. Skyline Aerial Pty Ltd')}
+                                  {F('reocNumber', 'ReOC number', 'e.g. ReOC 1234 (blank if excluded category)')}
+                                  {F('companyArn', 'Operator ARN', 'e.g. 1234567')}
+                                  {F('phone', 'Phone', '+61 4xx xxx xxx')}
+                                  {F('email', 'Email', 'ops@company.com.au')}
+                                </div>
+                              )}
+                              {isFree && <p className="text-[11px] text-violet-700/80 mt-2">With an account your company profile fills in on every job.</p>}
+                            </div>
+                          );
+                        })()}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print:hidden">
                           <div>
@@ -12600,7 +12823,15 @@ View in the Database & Settings tab.`);
                       </div>{/* end print:hidden screen log wrapper */}
                     </div>
                   </div>
-                  <div className={`${activeTab === 'compliance' ? 'block' : 'hidden'} print:hidden`}>
+                  {activeTab === 'compliance' && isFree && (
+                    <div data-free-compliance="1" className="print:hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-sm text-slate-700 space-y-2">
+                      <h2 className="text-lg font-semibold text-slate-800"><i className="fa-solid fa-calendar-check text-teal-600 mr-2"></i>Compliance calendar</h2>
+                      <p>Tracks expiries across your whole operation: RePLs and ARNs, CASA registration, insurance, maintenance, EVLOS/OONP checks and inductions, with reminders before anything lapses.</p>
+                      <p className="text-slate-500">It's part of an account, because it needs your saved fleet, crew and records.</p>
+                      {IS_HOSTED && <button type="button" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="mt-1 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold">Sign in</button>}
+                    </div>
+                  )}
+                  <div className={`${activeTab === 'compliance' && !isFree ? 'block' : 'hidden'} print:hidden`}>
                     <ComplianceCalendar
                       data={db.compliance}
                       onChange={(v) => updateDb('compliance', v)}
@@ -12610,7 +12841,50 @@ View in the Database & Settings tab.`);
                     />
                   </div>
 
-                  <div className={`${activeTab === 'database' ? 'block' : 'hidden'} print:hidden`} data-db-root="1">
+                  {activeTab === 'database' && isFree && (
+                    <div data-free-settings="1" className="print:hidden space-y-4">
+                      <div className="bg-white rounded-xl shadow-sm border border-violet-200 overflow-hidden">
+                        <div className="px-5 py-4 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                          <div className="text-xs uppercase tracking-widest opacity-75">Free mode</div>
+                          <h2 className="text-lg font-bold">This job, on this device</h2>
+                        </div>
+                        <div className="p-5 space-y-4 text-sm text-slate-700">
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Included free (commercial use OK)</div>
+                            <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
+                              {['Plan a job: site map, NOTAMs, airspace', 'JSA and risk register', 'OONP, kinetic energy and ballistic tools', 'Authorisation and RPIC sign-off', 'Flight log, telemetry and battery import', 'Full PDF flight record'].map(t => <li key={t}><i className="fa-solid fa-check text-emerald-600 w-5"></i>{t}</li>)}
+                            </ul>
+                          </div>
+                          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                            <div className="font-semibold text-slate-800 mb-1">Move this job between devices</div>
+                            <p className="text-xs text-slate-600 mb-2">Free mode keeps one job on this device. To finish it somewhere else (plan on the laptop, log on your phone), export it here and open the file on the other device.</p>
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" data-export-plan="1" onClick={handleExportPlanFile} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold"><i className="fa-solid fa-file-export mr-1.5"></i>Export this job</button>
+                              <label className="px-3 py-2 rounded-lg border border-violet-300 text-violet-800 hover:bg-violet-50 text-sm font-semibold cursor-pointer"><i className="fa-solid fa-file-import mr-1.5"></i>Open a plan file<input type="file" accept=".json" className="hidden" data-open-plan="1" onChange={(e) => { if (!dirty || window.confirm('Opening a plan file replaces the job that\'s open now (free mode keeps one job). Continue?')) handleImportPlan(e); e.target.value = ''; }} /></label>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">With an account</div>
+                            <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-600">
+                              {['Company profile on every job', 'Fleet with CASA rego, batteries and airframe hours', 'Every plan, draft and flight record saved', 'Risk and job templates', 'Compliance calendar and expiry reminders', 'Crew logins, inductions and sign-offs', 'Your jobs on all your devices'].map(t => <li key={t}><i className="fa-solid fa-star text-amber-500 w-5"></i>{t}</li>)}
+                            </ul>
+                            {IS_HOSTED && <button type="button" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="mt-3 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold">Sign in</button>}
+                            <p className="text-[11px] text-slate-400 mt-2">Accounts are by invitation during the beta.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {(!IS_HOSTED || (signedIn && auth.role === 'crp') || editionTest) && activeTab === 'database' && (
+                    <div data-edition-test="1" className="print:hidden mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 bg-white border border-dashed border-slate-300 rounded-lg px-3 py-2">
+                      <i className="fa-solid fa-flask text-slate-400"></i><span className="font-semibold">Preview edition (testing):</span>
+                      <select data-edition-select="1" value={editionTest} onChange={e => setTestEdition(e.target.value)} className="border border-slate-300 rounded px-2 py-1 bg-white">
+                        <option value="">Automatic (signed in = full)</option><option value="free">Free on this device</option><option value="full">Full</option>
+                      </select>
+                      <span>Only changes this browser.</span>
+                    </div>
+                  )}
+                  <div className={`${activeTab === 'database' && !isFree ? 'block' : 'hidden'} print:hidden`} data-db-root="1">
                     {dbSections.length > 0 && (
                       <div className="md:hidden sticky top-0 z-20 -mx-1 mb-3 bg-slate-50/95 backdrop-blur px-1 py-2">
                         <select data-db-jump-select="1" value={dbActiveSection || ''} onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
