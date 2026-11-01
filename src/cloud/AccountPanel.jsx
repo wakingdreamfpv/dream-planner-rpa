@@ -12,6 +12,11 @@ const initials = (n, e) => (String(n || '').trim().split(/\s+/).map(w => w[0]).j
 const btn = 'px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed';
 const input = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300';
 
+// v6.9: the browser couldn't reach the function at all (not deployed, wrong name, or JWT check on)
+const fnHelp = (m) => /Failed to send a request|Failed to fetch|NetworkError/i.test(m || '')
+  ? "Couldn't reach the invite-user function. In Supabase › Edge Functions, check that a function named exactly invite-user is deployed and that its Enforce JWT verification setting is OFF."
+  : m;
+
 function Modal({ title, onClose, children }) {
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   useEffect(() => { document.documentElement.classList.add('wd-modal-open'); return () => document.documentElement.classList.remove('wd-modal-open'); }, []);
@@ -136,7 +141,7 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
     const { data, error } = await sb.functions.invoke('invite-user', { body: { ...form, email: form.email.trim().toLowerCase(), redirectTo: location.origin + location.pathname } });
     setBusy(false);
     const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
-    if (error || (data && data.error)) setNote({ ok: false, t: msg || 'Invite failed' });
+    if (error || (data && data.error)) setNote({ ok: false, t: fnHelp(msg) || 'Invite failed' });
     else { setNote({ ok: true, t: msg || 'Invite sent' }); setForm({ full_name: '', email: '', role: form.role }); load(); window.wdCloud && window.wdCloud.refresh(); }
   };
   const update = async (id, patch) => {
@@ -262,7 +267,7 @@ function AccountPanel() {
       const { data, error } = await sb.functions.invoke('invite-user', { body: { full_name, email: String(email || '').trim().toLowerCase(), role, redirectTo: location.origin + location.pathname } });
       const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
       await refresh();
-      return (error || (data && data.error)) ? { ok: false, msg: msg || 'Invite failed' } : { ok: true, msg: msg || 'Invite sent' };
+      return (error || (data && data.error)) ? { ok: false, msg: fnHelp(msg) || 'Invite failed' } : { ok: true, msg: msg || 'Invite sent' };
     };
     refresh();
     return () => { dead = true; };
