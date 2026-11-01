@@ -9472,7 +9472,7 @@ View in the Database & Settings tab.`);
                 <div className="md:col-span-3 space-y-5 md:space-y-8 print:col-span-4 print:space-y-0">
                   {/* v7.0: Home dashboard */}
                   {activeTab === 'home' && <div className="print:hidden" data-home="1"><Dashboard d={buildDashData()} a={dashActions} /></div>}
-                  <input type="file" accept=".json" className="hidden" ref={planFileRef} onChange={(e) => { handleImportPlan(e); e.target.value = ''; setActiveTab('preliminary'); }} />
+                  {activeTab === 'home' && <input type="file" accept=".json" className="hidden" ref={planFileRef} onChange={(e) => { handleImportPlan(e); e.target.value = ''; setActiveTab('preliminary'); }} />}
                   {/* v6.8: getting-started checklist (account / offline edition, CRP). Replaces popping the crew invite form up first. */}
                   {activeTab === 'preliminary' && !isFree && !tour && !isCrewRole && !gsHidden && (() => {
                     const items = getSetupItems();
