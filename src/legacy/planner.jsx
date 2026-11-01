@@ -169,7 +169,7 @@
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '6.8';
+        const APP_VERSION = '6.9';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8707,7 +8707,7 @@ View in the Database & Settings tab.`);
           const jumpToDbSection = (id) => {
             const h = document.getElementById(id); if (!h) return;
             const card = h.closest('.rounded-xl, .rounded-lg') || h;
-            const y = card.getBoundingClientRect().top + window.scrollY - (window.innerWidth < 768 ? 68 : 16); // v6.7: clear the sticky section picker on phones
+            const y = card.getBoundingClientRect().top + window.scrollY - (window.innerWidth < 768 ? 112 : 60); // v6.7: clear the sticky section picker on phones
             window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
             setDbActiveSection(id);
             card.classList.add('wd-req-flash'); setTimeout(() => card.classList.remove('wd-req-flash'), 1400);
@@ -9269,10 +9269,34 @@ View in the Database & Settings tab.`);
                 </div>
               )}
 
+              {/* v6.9: the job you're working on, on every page */}
+              {(() => {
+                const name = String(overview.operationName || '').trim();
+                const w = opWindow(overview);
+                const f = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return d && m && y ? d + '/' + m + '/' + y : iso; };
+                const when = w.sd ? (w.ed && w.ed !== w.sd ? f(w.sd) + '–' + f(w.ed) : f(w.sd)) : '';
+                const status = approval.flightAuthApproved ? ['Approved', 'bg-emerald-100 text-emerald-800'] : dirty ? ['Unsaved', 'bg-amber-100 text-amber-900'] : lastSavedAt ? ['Saved', 'bg-slate-100 text-slate-600'] : null;
+                const goName = () => { setActiveTab('preliminary'); setTimeout(() => { const el = document.querySelector('input[name="operationName"]'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); } }, 250); };
+                return (
+                  <div data-job-bar="1" className="print:hidden sticky top-0 z-[1100] bg-white/95 backdrop-blur border-b border-slate-200 shadow-sm">
+                    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-11 flex items-center gap-2 sm:gap-3 min-w-0">
+                      <i className="fa-solid fa-clipboard-list text-violet-600 shrink-0"></i>
+                      <button type="button" data-allow-locked="1" onClick={goName} title={name ? 'Operation / event name' : 'Add the operation / event name'} className="min-w-0 flex-1 sm:flex-none text-left truncate font-semibold text-sm sm:text-[15px] text-slate-800 hover:text-violet-700" data-job-bar-name="1">
+                        {name || <span className="text-slate-400 font-normal italic">Untitled job, tap to name it</span>}
+                      </button>
+                      {overview.clientName && <span className="hidden md:inline text-sm text-slate-500 truncate max-w-[14rem]">{overview.clientName}</span>}
+                      <span className="hidden sm:inline text-xs font-mono text-slate-400 shrink-0">{overview.identifier}</span>
+                      {when && <span className="text-xs text-slate-500 shrink-0" data-job-bar-date="1">{when}</span>}
+                      <span className="hidden sm:block flex-1"></span>
+                      {status && <span className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${status[1]}`} data-job-bar-status={status[0]}>{status[0]}</span>}
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-3 md:mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-8 pb-24 md:pb-0">
                 
                 <div className="hidden md:block md:col-span-1 print:hidden">
-                  <div className="md:sticky md:top-8 space-y-3">
+                  <div className="md:sticky md:top-16 space-y-3">
                   <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
                     <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'preliminary' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className="fa-solid fa-circle-check text-lg w-6"></i> Preliminary
@@ -12886,7 +12910,7 @@ View in the Database & Settings tab.`);
                   )}
                   <div className={`${activeTab === 'database' && !isFree ? 'block' : 'hidden'} print:hidden`} data-db-root="1">
                     {dbSections.length > 0 && (
-                      <div className="md:hidden sticky top-0 z-20 -mx-1 mb-3 bg-slate-50/95 backdrop-blur px-1 py-2">
+                      <div className="md:hidden sticky top-11 z-20 -mx-1 mb-3 bg-slate-50/95 backdrop-blur px-1 py-2">
                         <select data-db-jump-select="1" value={dbActiveSection || ''} onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
                           className="w-full px-3 py-2.5 text-sm font-semibold text-indigo-900 border border-indigo-200 rounded-lg bg-white shadow-sm">
                           <option value="">☰ Jump to a section…</option>

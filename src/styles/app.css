@@ -29,3 +29,6 @@ button, a, label, select { -webkit-tap-highlight-color: rgba(124, 58, 237, 0.15)
   .px-6 { padding-left: 0.875rem; padding-right: 0.875rem; }
   .px-5 { padding-left: 0.75rem; padding-right: 0.75rem; }
 }
+
+/* v6.9: anything scrolled into view clears the sticky job bar */
+html { scroll-padding-top: 3.5rem; }
