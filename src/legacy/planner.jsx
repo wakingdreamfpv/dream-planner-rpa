@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.2.4';
+        const APP_VERSION = '7.2.5';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -321,7 +321,7 @@ import qrcode from 'qrcode-generator';
         ];
         const DEFAULT_EMERGENCY_CONTACTS = () => ([
           { role: 'Ambulance / Police / Fire', name: 'Emergency services', phone: '000 / 112' },
-          { role: 'Chief Remote Pilot', name: 'Michael Rubio', phone: '0433 011 409' },
+          WD_NS ? { role: 'Chief Remote Pilot', name: '', phone: '' } : { role: 'Chief Remote Pilot', name: 'Michael Rubio', phone: '0433 011 409' },
           { role: 'ATSB (immediately reportable matters)', name: 'ATSB', phone: '1800 011 034' },
           { role: 'Nearest hospital / medical', name: '', phone: '' },
           { role: 'Site contact', name: '', phone: '' },
@@ -1430,7 +1430,7 @@ import qrcode from 'qrcode-generator';
         // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
         const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, legacy) => {
           const ap = { ...(approval || {}) };
-          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable'].forEach(k => delete ap[k]);
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           return { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
@@ -4421,7 +4421,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // v6.0: no pop-up on Next. Missing mandatory items are listed at the top of each section and on the sidebar.
           const handleNavigate = (to) => { setActiveTab(to); try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} };
           
-          const defaultPilots = [
+          const defaultPilots = WD_NS ? [] : [ // v7.2.5: other people's spaces start without the owner's sample people
             { name: "John Doe", arn: "1122334" },
             { name: "Jane Smith", arn: "9988776" },
             { name: "Mark Taylor", arn: "7744112" },
@@ -4429,9 +4429,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             { name: "Michael Rubio", arn: "1266519" }
           ];
 
-          const defaultAssessors = ["Sarah Jenkins", "Tom Bradley", "Michael Rubio", "Jane Smith"];
-          const defaultObservers = ["Chris Evans", "Jessica Wong", "Liam O'Connor", "Sam Wilson"];
-          const defaultClients = [
+          const defaultAssessors = WD_NS ? [] : ["Sarah Jenkins", "Tom Bradley", "Michael Rubio", "Jane Smith"];
+          const defaultObservers = WD_NS ? [] : ["Chris Evans", "Jessica Wong", "Liam O'Connor", "Sam Wilson"];
+          const defaultClients = WD_NS ? [] : [
               { name: "Acme Corp", email: "contact@acme.com", phone: "555-0101" },
               { name: "City Council", email: "planning@city.gov.au", phone: "555-0202" },
               { name: "Global Real Estate", email: "sales@gre.com", phone: "555-0303" }
@@ -4857,7 +4857,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (learned.length) updateDb('fleet', fleet);
             if (rpaTypes.length !== (overview.rpaTypes || []).length) setOverview(prev => ({ ...prev, rpaTypes }));
             setLog(prev => ({ ...prev, rpaLogs }));
-            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '',
+            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: amendNote, approvedAt: prev.approvedAt || '' }] }));
             setLogDump(null);
             const secs = chosen.reduce((s, it) => s + (it.t.durationSec || 0), 0);
@@ -5306,7 +5306,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             );
 
             // Sig block
-            const sigBlk=(title,name,arn,date,signed,remote)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
+            const sigBlk=(title,name,arn,date,signed,remote,by)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
+              +(signed&&by&&by.email?'<div data-signed-by="1" style="font-size:6.5pt;color:#047857;margin-bottom:3pt;">&#10003; Signed in the planner by '+esc(by.name||by.email)+' ('+esc(by.email)+(by.role==='crp'?', CRP account':'')+') '+esc(new Date(by.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+'</div>':'')
               +'<div style="font-size:8pt;font-weight:700;color:'+NV+';margin-bottom:5pt;">'+esc(title)+'</div>'
               +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6pt;margin-bottom:6pt;">'
               +'<div>'+lbl('Name')+'<div style="font-size:9pt;font-weight:700;">'+esc(val(name))+'</div></div>'
@@ -5602,8 +5603,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if((approval.amendLog||[]).length) P.push('<div style="font-size:7pt;color:'+S6+';margin:4pt 0;border:1px solid '+S2+';border-radius:3pt;padding:4pt 6pt;"><b>Amended after approval:</b> '+approval.amendLog.map(a=>esc(new Date(a.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+(a.reason?' — '+esc(a.reason):'')).join(' · ')+(approval.flightAuthApproved?' · re-approved'+(approval.approvedAt?' '+esc(new Date(approval.approvedAt).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})):''):'')+'</div>');
             P.push('<div style="background:'+(approval.flightAuthApproved?'#dcfce7':'#fee2e2')+';border:2px solid '+(approval.flightAuthApproved?'#16a34a':'#dc2626')+';border-radius:4pt;padding:10pt;text-align:center;font-size:11pt;font-weight:700;color:'+(approval.flightAuthApproved?'#15803d':'#dc2626')+';margin:10pt 0;">'+(approval.flightAuthApproved?'✓  FLIGHT AUTHORISED':'FLIGHT NOT YET AUTHORISED — Pending RPIC sign-off')+'</div>');
             P.push('<div style="display:flex;gap:12pt;margin-top:10pt;">');
-            P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned));
-            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote));
+            P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned,null,approval.crpSignedBy));
+            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy));
             P.push('</div>');
 
             // S4
@@ -7268,7 +7269,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const by = approval.crpName || 'the CRP';
             const reason = window.prompt(`Amend this approved plan?\n\nThis withdraws the flight authorisation and clears the CRP and RPIC signatures. ${by} must re-approve before flight.\n\nReason for the amendment (kept in the plan's record):`, '');
             if (reason === null) return;
-            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', rpRemote: null,
+            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, rpRemote: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: (reason || '').trim(), approvedAt: prev.approvedAt || '' }] }));
           };
           const LockBanner = ({ section }) => !planLocked ? null : (
@@ -7869,13 +7870,31 @@ View in the Database & Settings tab.`);
             r.readAsText(file);
           };
 
+          // v7.2.5: who may sign. Signed-in accounts sign as themselves: only a CRP account can sign the CRP block (and approve);
+          // a pilot or observer can sign the RPIC block only when they are the RPIC named on the plan.
+          const signName = String(auth.name || '').trim();
+          const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+          const crpSignBlocked = signedIn && auth.role !== 'crp' ? 'Only the Chief Remote Pilot\'s account can sign as CRP.' : '';
+          const rpSignBlocked = signedIn && auth.role !== 'crp' && String(approval.rpName || '').trim() && !sameName(approval.rpName, signName) ? `Only ${approval.rpName} can sign here. You're signed in as ${signName || auth.email}.` : '';
+          const approveBlocked = signedIn && auth.role !== 'crp' ? 'Only the Chief Remote Pilot\'s account can approve the flight.' : '';
           const handleSignature = (role) => {
             const d = new Date(); // local date, not UTC (UTC is "yesterday" before 10 am in Queensland)
             const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            const by = signedIn ? { email: auth.email, name: signName, role: auth.role, at: new Date().toISOString() } : null;
             if (role === 'crp') {
-              setApproval(prev => ({ ...prev, crpSigned: true, crpDate: today }));
+              if (crpSignBlocked) { alert(crpSignBlocked); return; }
+              if (signedIn && signName && !sameName(approval.crpName, signName)) {
+                if (!window.confirm(`You're signed in as ${signName}. The CRP block names ${approval.crpName || 'nobody'}.\n\nSign as ${signName}?`)) return;
+                const p = (db.pilots || []).find(x => sameName(x.name, signName));
+                setApproval(prev => ({ ...prev, crpName: signName, crpArn: (p && p.arn) || prev.crpArn, crpSigned: true, crpDate: today, crpSignedBy: by }));
+                return;
+              }
+              setApproval(prev => ({ ...prev, crpSigned: true, crpDate: today, crpSignedBy: by }));
             } else {
-              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null }));
+              if (rpSignBlocked) { alert(rpSignBlocked); return; }
+              // a crew member with no RPIC named yet signs as themselves
+              if (signedIn && auth.role !== 'crp' && !String(approval.rpName || '').trim()) { setApproval(prev => ({ ...prev, rpName: signName || auth.email, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by })); return; }
+              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by }));
             }
           };
 
@@ -12616,7 +12635,7 @@ View in the Database & Settings tab.`);
                               <div className="flex gap-2 items-end">
                                 <div className="w-2/3 relative h-10 flex items-end pb-1 text-sm">
                                   {!approval.crpSigned ? (
-                                    <button onClick={() => handleSignature('crp')} className="text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden">
+                                    <button onClick={() => handleSignature('crp')} disabled={!!crpSignBlocked} title={crpSignBlocked || undefined} data-sign-crp="1" className={crpSignBlocked ? 'text-slate-400 font-medium flex items-center gap-1 border border-slate-200 bg-slate-50 px-3 py-1 rounded w-full justify-center cursor-not-allowed print:hidden' : 'text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden'}>
                                       <i className="fa-solid fa-pen-nib"></i> Sign Document
                                     </button>
                                   ) : (
@@ -12628,6 +12647,8 @@ View in the Database & Settings tab.`);
                                 </div>
                                 <input type="date" name="crpDate" value={approval.crpDate} onChange={handleApprovalChange} className="w-1/3 px-2 py-1 text-sm border border-gray-300 rounded-md bg-white" />
                               </div>
+                              {crpSignBlocked && !approval.crpSigned && <div className="text-xs text-slate-500 print:hidden" data-sign-note="crp"><i className="fa-solid fa-lock mr-1"></i>{crpSignBlocked}</div>}
+                              {approval.crpSigned && approval.crpSignedBy && <div className="text-[11px] text-slate-500 print:hidden"><i className="fa-solid fa-user-check mr-1 text-emerald-600"></i>Signed in the planner by {approval.crpSignedBy.name || approval.crpSignedBy.email} ({approval.crpSignedBy.email})</div>}
                             </div>
 
                             {/* RPIC Signature Block */}
@@ -12643,7 +12664,7 @@ View in the Database & Settings tab.`);
                               <div className="flex gap-2 items-end">
                                 <div className="w-2/3 relative h-10 flex items-end pb-1 text-sm">
                                   {!approval.rpSigned ? (
-                                    <button onClick={() => handleSignature('rp')} title="Sign here (RPIC present at this computer)" className="text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden">
+                                    <button onClick={() => handleSignature('rp')} disabled={!!rpSignBlocked} data-sign-rp="1" title={rpSignBlocked || "Sign here (RPIC present at this computer)"} className={rpSignBlocked ? 'text-slate-400 font-medium flex items-center gap-1 border border-slate-200 bg-slate-50 px-3 py-1 rounded w-full justify-center cursor-not-allowed print:hidden' : 'text-blue-600 font-medium hover:text-blue-800 flex items-center gap-1 border border-blue-200 bg-blue-50 px-3 py-1 rounded transition-colors w-full justify-center print:hidden'}>
                                       <i className="fa-solid fa-pen-nib"></i> Sign Document
                                     </button>
                                   ) : (
@@ -12655,6 +12676,8 @@ View in the Database & Settings tab.`);
                                 </div>
                                 <input type="date" name="rpDate" value={approval.rpDate} onChange={handleApprovalChange} className="w-1/3 px-2 py-1 text-sm border border-gray-300 rounded-md bg-white" />
                               </div>
+                              {rpSignBlocked && !approval.rpSigned && <div className="text-xs text-slate-500 print:hidden" data-sign-note="rp"><i className="fa-solid fa-lock mr-1"></i>{rpSignBlocked}</div>}
+                              {approval.rpSigned && approval.rpSignedBy && !approval.rpRemote && <div className="text-[11px] text-slate-500 print:hidden"><i className="fa-solid fa-user-check mr-1 text-emerald-600"></i>Signed in the planner by {approval.rpSignedBy.name || approval.rpSignedBy.email} ({approval.rpSignedBy.email})</div>}
                               {/* Remote signing (v5.51) */}
                               <div data-rp-remote="1" className="print:hidden border-t border-slate-100 pt-3">
                                 {approval.rpSigned && approval.rpRemote ? (
@@ -12686,6 +12709,7 @@ View in the Database & Settings tab.`);
                               !approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
                             const can = on || missing.length === 0;
                             const flip = () => {
+                              if (approveBlocked) { alert(approveBlocked); return; }
                               if (!on) {
                                 if (missing.length) { alert('Before approving: ' + missing.join('; ') + '.'); return; }
                                 const ex = jobExpiryCheck(db, overview, approval, oonpMode);
@@ -12705,7 +12729,8 @@ View in the Database & Settings tab.`);
                                             : <span key={m} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 border border-amber-200 text-amber-900">{m}</span>; })}</span></span> : 'Everything is recorded and both signatures are in. Switch on to approve the flight and lock the plan.'}
                                   </div>
                                 </div>
-                                <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can}
+                                {approveBlocked && <div data-approve-locked="1" className="basis-full text-xs text-slate-500"><i className="fa-solid fa-lock mr-1"></i>{approveBlocked}</div>}
+                                <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can || !!approveBlocked}
                                   className={`relative w-24 h-12 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-emerald-600' : can ? 'bg-slate-300 hover:bg-slate-400' : 'bg-slate-200 cursor-not-allowed'}`}>
                                   <span className={`absolute top-1 w-10 h-10 bg-white rounded-full shadow transition-all flex items-center justify-center text-xs font-bold ${on ? 'left-[3.25rem] text-emerald-700' : 'left-1 text-slate-400'}`}>{on ? 'ON' : 'OFF'}</span>
                                 </button>
