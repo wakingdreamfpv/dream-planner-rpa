@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { getSupabase } from './client.js';
 import { cloudAvailable } from './config.js';
-import { PilotInduction, CrpInductions } from './Induction.jsx';
+import { PilotInduction, CrpInductions, CrpReview, StatusPill } from './Induction.jsx';
 
 const ROLE_LABEL = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
 const ROLE_STYLE = { crp: 'bg-violet-100 text-violet-800', pilot: 'bg-sky-100 text-sky-800', observer: 'bg-emerald-100 text-emerald-800' };
@@ -126,12 +126,18 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
   const [show, setShow] = useState(defaultOpen);
   const [people, setPeople] = useState([]), [invites, setInvites] = useState([]), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [note, setNote] = useState(null);
   const [form, setForm] = useState({ full_name: '', email: '', role: 'pilot' });
+  const [ind, setInd] = useState({}), [review, setReview] = useState(null);
   const load = useCallback(async () => {
     const [p, i] = await Promise.all([
       sb.from('profiles').select('id,email,full_name,role,active,created_at').order('full_name'),
       sb.from('invites').select('email,full_name,role,invited_at,accepted_user_id').order('invited_at', { ascending: false }),
     ]);
     if (p.error || i.error) setErr((p.error || i.error).message); else { setErr(''); setPeople(p.data || []); setInvites(i.data || []); }
+    // v7.2.7: each person's latest induction, shown on their row (linked by login id, else email)
+    try {
+      const { data: recs } = await sb.from('signoff_records').select('id,status,created_at,person_signed_at,crp_signed_at,people:person_id (user_id,email)').eq('type', 'pilot_induction').order('created_at', { ascending: false });
+      const m = {}; (recs || []).forEach(r => { const pe = r && r.people; if (!pe) return; const k = pe.user_id || String(pe.email || '').toLowerCase(); if (k && !m[k]) m[k] = r; }); setInd(m);
+    } catch (e) {}
   }, [sb]);
   useEffect(() => { load(); }, [load]);
   // v6.2: the planner's Crew & users lists invite through the shared bridge; follow its updates here
@@ -173,20 +179,26 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
       </form>
       {err && <div className="text-sm text-red-700">Couldn't load crew: {err}</div>}
       <div>
-        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Crew with logins ({people.length})</div>
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Crew with logins ({people.length}) · role, induction and access</div>
         <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
           {people.map(p => (
-            <div key={p.id} className={`flex items-center gap-3 px-3 py-2 text-sm ${p.active ? '' : 'bg-slate-50 opacity-70'}`} data-crew-row={p.email}>
+            <div key={p.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 text-sm ${p.active ? '' : 'bg-slate-50 opacity-70'}`} data-crew-row={p.email}>
               <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">{initials(p.full_name, p.email)}</span>
               <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{p.full_name || '—'}{p.id === me.id && <span className="ml-1 text-xs font-normal text-slate-400">(you)</span>}</div><div className="text-xs text-slate-500 truncate">{p.email}</div></div>
               <select value={p.role} disabled={p.id === me.id} onChange={e => update(p.id, { role: e.target.value })} className="text-xs border border-slate-300 rounded px-1.5 py-1" title="Role">
                 <option value="pilot">Pilot</option><option value="observer">Observer</option><option value="crp">CRP</option>
               </select>
+              {(() => { const r = ind[p.id] || ind[String(p.email || '').toLowerCase()]; const fmt = (d) => d ? new Date(d).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+                if (p.role === 'observer') return null;
+                if (!r) return p.role === 'pilot' ? <span data-ind-of={p.email} className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Induction not started</span> : null;
+                return <span className="flex items-center gap-1.5" data-ind-of={p.email}><StatusPill s={r.status} />{r.status === 'certified' && r.crp_signed_at && <span className="text-[11px] text-slate-500 hidden sm:inline">{fmt(r.crp_signed_at)}</span>}
+                  {r.status !== 'draft' && <button type="button" data-crew-review={p.email} onClick={() => setReview(r.id)} className={`text-xs px-2 py-1 rounded font-semibold ${r.status === 'awaiting_crp' ? 'bg-violet-600 text-white' : 'border border-slate-300 text-slate-700'}`}>{r.status === 'awaiting_crp' ? 'Review' : 'View'}</button>}</span>; })()}
               {p.id !== me.id && <button type="button" onClick={() => { if (p.active ? confirm(`Deactivate ${p.full_name || p.email}? They can't sign in to see crew records until reactivated. Their records are kept.`) : true) update(p.id, { active: !p.active }); }} className={`text-xs px-2 py-1 rounded border ${p.active ? 'border-slate-300 text-slate-600' : 'border-emerald-300 text-emerald-700'}`}>{p.active ? 'Deactivate' : 'Activate'}</button>}
             </div>
           ))}
         </div>
       </div>
+      {review && <CrpReview sb={sb} me={me} id={review} onClose={() => { setReview(null); load(); }} />}
       {pending.length > 0 && (
         <div>
           <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Invited, not signed in yet ({pending.length})</div>

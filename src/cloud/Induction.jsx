@@ -262,6 +262,7 @@ function PilotForm({ sb, me, person, rec, onClose }) {
 }
 
 // ── Part 2: the CRP ────────────────────────────────────────────────────────────────────────────
+export { StatusPill };
 export function CrpInductions({ sb, me, onCount, autoOpenId }) {
   const [list, setList] = useState(null), [err, setErr] = useState(''), [open, setOpen] = useState(autoOpenId || null);
   useEffect(() => { if (autoOpenId) setOpen(autoOpenId); }, [autoOpenId]);
@@ -300,15 +301,15 @@ export function CrpInductions({ sb, me, onCount, autoOpenId }) {
         </label>
       </div>
       {err && <div className="text-sm text-rose-700">Couldn't load inductions: {err}</div>}
-      {list && !list.length && <p className="text-sm text-slate-500">No inductions yet. Invite a pilot; they'll see "Start my induction" when they sign in.</p>}
+      {list && !list.length && <p className="text-xs text-slate-500">No inductions yet. Invite a pilot; they'll see "Start my induction" when they sign in.</p>}
       {awaiting.length > 0 && <div className="border border-amber-300 bg-amber-50/40 rounded-xl divide-y divide-amber-100 overflow-hidden" data-testid="ind-awaiting"><div className="px-3 py-1.5 text-xs font-bold text-amber-800">Waiting for you ({awaiting.length})</div>{awaiting.map(r => <Row key={r.id} r={r} />)}</div>}
-      {others.length > 0 && <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">{others.map(r => <Row key={r.id} r={r} />)}</div>}
+      {list && list.length > 0 && !awaiting.length && <p className="text-xs text-slate-500" data-testid="ind-none-waiting">No inductions waiting. Each person's induction status is on their row in the crew list below.</p>}
       {open && <CrpReview sb={sb} me={me} id={open} onClose={() => { setOpen(null); load(); }} />}
     </div>
   );
 }
 
-function CrpReview({ sb, me, id, onClose }) {
+export function CrpReview({ sb, me, id, onClose }) {
   const [rec, setRec] = useState(null), [person, setPerson] = useState(null), [exp, setExp] = useState([]), [err, setErr] = useState('');
   const [assessed, setAssessed] = useState([]), [ticks, setTicks] = useState({}), [oonpHrs, setOonpHrs] = useState(false);
   const [checkDate, setCheckDate] = useState(new Date().toISOString().slice(0, 10)), [notes, setNotes] = useState('');
