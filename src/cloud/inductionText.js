@@ -3,7 +3,7 @@
 
 export const TLDR = [
   'Fill in your details, next of kin, hours and the aircraft types you\'ll fly for us (about 10 minutes).',
-  'Upload a photo of your RePL and a summary of your logbook.',
+  'Upload a photo of your RePL (a logbook summary is optional, and helps if you\'re seeking OONP).',
   'Tick ONE declaration (the full list is under "What you\'re declaring") and agree to keep the manual confidential.',
   'Sign with your finger or type your name, then submit. The Chief Remote Pilot checks it and certifies you.',
 ];

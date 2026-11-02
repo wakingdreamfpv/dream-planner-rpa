@@ -137,7 +137,7 @@ function PilotForm({ sb, me, person, rec, onClose }) {
   const missing = useMemo(() => [
     !p.full_name.trim() && 'your name', !p.phone.trim() && 'phone', !p.arn.trim() && 'ARN', !p.repl_no.trim() && 'RePL number',
     !(p.nok_name.trim() && p.nok_phone.trim()) && 'next of kin', String(p.total_hours).trim() === '' && 'total hours',
-    !types.length && 'the types you\'ll fly', !docs.repl && 'RePL photo', !docs.logbook && 'logbook summary',
+    !types.length && 'the types you\'ll fly', !docs.repl && 'RePL photo',
     !decl && 'the declaration', !conf && 'the confidentiality agreement', !sig && 'your signature',
   ].filter(Boolean), [p, types, docs, decl, conf, sig]);
 
@@ -224,8 +224,8 @@ function PilotForm({ sb, me, person, rec, onClose }) {
           <Tick key={x.id} checked={approvals.includes(x.id)} testid={'appr-' + x.id} onChange={c => setApprovals(v => c ? [...v, x.id] : v.filter(y => y !== x.id))}>{x.label}</Tick>
         ))}</div>
       </Section>
-      <Section n="5" title="Documents" hint="A clear photo of your RePL (both sides if needed) and a summary of your logbook. Only you and the CRP can see them.">
-        {[['repl', 'RePL photo', 'image/*,application/pdf'], ['logbook', 'Logbook summary', 'image/*,application/pdf,.csv,.xlsx,.xls']].map(([k, l, acc]) => (
+      <Section n="5" title="Documents" hint="A clear photo of your RePL (both sides if needed). A logbook summary is optional, but it's the easiest way to show your hours on type, which the CRP must check before signing you off for OONP. Only you and the CRP can see these.">
+        {[['repl', 'RePL photo', 'image/*,application/pdf'], ['logbook', 'Logbook summary (optional)', 'image/*,application/pdf,.csv,.xlsx,.xls']].map(([k, l, acc]) => (
           <div key={k} className="flex items-center gap-3 flex-wrap">
             <label className={btn + ' border border-slate-300 text-slate-700 cursor-pointer hover:bg-slate-50'}>
               <i className="fa-solid fa-upload mr-1.5"></i>{docs[k] ? 'Replace ' : 'Upload '}{l}
