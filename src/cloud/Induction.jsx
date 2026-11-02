@@ -121,6 +121,7 @@ function PilotForm({ sb, me, person, rec, onClose }) {
   const [decl, setDecl] = useState(!!a0.declaration), [conf, setConf] = useState(!!a0.confidentiality);
   const [sig, setSig] = useState((rec && rec.person_signature) || null);
   const [docs, setDocs] = useState(a0.docs || {});
+  const [licenceNotes, setLicenceNotes] = useState(a0.licenceNotes || ''), [hoursNotes, setHoursNotes] = useState(a0.hoursNotes || '');
   const [fleet, setFleet] = useState([]), [manual, setManual] = useState('');
   const [busy, setBusy] = useState(''), [msg, setMsg] = useState(null);
   const [recId, setRecId] = useState(rec && rec.id);
@@ -137,7 +138,7 @@ function PilotForm({ sb, me, person, rec, onClose }) {
   const missing = useMemo(() => [
     !p.full_name.trim() && 'your name', !p.phone.trim() && 'phone', !p.arn.trim() && 'ARN', !p.repl_no.trim() && 'RePL number',
     !(p.nok_name.trim() && p.nok_phone.trim()) && 'next of kin', String(p.total_hours).trim() === '' && 'total hours',
-    !types.length && 'the types you\'ll fly', !docs.repl && 'RePL photo',
+    !types.length && 'the types you\'ll fly',
     !decl && 'the declaration', !conf && 'the confidentiality agreement', !sig && 'your signature',
   ].filter(Boolean), [p, types, docs, decl, conf, sig]);
 
@@ -152,7 +153,7 @@ function PilotForm({ sb, me, person, rec, onClose }) {
     if (error) setMsg({ ok: false, t: 'Upload failed: ' + errText(error) }); else setDocs(d => ({ ...d, [kind]: path, [kind + 'Name']: file.name }));
   };
 
-  const answers = () => ({ types, typeHours: Object.fromEntries(types.map(t => [t, hours[t] === '' || hours[t] == null ? null : Number(hours[t])])), approvals, declaration: decl, confidentiality: conf, docs,
+  const answers = () => ({ types, typeHours: Object.fromEntries(types.map(t => [t, hours[t] === '' || hours[t] == null ? null : Number(hours[t])])), approvals, declaration: decl, confidentiality: conf, docs, licenceNotes: licenceNotes.trim(), hoursNotes: hoursNotes.trim(),
     declarationText: DECLARATION_TITLE, declarationItems: DECLARATION_ITEMS, confidentialityText: CONFIDENTIALITY });
   const save = async () => {
     const pd = { ...p, total_hours: String(p.total_hours).trim() === '' ? null : Number(p.total_hours) };
@@ -218,14 +219,21 @@ function PilotForm({ sb, me, person, rec, onClose }) {
               </div>); })}
           </div>
         </div>
+        <div><label className={lbl}>Logged hours (optional, type it in)</label>
+          <textarea className={input} rows={3} value={hoursNotes} onChange={e => setHoursNotes(e.target.value)} data-f="hoursNotes"
+            placeholder={'e.g. DJI Avata 2: 14.5 h (logbook to 28 Oct 2026)\n5" FPV: 120 h · night 6 h · EVLOS 3 h'} />
+          <p className="text-[11px] text-slate-500 mt-1">If you don't upload a logbook summary, list your hours here, especially hours on each type. The CRP checks 10+ hours on type before signing you off for OONP.</p></div>
       </Section>
       <Section n="4" title="Approvals being assessed" hint="Induction and type are always assessed. Tick any extra approvals you're being checked for.">
         <div className="space-y-1.5">{APPROVALS.map(x => (
           <Tick key={x.id} checked={approvals.includes(x.id)} testid={'appr-' + x.id} onChange={c => setApprovals(v => c ? [...v, x.id] : v.filter(y => y !== x.id))}>{x.label}</Tick>
         ))}</div>
       </Section>
-      <Section n="5" title="Documents" hint="A clear photo of your RePL (both sides if needed). A logbook summary is optional, but it's the easiest way to show your hours on type, which the CRP must check before signing you off for OONP. Only you and the CRP can see these.">
-        {[['repl', 'RePL photo', 'image/*,application/pdf'], ['logbook', 'Logbook summary (optional)', 'image/*,application/pdf,.csv,.xlsx,.xls']].map(([k, l, acc]) => (
+      <Section n="5" title="Documents" hint="Both uploads are optional. Type your licence details below; a photo of your RePL and a logbook summary make the CRP's check quicker. Only you and the CRP can see these.">
+        <div><label className={lbl}>Licence details</label>
+          <textarea className={input} rows={2} value={licenceNotes} onChange={e => setLicenceNotes(e.target.value)} data-f="licenceNotes"
+            placeholder={'e.g. RePL multirotor up to 25 kg, issued Mar 2022 · AROC held · any other ratings, conditions or expiry dates'} /></div>
+        {[['repl', 'RePL photo (optional)', 'image/*,application/pdf'], ['logbook', 'Logbook summary (optional)', 'image/*,application/pdf,.csv,.xlsx,.xls']].map(([k, l, acc]) => (
           <div key={k} className="flex items-center gap-3 flex-wrap">
             <label className={btn + ' border border-slate-300 text-slate-700 cursor-pointer hover:bg-slate-50'}>
               <i className="fa-solid fa-upload mr-1.5"></i>{docs[k] ? 'Replace ' : 'Upload '}{l}
@@ -353,6 +361,10 @@ function CrpReview({ sb, me, id, onClose }) {
             ['Next of kin', [person.nok_name, person.nok_relationship && '(' + person.nok_relationship + ')', person.nok_phone].filter(Boolean).join(' ')], ['Total hours', person.total_hours]].map(([k, v]) => (
             <div key={k} className="flex gap-2"><dt className="text-slate-500 w-24 flex-shrink-0">{k}</dt><dd className="text-slate-800 font-medium">{v || '—'}</dd></div>))}
         </dl>
+        {(a.licenceNotes || a.hoursNotes) && <div className="text-sm space-y-1" data-testid="rev-notes">
+          {a.licenceNotes && <div><span className="text-slate-500">Licence details:</span> <span className="whitespace-pre-wrap">{a.licenceNotes}</span></div>}
+          {a.hoursNotes && <div><span className="text-slate-500">Logged hours (typed):</span> <span className="whitespace-pre-wrap">{a.hoursNotes}</span></div>}
+        </div>}
         <div className="text-sm"><span className="text-slate-500">Types and hours:</span> {(a.types || []).map(t => `${t} (${typeHours(t) ?? '—'} h)`).join(', ') || '—'}</div>
         <div className="text-sm"><span className="text-slate-500">Approvals sought:</span> Induction &amp; type{(a.approvals || []).map(x => ', ' + compLabel(x)).join('')}</div>
         <div className="flex gap-4 flex-wrap"><DocLink sb={sb2} path={(a.docs || {}).repl} label="RePL photo" /><DocLink sb={sb2} path={(a.docs || {}).logbook} label="Logbook summary" /></div>
