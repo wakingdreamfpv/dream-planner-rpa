@@ -4667,6 +4667,8 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
           const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...(db.companyProfile || {}) };
             Object.keys(op).forEach(k => { if (String(op[k] || '').trim()) out[k] = op[k]; }); return out; };
+          // v7.2.1: the company name goes into crew invite emails
+          useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
           const [cloudCrew, setCloudCrew] = useState(0);
           useEffect(() => { const h = () => { const c = window.wdCloud; setCloudCrew(c ? ((c.people || []).length - 1) + (c.invites || []).filter(i => !i.accepted_user_id).length : 0); };
             h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
