@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.2.2';
+        const APP_VERSION = '7.2.3';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -196,8 +196,28 @@ import qrcode from 'qrcode-generator';
         const backupFileName = () => { const n = new Date(); return 'RPAS_Database_Backup_' + localISODate(n) + '_' + String(n.getHours()).padStart(2, '0') + String(n.getMinutes()).padStart(2, '0') + '.json'; };
 
         // --- STORAGE: IndexedDB for the database (browser localStorage is capped at ~5 MB) ---
+        // ── v7.2.3 Private data per person on a shared browser ──────────────────────────────────────────
+        // Planner data lives in this browser. Each identity gets its own database, chosen before anything loads:
+        //   ''          the CRP / owner (and the offline file)       → 'wakingdream_planner' (unchanged)
+        //   'crew:<e>'  a signed-in pilot or observer                → empty, theirs only
+        //   'free'      "Use free on this device"                    → empty, theirs only
+        //   'guest'     signed out at the sign-in screen             → empty
+        //   'pending'   signed in, role not known on this device yet → empty until the role arrives, then reload
+        const WD_NS = (() => {
+          try {
+            if (typeof location === 'undefined' || !/^https?:$/.test(location.protocol) || window.__WD_CREW_MODE) return '';
+            const test = localStorage.getItem('wd_edition_test');
+            if (test === 'full') return ''; if (test === 'free') return 'free';
+            const email = (localStorage.getItem('wd_auth_email') || '').toLowerCase();
+            if (!email) return localStorage.getItem('wd_edition') === 'free' ? 'free' : 'guest';
+            const role = localStorage.getItem('wd_role:' + email);
+            return role === 'crp' ? '' : (role === 'pilot' || role === 'observer' || role === 'inactive') ? 'crew:' + email : 'pending';
+          } catch (e) { return ''; }
+        })();
+        if (typeof window !== 'undefined') window.__WD_NS = WD_NS;
+        const wdLegacyKey = (k) => (WD_NS ? null : k); // the localStorage mirror belongs to the owner's database only
         const wdStore = (() => {
-          const NAME = 'wakingdream_planner', STORE = 'kv', KEY = 'rpas_database', SAFE = 'rpas_database_safety';
+          const NAME = 'wakingdream_planner' + (WD_NS ? '__' + WD_NS.replace(/[^a-z0-9@._-]/gi, '_') : ''), STORE = 'kv', KEY = 'rpas_database', SAFE = 'rpas_database_safety';
           let dbp = null;
           const open = () => {
             if (dbp) return dbp;
@@ -219,6 +239,7 @@ import qrcode from 'qrcode-generator';
           }));
           // keep a copy in localStorage when it fits (older builds read it); drop it when it doesn't
           const mirror = (str) => {
+            if (WD_NS) return;
             try {
               if (str.length < 4.5 * 1048576) localStorage.setItem(KEY, str);
               else { localStorage.removeItem(KEY); }
@@ -237,7 +258,7 @@ import qrcode from 'qrcode-generator';
                 .then(() => { mirror(str); if (api.onSaved) api.onSaved(); return true; })
                 .catch(err => {
                   console.warn('IndexedDB write failed, trying localStorage', err);
-                  try { localStorage.setItem(KEY, str); return true; } catch (e) { return false; }
+                  if (WD_NS) return false; try { localStorage.setItem(KEY, str); return true; } catch (e) { return false; }
                 });
             },
             // One safety copy of the whole database, taken before anything replaces or clears it
@@ -4180,7 +4201,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       ↺ Reload
                     </button>
                     <button
-                      onClick={() => { wdStore.load().catch(() => null).then(s => { let str = s; if (!str) { try { str = localStorage.getItem('rpas_database'); } catch (e) {} } if (!str) { alert('No saved database was found on this device.'); return; } downloadJson(str, backupFileName()); try { localStorage.setItem('rpas_last_backup', new Date().toISOString()); } catch (e) {} }); }}
+                      onClick={() => { wdStore.load().catch(() => null).then(s => { let str = s; if (!str) { try { str = (wdLegacyKey('rpas_database') && localStorage.getItem('rpas_database')); } catch (e) {} } if (!str) { alert('No saved database was found on this device.'); return; } downloadJson(str, backupFileName()); try { localStorage.setItem('rpas_last_backup', new Date().toISOString()); } catch (e) {} }); }}
                       style={{background:'#334155',color:'#f1f5f9',border:'none',borderRadius:8,padding:'0.75rem 1.5rem',fontSize:14,fontWeight:700,cursor:'pointer'}}
                     >
                       ⬇ Download Backup
@@ -4190,8 +4211,8 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       onClick={() => {
                         const typed = window.prompt('Reset the app to factory defaults?\n\nYour current database is kept as a safety copy that can be restored from Database & Settings.\n\nType RESET to confirm.');
                         if ((typed || '').trim().toUpperCase() !== 'RESET') return;
-                        wdStore.load().catch(() => null).then(s => { let str = s; if (!str) { try { str = localStorage.getItem('rpas_database'); } catch (e) {} } return str ? wdStore.saveSafety(str, 'Reset from the error screen') : true; })
-                          .then(() => wdStore.clear()).then(() => { try { localStorage.removeItem('rpas_database'); } catch (e) {} window.location.reload(); });
+                        wdStore.load().catch(() => null).then(s => { let str = s; if (!str) { try { str = (wdLegacyKey('rpas_database') && localStorage.getItem('rpas_database')); } catch (e) {} } return str ? wdStore.saveSafety(str, 'Reset from the error screen') : true; })
+                          .then(() => wdStore.clear()).then(() => { try { (wdLegacyKey('rpas_database') && localStorage.removeItem('rpas_database')); } catch (e) {} window.location.reload(); });
                       }}
                       style={{background:'transparent',color:'#f87171',border:'1px solid #7f1d1d',borderRadius:8,padding:'0.5rem 1rem',fontSize:12,fontWeight:600,cursor:'pointer',marginTop:14}}
                     >
@@ -4544,7 +4565,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 };
               } catch (e) {
                 console.error("Failed to parse DB — falling back to defaults", e);
-                localStorage.removeItem('rpas_database'); // clear corrupt data so next load is clean
+                (wdLegacyKey('rpas_database') && localStorage.removeItem('rpas_database')); // clear corrupt data so next load is clean
                 return {
                   assessors: defaultAssessors, clients: defaultClients, pilots: defaultPilots,
                   fleet: defaultFleet, observers: defaultObservers,
@@ -4615,7 +4636,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               oonpTemplates: null,
             };
           };
-          const [db, setDb] = useState(() => { let v = null; try { v = localStorage.getItem('rpas_database'); } catch (e) {} return parseStoredDb(v); });
+          const [db, setDb] = useState(() => { let v = null; try { v = (wdLegacyKey('rpas_database') && localStorage.getItem('rpas_database')); } catch (e) {} return parseStoredDb(v); });
           // IndexedDB is the master copy. Nothing is written until it has been read, so defaults can't overwrite real data.
           const dbReadyRef = useRef(false);
           const [dbReady, setDbReady] = useState(false);
@@ -4642,6 +4663,20 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
           const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
           const setTestEdition = (v) => { lsSet('wd_edition_test', v); setEditionTest(v); };
+          // v7.2.3: switch to this person's own data space once we know who is signed in (see WD_NS)
+          useEffect(() => {
+            if (!IS_HOSTED || editionTest || window.__WD_CREW_MODE) return;
+            let want = null;
+            if (auth.state === 'out') { lsSet('wd_auth_email', ''); want = editionPick === 'free' ? 'free' : 'guest'; }
+            else if (auth.state === 'in' && auth.ready && auth.email) {
+              const em = String(auth.email).toLowerCase();
+              lsSet('wd_auth_email', em); lsSet('wd_role:' + em, auth.role || 'inactive');
+              want = auth.role === 'crp' ? '' : 'crew:' + em;
+            }
+            if (want === null || want === WD_NS) { try { sessionStorage.removeItem('wd_ns_hops'); } catch (e) {} return; }
+            let hops = 0; try { hops = +sessionStorage.getItem('wd_ns_hops') || 0; sessionStorage.setItem('wd_ns_hops', String(hops + 1)); } catch (e) {}
+            if (hops < 3) location.reload();
+          }, [auth.state, auth.ready, auth.email, auth.role, editionPick]); // eslint-disable-line
           const [freeIntroSeen, setFreeIntroSeen] = useState(() => !!lsGet('wd_free_intro'));
           const roleKey = 'wd_role_welcomed:' + (auth.email || '');
           const [roleWelcomed, setRoleWelcomed] = useState(() => !!lsGet(roleKey));
@@ -4670,7 +4705,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 if (!seen && empty && !wdStore.locked) setShowWelcome(true);
               } else {
                 // first run on this version: move the localStorage data into IndexedDB
-                let legacy = null; try { legacy = localStorage.getItem('rpas_database'); } catch (e) {}
+                let legacy = null; try { legacy = (wdLegacyKey('rpas_database') && localStorage.getItem('rpas_database')); } catch (e) {}
                 if (legacy) wdStore.save(JSON.parse(legacy));
                 else {
                   freshDbRef.current = true;
@@ -7303,7 +7338,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (!dbReady || !isFree || freeOpenedRef.current) return;
             freeOpenedRef.current = true;
             const j = (db.draftPlans || [])[0] || (db.savedPlans || [])[0];
-            if (j && overview.identifier !== j.id && !dirty) { quietUntilRef.current = Date.now() + 2500; handleLoadPlan(j, { silent: true }); setTimeout(() => setDirty(false), 50); }
+            if (j && !dirty && !(overview.uid && j.overview && overview.uid === j.overview.uid) && !String(overview.operationName || '').trim()) { quietUntilRef.current = Date.now() + 2500; handleLoadPlan(j, { silent: true }); setTimeout(() => setDirty(false), 50); }
           }, [dbReady, isFree]); // eslint-disable-line
           const markSaved = () => { setDirty(false); setLastSavedAt(new Date().toISOString()); if (workingTimer.current) clearTimeout(workingTimer.current); wdStore.clearWorking(); quietUntilRef.current = Date.now() + 1500; };
           // Read the database back after a save and confirm the record really holds what's on screen
@@ -9199,6 +9234,12 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {/* v7.2.3: role not known on this device yet: show nothing until the right data space is open */}
+              {IS_HOSTED && !editionTest && WD_NS === 'pending' && (
+                <div className="fixed inset-0 z-[4870] flex items-center justify-center print:hidden" data-testid="ns-pending" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                  <div className="text-center text-white"><i className="fa-solid fa-circle-notch fa-spin text-3xl" style={{ color: '#c084fc' }}></i><div className="mt-3 font-semibold">Opening your account…</div></div>
+                </div>
+              )}
               {/* v6.8: sign in first (hosted) */}
               {showGate && (
                 <div className="fixed inset-0 z-[4880] overflow-y-auto print:hidden" data-testid="gate" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
@@ -13838,7 +13879,7 @@ View in the Database & Settings tab.`);
                             <h3 className="font-bold text-red-900 text-sm">Reset App Data</h3>
                             <p className="text-xs text-red-700 mt-1">Clears all saved data and reloads to factory defaults. Use if the app is crashing or behaving incorrectly. A safety copy of the current data is kept and can be restored above.</p>
                           </div>
-                          <button onClick={() => { const typed = window.prompt('This clears all saved data and reloads to factory defaults.\n\nThe current database is kept as a safety copy (restore it here with "Restore safety copy").\n\nType RESET to confirm.'); if ((typed || '').trim().toUpperCase() !== 'RESET') return; if (wdStore.locked) { alert('This tab is read-only. Reset from the tab that owns the planner.'); return; } wdStore.saveSafety(db, 'Clear & Reset from Database & Settings').then(() => wdStore.clear()).then(() => { try { localStorage.removeItem('rpas_database'); localStorage.removeItem('customRiskTemplates'); } catch (e) {} window.location.reload(); }); }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 flex-shrink-0 ml-4">
+                          <button onClick={() => { const typed = window.prompt('This clears all saved data and reloads to factory defaults.\n\nThe current database is kept as a safety copy (restore it here with "Restore safety copy").\n\nType RESET to confirm.'); if ((typed || '').trim().toUpperCase() !== 'RESET') return; if (wdStore.locked) { alert('This tab is read-only. Reset from the tab that owns the planner.'); return; } wdStore.saveSafety(db, 'Clear & Reset from Database & Settings').then(() => wdStore.clear()).then(() => { try { (wdLegacyKey('rpas_database') && localStorage.removeItem('rpas_database')); localStorage.removeItem('customRiskTemplates'); } catch (e) {} window.location.reload(); }); }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 flex-shrink-0 ml-4">
                             <i className="fa-solid fa-trash-can"></i> Clear & Reset
                           </button>
                         </div>
