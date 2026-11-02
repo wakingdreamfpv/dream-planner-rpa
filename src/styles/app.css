@@ -32,3 +32,10 @@ button, a, label, select { -webkit-tap-highlight-color: rgba(124, 58, 237, 0.15)
 
 /* v6.9: anything scrolled into view clears the sticky job bar */
 html { scroll-padding-top: 3.5rem; }
+
+/* v7.3: on Database & Settings the planner tabs fold into one row of icons, so the section menu fits the screen */
+.wd-nav-compact { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; padding: 6px !important; }
+.wd-nav-compact > div { display: none; }
+.wd-nav-compact > button { font-size: 0 !important; padding: 9px 0 !important; justify-content: center; gap: 0 !important; }
+.wd-nav-compact > button i { font-size: 16px; width: auto !important; }
+.wd-nav-compact > button span { display: none; }
