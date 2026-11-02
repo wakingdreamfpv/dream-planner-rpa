@@ -2,6 +2,8 @@
    React, ReactDOM and Leaflet (L) are globals set up in src/globals.js / index.html. */
 
 import Dashboard from '../dashboard/Dashboard.jsx';
+import crewFormScript from '../crew/crewFormScript.js?raw';
+import qrcode from 'qrcode-generator';
         // Extract React Hooks
         const { useState, useEffect, useRef } = React;
 
@@ -170,7 +172,7 @@ import Dashboard from '../dashboard/Dashboard.jsx';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.0';
+        const APP_VERSION = '7.1';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -457,11 +459,270 @@ import Dashboard from '../dashboard/Dashboard.jsx';
         const CREW_FIELD_LABELS = { weatherMeetsLimitations: 'Weather within limitations', weatherDetails: 'Weather details', onsiteValidationInitials: 'On-site validation initials', planningErrors: 'Planning errors', conductedIAW: 'Conducted IAW plan', conductedChanges: 'Changes to the plan', comments: 'Comments', serviceableAtEnd: 'Serviceable at end', defects: 'Defects', crewRP: 'Remote pilot', crewSecondRP: 'Second RP', crewObserver: 'Observer' };
         const crewBlankFlight = (f) => !f || (!String(f.duration == null ? '' : f.duration).trim() && !String(f.batteries || '').trim() && !String(f.label || '').trim() && !f.telemetry
           && !(f.segments || []).some(s => s && (String(s.maxFt == null ? '' : s.maxFt).trim() || String(s.minFt == null ? '' : s.minFt).trim() || String(s.height == null ? '' : s.height).trim())));
+        const CREW_FORM_TEMPLATE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Flight Log — %%TITLE%%</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; min-height: 100vh; }
+  .top-bar { background: #0f172a; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
+  .top-bar .logo { font-weight: 800; font-size: 15px; letter-spacing: -0.5px; }
+  .top-bar .badge { background: #3b82f6; color: white; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .job-card { background: #1e40af; color: white; padding: 18px 20px; }
+  .job-card h1 { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+  .job-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; opacity: 0.85; margin-top: 4px; }
+  .job-meta span { display: flex; align-items: center; gap: 5px; }
+  .container { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
+  .section { background: white; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 16px; overflow: hidden; }
+  .section-header { padding: 12px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #64748b; display: flex; align-items: center; gap-8px; }
+  .section-body { padding: 16px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .field-row.full { grid-template-columns: 1fr; }
+  .field-row.three { grid-template-columns: 1fr 1fr 1fr; }
+  @media (max-width: 520px) { .field-row, .field-row.three { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  input[type=text], input[type=number], textarea, select {
+    width: 100%; padding: 9px 12px; border: 1.5px solid #cbd5e1; border-radius: 8px;
+    font-size: 14px; font-family: inherit; color: #1e293b; background: white;
+    transition: border-color 0.15s;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+  textarea { resize: vertical; min-height: 70px; }
+  .toggle-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+  .toggle-btn { width: 44px; height: 24px; border-radius: 99px; border: none; cursor: pointer; transition: background 0.2s; flex-shrink: 0; position: relative; }
+  .toggle-btn.on { background: #22c55e; }
+  .toggle-btn.off { background: #cbd5e1; }
+  .toggle-knob { position: absolute; top: 3px; width: 18px; height: 18px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: left 0.2s; }
+  .toggle-btn.on .toggle-knob { left: 23px; }
+  .toggle-btn.off .toggle-knob { left: 3px; }
+  .toggle-label { font-size: 14px; color: #1e293b; }
+  .rpa-card { border: 1.5px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+  .rpa-header { background: #1e293b; color: white; padding: 10px 14px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .rpa-body { padding: 14px; }
+  .flight-row { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .flight-row-header { background: #f8fafc; padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #64748b; }
+  .flight-row-body { padding: 12px; display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+  @media (max-width: 400px) { .flight-row-body { grid-template-columns: 1fr; } }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s; }
+  .btn-primary { background: #2563eb; color: white; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-success { background: #16a34a; color: white; }
+  .btn-success:hover { background: #15803d; }
+  .btn-sm { padding: 6px 11px; font-size: 12px; }
+  .btn-outline { background: white; border: 1.5px solid #e2e8f0; color: #475569; }
+  .btn-outline:hover { border-color: #94a3b8; background: #f8fafc; }
+  .add-flight-btn { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #3b82f6; background: #eff6ff; border: 1.5px solid #bfdbfe; padding: 7px 12px; border-radius: 7px; cursor: pointer; border-style: dashed; width: 100%; justify-content: center; margin-top: 8px; }
+  .add-flight-btn:hover { background: #dbeafe; }
+  .condbox { margin-top: 10px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }
+  .condbox textarea { background: #fffbeb; border-color: #fcd34d; }
+  .condbox-red { background: #fff1f2; border-color: #fca5a5; }
+  .condbox-red textarea { background: #fff1f2; border-color: #f87171; }
+  .info-note { font-size: 12px; color: #64748b; background: #f8fafc; border-radius: 8px; padding: 10px 14px; border: 1px solid #e2e8f0; margin-bottom: 12px; line-height: 1.5; }
+  .submit-bar { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #e2e8f0; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; z-index: 100; }
+  .submit-bar .status { font-size: 12px; color: #64748b; }
+  .success-banner { display: none; background: #dcfce7; border: 1px solid #86efac; color: #15803d; padding: 14px 16px; border-radius: 10px; margin-bottom: 16px; font-weight: 600; font-size: 14px; }
+  .pill { display: inline-block; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; margin-right: 4px; }
+  select option { font-size: 14px; }
+  .datalist-wrap { position: relative; }
+  .heights-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f8fafc; border-top: 1px solid #e2e8f0; cursor: pointer; font-size: 12px; font-weight: 600; color: #64748b; border: none; width: 100%; text-align: left; }
+  .heights-toggle:hover { background: #f1f5f9; color: #3b82f6; }
+  .heights-panel { padding: 12px; border-top: 1px solid #e2e8f0; background: #fafafa; }
+  .heights-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .heights-table th { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; padding: 0 6px 8px; }
+  .heights-table th:first-child { text-align: left; }
+  .heights-table td { padding: 6px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  .heights-table tr:last-child td { border-bottom: none; }
+  .seg-name-input { width: 100%; border: none; border-bottom: 1px solid #e2e8f0; background: transparent; font-size: 12px; font-weight: 600; color: #334155; padding: 2px 4px; }
+  .seg-name-input:focus { outline: none; border-bottom-color: #3b82f6; }
+  .seg-ht-input { width: 64px; text-align: center; font-family: monospace; font-weight: 700; font-size: 12px; border: 1.5px solid #e2e8f0; border-radius: 6px; padding: 5px 4px; }
+  .seg-ht-input:focus { outline: none; border-color: #3b82f6; }
+  .seg-ht-input.over { border-color: #fca5a5; background: #fff1f2; color: #dc2626; }
+  .seg-range-btn { width: 32px; height: 18px; border-radius: 99px; border: none; cursor: pointer; transition: background 0.2s; position: relative; display: block; margin: 0 auto; }
+  .seg-range-btn.on { background: #3b82f6; }
+  .seg-range-btn.off { background: #cbd5e1; }
+  .seg-range-knob { position: absolute; top: 2px; width: 14px; height: 14px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: left 0.15s; }
+  .seg-range-btn.on .seg-range-knob { left: 16px; }
+  .seg-range-btn.off .seg-range-knob { left: 2px; }
+  .badge-ok { font-size: 10px; font-weight: 700; color: #16a34a; background: #dcfce7; border: 1px solid #86efac; padding: 2px 6px; border-radius: 99px; }
+  .badge-over { font-size: 10px; font-weight: 700; color: #dc2626; background: #fff1f2; border: 1px solid #fca5a5; padding: 2px 6px; border-radius: 99px; }
+  .peak-bar { margin-top: 8px; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  .peak-bar.ok { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
+  .peak-bar.over { background: #fff1f2; color: #dc2626; border: 1px solid #fca5a5; }
+  .add-seg-btn { font-size: 11px; font-weight: 600; color: #3b82f6; background: none; border: none; cursor: pointer; padding: 4px 0; }
+  .add-seg-btn:hover { text-decoration: underline; }
+  .remove-seg-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 14px; padding: 0 4px; }
+  .remove-seg-btn:hover { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="top-bar">
+  <span class="logo">%%COMPANY%%</span>
+  <span class="badge">Crew Flight Log</span>
+</div>
+<div class="job-card">
+  <h1 id="job-title">Loading…</h1>
+  <div class="job-meta">
+    <span>📅 <span id="job-date"></span></span>
+    <span>📍 <span id="job-location"></span></span>
+    <span>👤 <span id="job-client"></span></span>
+    <span>🚁 <span id="job-rpas"></span></span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="success-banner" id="success-banner">✅ Log downloaded! Send the .json file back to your ops manager.</div>
+
+  <!-- Part A -->
+  <div class="section">
+    <div class="section-header">Part A — Pre-Flight Validation</div>
+    <div class="section-body">
+      <div class="info-note">Complete this section on-site before commencing flight operations.</div>
+      <div class="toggle-row">
+        <button class="toggle-btn off" id="toggle-weather" onclick="toggleField('weatherMeetsLimitations','toggle-weather')">
+          <div class="toggle-knob"></div>
+        </button>
+        <span class="toggle-label">Weather conditions meet limitations?</span>
+      </div>
+      <div class="field-row full" style="margin-top:8px">
+        <div>
+          <label>Weather Details</label>
+          <input type="text" id="weatherDetails" placeholder="e.g. Wind 10 kts, CAVOK, Temp 22°C">
+        </div>
+      </div>
+      <div class="field-row full">
+        <div>
+          <label>Onsite Validation — RP Initials</label>
+          <input type="text" id="onsiteValidationInitials" placeholder="Enter initials" style="text-transform:uppercase;max-width:160px">
+        </div>
+      </div>
+      <div class="field-row full">
+        <div>
+          <label>Omissions / Errors in Planning Doc</label>
+          <textarea id="planningErrors" placeholder="Nil omissions…"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Part B -->
+  <div class="section">
+    <div class="section-header">Part B — Post-Flight Action</div>
+    <div class="section-body">
+      <div class="toggle-row">
+        <button class="toggle-btn off" id="toggle-conductedIAW" onclick="toggleField('conductedIAW','toggle-conductedIAW')">
+          <div class="toggle-knob"></div>
+        </button>
+        <span class="toggle-label">Operation conducted IAW Sections 1–3?</span>
+      </div>
+      <div class="condbox" id="condbox-conductedIAW" style="display:none">
+        <label>If NO — record changes / deviations:</label>
+        <textarea id="conductedChanges" placeholder="Describe any deviations…"></textarea>
+      </div>
+
+      <div class="toggle-row" style="margin-top:12px">
+        <button class="toggle-btn off" id="toggle-serviceableAtEnd" onclick="toggleField('serviceableAtEnd','toggle-serviceableAtEnd')">
+          <div class="toggle-knob"></div>
+        </button>
+        <span class="toggle-label">RPAS serviceable at end of operation?</span>
+      </div>
+      <div class="condbox condbox-red" id="condbox-serviceableAtEnd" style="display:none">
+        <label>If NO — record defects (must also log in Technical Log Part 2):</label>
+        <textarea id="defects" placeholder="Describe defects…"></textarea>
+      </div>
+
+      <div style="margin-top:14px">
+        <label>General Comments / Task Outcome</label>
+        <textarea id="comments" placeholder="Mission successful…" style="min-height:90px"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- Part C — Crew -->
+  <div class="section">
+    <div class="section-header">Part C — Crew Logging</div>
+    <div class="section-body">
+      <div class="field-row three">
+        <div>
+          <label>Primary RP</label>
+          <input type="text" id="crewRP" placeholder="Full name">
+        </div>
+        <div>
+          <label>Second RP</label>
+          <input type="text" id="crewSecondRP" placeholder="If applicable">
+        </div>
+        <div>
+          <label>Observer / Crew</label>
+          <input type="text" id="crewObserver" placeholder="If applicable">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-RPA Flight Times -->
+  <div id="rpa-sections"></div>
+
+</div>
+
+<div class="submit-bar">
+  <span class="status" id="submit-status">Fill in the log above then download.</span>
+  <button class="btn btn-success" onclick="downloadLog()">⬇ Download Completed Log</button>
+</div>
+
+<datalist id="batt-global"></datalist>
+
+%%SCRIPT%%
+</body>
+</html>`;
+        // ── v7.1 Crew phone form: one builder for the downloadable file and the "Send to phone" link ──
+        const crewFormHtml = (title, company, payload) => {
+          const esc = (x) => String(x || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          const data = JSON.stringify(payload).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+          const code = JSON.stringify(crewFormScript).replace(/</g, '\\u003c');
+          return CREW_FORM_TEMPLATE.replace('%%TITLE%%', esc(title)).replace('%%COMPANY%%', esc(company))
+            .replace('%%SCRIPT%%', () => '<' + 'script>\nconst PAYLOAD = ' + data + ';\n(function(){const _s=document.createElement(\'script\');_s.textContent=' + code + ';document.body.appendChild(_s);})();\n<' + '/script>');
+        };
+        const b64u = { enc: (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); },
+          dec: (str) => { const s = atob(str.replace(/-/g, '+').replace(/_/g, '/')); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; } };
+        const crewLinkEncode = async (obj) => {
+          const raw = new TextEncoder().encode(JSON.stringify(obj));
+          if (typeof CompressionStream === 'undefined') return 'j' + b64u.enc(raw);
+          const buf = await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
+          return 'z' + b64u.enc(new Uint8Array(buf));
+        };
+        const crewLinkDecode = async (str) => {
+          const kind = str[0], bytes = b64u.dec(str.slice(1));
+          if (kind === 'j') return JSON.parse(new TextDecoder().decode(bytes));
+          const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+          return JSON.parse(new TextDecoder().decode(buf));
+        };
+        // compact link payload: battery names once, each aircraft's own packs as indexes
+        const crewLinkPack = (title, company, payload) => {
+          const all = [...new Set(Object.values(payload.battOpts || {}).flat())];
+          const own = {}; Object.entries(payload.battOpts || {}).forEach(([rpa, list]) => { own[rpa] = list.map(n => all.indexOf(n)); });
+          return { v: 1, t: title, c: company, j: payload.jobData, b: all, o: own, k: Object.fromEntries((payload.checks || []).map(g => [g.id, g.rel ? 1 : 0])) };
+        };
+        const crewLinkUnpack = (o) => {
+          const battOpts = {}; Object.entries(o.o || {}).forEach(([rpa, idx]) => { battOpts[rpa] = idx.map(i => o.b[i]).filter(Boolean); });
+          const rel = o.k || {}; // checklist wording comes from this planner build; the link only says which groups apply
+          return { title: o.t, company: o.c, payload: { jobData: o.j || {}, battOpts, checks: PREFLIGHT_CHECKS.filter(g => g.id in rel).map(g => ({ id: g.id, title: g.title, ops: g.ops, rel: !!rel[g.id], items: g.items.map(it => ({ id: it.id, title: it.title, text: it.text })) })) } };
+        };
+        // Opened from a "Send to phone" link: show only the crew form (nothing is fetched or stored on a server)
+        if (typeof location !== 'undefined' && /^#crew=/.test(location.hash)) {
+          window.__WD_CREW_MODE = true;
+          crewLinkDecode(location.hash.slice(6)).then(o => { const u = crewLinkUnpack(o); const html = crewFormHtml(u.title, u.company, u.payload); document.open(); document.write(html); document.close(); })
+            .catch(() => { document.body.innerHTML = '<div style="font-family:system-ui;padding:24px;max-width:480px;margin:auto"><h2>This crew link is damaged</h2><p>Ask your ops manager to send it again. Copy the whole link, or scan the QR code.</p></div>'; });
+        }
+
         function mergeCrewLog(prev, incoming) {
           const p = prev || {}, out = { ...p }, changes = [];
           const short = (s) => { s = String(s).replace(/\s+/g, ' ').trim(); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
           Object.keys(incoming || {}).forEach(k => {
             if (k === 'rpaLogs' || k === 'yn60') return;
+            if (k === 'preflightChecks') { const inc = (incoming[k] && incoming[k].items) || {}, cur = (p.preflightChecks && p.preflightChecks.items) || {};
+              const addK = Object.keys(inc).filter(x => inc[x] && !cur[x]); if (addK.length) { out.preflightChecks = { ...(p.preflightChecks || {}), enabled: true, items: { ...cur, ...Object.fromEntries(addK.map(x => [x, inc[x]])) } }; changes.push(`Pre-flight checklist: ${addK.length} item${addK.length === 1 ? '' : 's'} recorded by the crew`); } return; }
             const v = incoming[k], label = CREW_FIELD_LABELS[k] || k;
             if (typeof v === 'boolean') { if (v && !p[k]) { out[k] = true; changes.push(label + ': ticked'); } return; }
             if (v == null || typeof v === 'object') return;
@@ -6971,247 +7232,37 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
 
           // ── Crew Log Share ────────────────────────────────────────────────────
-          const generateCrewLog = () => {
-            const title = getOpTitle(overview);
-            const jobData = {
-              title,
-              date: overview.date || '',
-              client: overview.clientName || '',
-              location: overview.location || '',
-              rpaTypes: overview.rpaTypes || [],
-              rpic: overview.rpic || '',
-              identifier: overview.identifier || '',
-            };
-            // Battery options per RPA
+          const crewPayload = () => {
+            const jobData = { title: getOpTitle(overview), date: overview.operationDate || overview.date || '', client: overview.clientName || '', location: overview.location || '',
+              rpaTypes: overview.rpaTypes || [], rpic: overview.rpic || '', identifier: overview.identifier || '', uid: overview.uid || '' };
             const battOpts = {};
             (overview.rpaTypes || []).forEach(rpa => {
               const own = (db.rpaBatteries && db.rpaBatteries[rpa]) || [];
               const rest = [...new Set([...Object.values(db.rpaBatteries || {}).flat(), ...(db.batteries || [])])].filter(n => !own.includes(n));
               battOpts[rpa] = [...own, ...rest];
             });
-
-            const escaped = JSON.stringify({ jobData, battOpts }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
-
-            const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crew Flight Log — ${title}</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; min-height: 100vh; }
-  .top-bar { background: #0f172a; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
-  .top-bar .logo { font-weight: 800; font-size: 15px; letter-spacing: -0.5px; }
-  .top-bar .badge { background: #3b82f6; color: white; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; letter-spacing: 0.5px; text-transform: uppercase; }
-  .job-card { background: #1e40af; color: white; padding: 18px 20px; }
-  .job-card h1 { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
-  .job-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; opacity: 0.85; margin-top: 4px; }
-  .job-meta span { display: flex; align-items: center; gap: 5px; }
-  .container { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
-  .section { background: white; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 16px; overflow: hidden; }
-  .section-header { padding: 12px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #64748b; display: flex; align-items: center; gap-8px; }
-  .section-body { padding: 16px; }
-  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-  .field-row.full { grid-template-columns: 1fr; }
-  .field-row.three { grid-template-columns: 1fr 1fr 1fr; }
-  @media (max-width: 520px) { .field-row, .field-row.three { grid-template-columns: 1fr; } }
-  label { display: block; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
-  input[type=text], input[type=number], textarea, select {
-    width: 100%; padding: 9px 12px; border: 1.5px solid #cbd5e1; border-radius: 8px;
-    font-size: 14px; font-family: inherit; color: #1e293b; background: white;
-    transition: border-color 0.15s;
-  }
-  input:focus, textarea:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
-  textarea { resize: vertical; min-height: 70px; }
-  .toggle-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
-  .toggle-btn { width: 44px; height: 24px; border-radius: 99px; border: none; cursor: pointer; transition: background 0.2s; flex-shrink: 0; position: relative; }
-  .toggle-btn.on { background: #22c55e; }
-  .toggle-btn.off { background: #cbd5e1; }
-  .toggle-knob { position: absolute; top: 3px; width: 18px; height: 18px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: left 0.2s; }
-  .toggle-btn.on .toggle-knob { left: 23px; }
-  .toggle-btn.off .toggle-knob { left: 3px; }
-  .toggle-label { font-size: 14px; color: #1e293b; }
-  .rpa-card { border: 1.5px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
-  .rpa-header { background: #1e293b; color: white; padding: 10px 14px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
-  .rpa-body { padding: 14px; }
-  .flight-row { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
-  .flight-row-header { background: #f8fafc; padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #64748b; }
-  .flight-row-body { padding: 12px; display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
-  @media (max-width: 400px) { .flight-row-body { grid-template-columns: 1fr; } }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s; }
-  .btn-primary { background: #2563eb; color: white; }
-  .btn-primary:hover { background: #1d4ed8; }
-  .btn-success { background: #16a34a; color: white; }
-  .btn-success:hover { background: #15803d; }
-  .btn-sm { padding: 6px 11px; font-size: 12px; }
-  .btn-outline { background: white; border: 1.5px solid #e2e8f0; color: #475569; }
-  .btn-outline:hover { border-color: #94a3b8; background: #f8fafc; }
-  .add-flight-btn { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #3b82f6; background: #eff6ff; border: 1.5px solid #bfdbfe; padding: 7px 12px; border-radius: 7px; cursor: pointer; border-style: dashed; width: 100%; justify-content: center; margin-top: 8px; }
-  .add-flight-btn:hover { background: #dbeafe; }
-  .condbox { margin-top: 10px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }
-  .condbox textarea { background: #fffbeb; border-color: #fcd34d; }
-  .condbox-red { background: #fff1f2; border-color: #fca5a5; }
-  .condbox-red textarea { background: #fff1f2; border-color: #f87171; }
-  .info-note { font-size: 12px; color: #64748b; background: #f8fafc; border-radius: 8px; padding: 10px 14px; border: 1px solid #e2e8f0; margin-bottom: 12px; line-height: 1.5; }
-  .submit-bar { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #e2e8f0; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; z-index: 100; }
-  .submit-bar .status { font-size: 12px; color: #64748b; }
-  .success-banner { display: none; background: #dcfce7; border: 1px solid #86efac; color: #15803d; padding: 14px 16px; border-radius: 10px; margin-bottom: 16px; font-weight: 600; font-size: 14px; }
-  .pill { display: inline-block; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; margin-right: 4px; }
-  select option { font-size: 14px; }
-  .datalist-wrap { position: relative; }
-  .heights-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f8fafc; border-top: 1px solid #e2e8f0; cursor: pointer; font-size: 12px; font-weight: 600; color: #64748b; border: none; width: 100%; text-align: left; }
-  .heights-toggle:hover { background: #f1f5f9; color: #3b82f6; }
-  .heights-panel { padding: 12px; border-top: 1px solid #e2e8f0; background: #fafafa; }
-  .heights-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .heights-table th { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; padding: 0 6px 8px; }
-  .heights-table th:first-child { text-align: left; }
-  .heights-table td { padding: 6px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
-  .heights-table tr:last-child td { border-bottom: none; }
-  .seg-name-input { width: 100%; border: none; border-bottom: 1px solid #e2e8f0; background: transparent; font-size: 12px; font-weight: 600; color: #334155; padding: 2px 4px; }
-  .seg-name-input:focus { outline: none; border-bottom-color: #3b82f6; }
-  .seg-ht-input { width: 64px; text-align: center; font-family: monospace; font-weight: 700; font-size: 12px; border: 1.5px solid #e2e8f0; border-radius: 6px; padding: 5px 4px; }
-  .seg-ht-input:focus { outline: none; border-color: #3b82f6; }
-  .seg-ht-input.over { border-color: #fca5a5; background: #fff1f2; color: #dc2626; }
-  .seg-range-btn { width: 32px; height: 18px; border-radius: 99px; border: none; cursor: pointer; transition: background 0.2s; position: relative; display: block; margin: 0 auto; }
-  .seg-range-btn.on { background: #3b82f6; }
-  .seg-range-btn.off { background: #cbd5e1; }
-  .seg-range-knob { position: absolute; top: 2px; width: 14px; height: 14px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: left 0.15s; }
-  .seg-range-btn.on .seg-range-knob { left: 16px; }
-  .seg-range-btn.off .seg-range-knob { left: 2px; }
-  .badge-ok { font-size: 10px; font-weight: 700; color: #16a34a; background: #dcfce7; border: 1px solid #86efac; padding: 2px 6px; border-radius: 99px; }
-  .badge-over { font-size: 10px; font-weight: 700; color: #dc2626; background: #fff1f2; border: 1px solid #fca5a5; padding: 2px 6px; border-radius: 99px; }
-  .peak-bar { margin-top: 8px; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; }
-  .peak-bar.ok { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
-  .peak-bar.over { background: #fff1f2; color: #dc2626; border: 1px solid #fca5a5; }
-  .add-seg-btn { font-size: 11px; font-weight: 600; color: #3b82f6; background: none; border: none; cursor: pointer; padding: 4px 0; }
-  .add-seg-btn:hover { text-decoration: underline; }
-  .remove-seg-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 14px; padding: 0 4px; }
-  .remove-seg-btn:hover { color: #f87171; }
-</style>
-</head>
-<body>
-<div class="top-bar">
-  <span class="logo">${String((db.companyProfile && db.companyProfile.name) || "Dream Planner RPA").replace(/</g, "&lt;")}</span>
-  <span class="badge">Crew Flight Log</span>
-</div>
-<div class="job-card">
-  <h1 id="job-title">Loading…</h1>
-  <div class="job-meta">
-    <span>📅 <span id="job-date"></span></span>
-    <span>📍 <span id="job-location"></span></span>
-    <span>👤 <span id="job-client"></span></span>
-    <span>🚁 <span id="job-rpas"></span></span>
-  </div>
-</div>
-
-<div class="container">
-  <div class="success-banner" id="success-banner">✅ Log downloaded! Send the .json file back to your ops manager.</div>
-
-  <!-- Part A -->
-  <div class="section">
-    <div class="section-header">Part A — Pre-Flight Validation</div>
-    <div class="section-body">
-      <div class="info-note">Complete this section on-site before commencing flight operations.</div>
-      <div class="toggle-row">
-        <button class="toggle-btn off" id="toggle-weather" onclick="toggleField('weatherMeetsLimitations','toggle-weather')">
-          <div class="toggle-knob"></div>
-        </button>
-        <span class="toggle-label">Weather conditions meet limitations?</span>
-      </div>
-      <div class="field-row full" style="margin-top:8px">
-        <div>
-          <label>Weather Details</label>
-          <input type="text" id="weatherDetails" placeholder="e.g. Wind 10 kts, CAVOK, Temp 22°C">
-        </div>
-      </div>
-      <div class="field-row full">
-        <div>
-          <label>Onsite Validation — RP Initials</label>
-          <input type="text" id="onsiteValidationInitials" placeholder="Enter initials" style="text-transform:uppercase;max-width:160px">
-        </div>
-      </div>
-      <div class="field-row full">
-        <div>
-          <label>Omissions / Errors in Planning Doc</label>
-          <textarea id="planningErrors" placeholder="Nil omissions…"></textarea>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Part B -->
-  <div class="section">
-    <div class="section-header">Part B — Post-Flight Action</div>
-    <div class="section-body">
-      <div class="toggle-row">
-        <button class="toggle-btn off" id="toggle-conductedIAW" onclick="toggleField('conductedIAW','toggle-conductedIAW')">
-          <div class="toggle-knob"></div>
-        </button>
-        <span class="toggle-label">Operation conducted IAW Sections 1–3?</span>
-      </div>
-      <div class="condbox" id="condbox-conductedIAW" style="display:none">
-        <label>If NO — record changes / deviations:</label>
-        <textarea id="conductedChanges" placeholder="Describe any deviations…"></textarea>
-      </div>
-
-      <div class="toggle-row" style="margin-top:12px">
-        <button class="toggle-btn off" id="toggle-serviceableAtEnd" onclick="toggleField('serviceableAtEnd','toggle-serviceableAtEnd')">
-          <div class="toggle-knob"></div>
-        </button>
-        <span class="toggle-label">RPAS serviceable at end of operation?</span>
-      </div>
-      <div class="condbox condbox-red" id="condbox-serviceableAtEnd" style="display:none">
-        <label>If NO — record defects (must also log in Technical Log Part 2):</label>
-        <textarea id="defects" placeholder="Describe defects…"></textarea>
-      </div>
-
-      <div style="margin-top:14px">
-        <label>General Comments / Task Outcome</label>
-        <textarea id="comments" placeholder="Mission successful…" style="min-height:90px"></textarea>
-      </div>
-    </div>
-  </div>
-
-  <!-- Part C — Crew -->
-  <div class="section">
-    <div class="section-header">Part C — Crew Logging</div>
-    <div class="section-body">
-      <div class="field-row three">
-        <div>
-          <label>Primary RP</label>
-          <input type="text" id="crewRP" placeholder="Full name">
-        </div>
-        <div>
-          <label>Second RP</label>
-          <input type="text" id="crewSecondRP" placeholder="If applicable">
-        </div>
-        <div>
-          <label>Observer / Crew</label>
-          <input type="text" id="crewObserver" placeholder="If applicable">
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Per-RPA Flight Times -->
-  <div id="rpa-sections"></div>
-
-</div>
-
-<div class="submit-bar">
-  <span class="status" id="submit-status">Fill in the log above then download.</span>
-  <button class="btn btn-success" onclick="downloadLog()">⬇ Download Completed Log</button>
-</div>
-
-<datalist id="batt-global"></datalist>
-
-${'<'}script>
-const PAYLOAD = ${escaped};
-(function(){const _s=document.createElement('script');_s.textContent=atob('CmNvbnN0IHsgam9iRGF0YSwgYmF0dE9wdHMgfSA9IFBBWUxPQUQ7CmNvbnN0IHN0YXRlID0gewogIHdlYXRoZXJNZWV0c0xpbWl0YXRpb25zOiBmYWxzZSwgd2VhdGhlckRldGFpbHM6ICcnLAogIG9uc2l0ZVZhbGlkYXRpb25Jbml0aWFsczogJycsIHBsYW5uaW5nRXJyb3JzOiAnJywKICBjb25kdWN0ZWRJQVc6IGZhbHNlLCBjb25kdWN0ZWRDaGFuZ2VzOiAnJywKICBzZXJ2aWNlYWJsZUF0RW5kOiBmYWxzZSwgZGVmZWN0czogJycsCiAgY29tbWVudHM6ICcnLCBjcmV3UlA6ICcnLCBjcmV3U2Vjb25kUlA6ICcnLCBjcmV3T2JzZXJ2ZXI6ICcnLAogIHJwYUxvZ3M6IHt9LAp9OwoKZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2pvYi10aXRsZScpLnRleHRDb250ZW50ID0gam9iRGF0YS50aXRsZSB8fCAnVW5uYW1lZCBKb2InOwpkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnam9iLWRhdGUnKS50ZXh0Q29udGVudCA9IGpvYkRhdGEuZGF0ZSB8fCAn4oCUJzsKZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2pvYi1sb2NhdGlvbicpLnRleHRDb250ZW50ID0gam9iRGF0YS5sb2NhdGlvbiB8fCAn4oCUJzsKZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2pvYi1jbGllbnQnKS50ZXh0Q29udGVudCA9IGpvYkRhdGEuY2xpZW50IHx8ICfigJQnOwpkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnam9iLXJwYXMnKS50ZXh0Q29udGVudCA9IChqb2JEYXRhLnJwYVR5cGVzfHxbXSkuam9pbignLCAnKSB8fCAn4oCUJzsKZG9jdW1lbnQudGl0bGUgPSAnQ3JldyBMb2cg4oCUICcgKyAoam9iRGF0YS50aXRsZSB8fCAnSm9iJyk7CgpbJ3dlYXRoZXJEZXRhaWxzJywnb25zaXRlVmFsaWRhdGlvbkluaXRpYWxzJywncGxhbm5pbmdFcnJvcnMnLCdjb25kdWN0ZWRDaGFuZ2VzJywnZGVmZWN0cycsJ2NvbW1lbnRzJywnY3Jld1JQJywnY3Jld1NlY29uZFJQJywnY3Jld09ic2VydmVyJ10uZm9yRWFjaChpZCA9PiB7CiAgY29uc3QgZWwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7CiAgaWYgKGVsKSBlbC5hZGRFdmVudExpc3RlbmVyKCdpbnB1dCcsICgpID0+IHsgc3RhdGVbaWRdID0gZWwudmFsdWU7IHVwZGF0ZVN0YXR1cygpOyB9KTsKfSk7CgpmdW5jdGlvbiB0b2dnbGVGaWVsZChrZXksIGJ0bklkKSB7CiAgc3RhdGVba2V5XSA9ICFzdGF0ZVtrZXldOwogIGNvbnN0IGJ0biA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKGJ0bklkKTsKICBidG4uY2xhc3NOYW1lID0gJ3RvZ2dsZS1idG4gJyArIChzdGF0ZVtrZXldID8gJ29uJyA6ICdvZmYnKTsKICBjb25zdCBjYm94ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2NvbmRib3gtJyArIGtleSk7CiAgaWYgKGNib3gpIGNib3guc3R5bGUuZGlzcGxheSA9IHN0YXRlW2tleV0gPyAnbm9uZScgOiAnYmxvY2snOwogIHVwZGF0ZVN0YXR1cygpOwp9Cgpjb25zdCBERUZBVUxUX1NFR1MgPSAoKSA9PiBbCiAgeyBpZDogMSwgbmFtZTogJ1Rha2UtT2ZmJywgICAgICAgICAgICAgICAgIG1heEZ0OiAnJywgbWluRnQ6ICcnLCB1c2VSYW5nZTogZmFsc2UgfSwKICB7IGlkOiAyLCBuYW1lOiAnTW92ZW1lbnQgdG8gT3BzIEFyZWEnLCAgICAgbWF4RnQ6ICcnLCBtaW5GdDogJycsIHVzZVJhbmdlOiBmYWxzZSB9LAogIHsgaWQ6IDMsIG5hbWU6ICdGbGlnaHQgT3BlcmF0aW9uJywgICAgICAgICBtYXhGdDogJycsIG1pbkZ0OiAnJywgdXNlUmFuZ2U6IGZhbHNlIH0sCiAgeyBpZDogNCwgbmFtZTogJ01vdmVtZW50IHRvIExhbmRpbmcgQXJlYScsIG1heEZ0OiAnJywgbWluRnQ6ICcnLCB1c2VSYW5nZTogZmFsc2UgfSwKICB7IGlkOiA1LCBuYW1lOiAnTGFuZGluZycsICAgICAgICAgICAgICAgICAgbWF4RnQ6ICcnLCBtaW5GdDogJycsIHVzZVJhbmdlOiBmYWxzZSB9LApdOwoKZnVuY3Rpb24gcnBhS2V5KHJwYSl7cmV0dXJuIHJwYS5yZXBsYWNlKC9bXmEtejAtOV0vZ2ksJ18nKTt9CmZ1bmN0aW9uIGVzYyhzKXtyZXR1cm4gU3RyaW5nKHN8fCcnKS5yZXBsYWNlKC8mL2csJyZhbXA7JykucmVwbGFjZSgvIi9nLCcmcXVvdDsnKS5yZXBsYWNlKC88L2csJyZsdDsnKS5yZXBsYWNlKC8+L2csJyZndDsnKTt9CmZ1bmN0aW9uIHJhKHJwYSl7cmV0dXJuIHJwYS5yZXBsYWNlKC8nL2csIlxcJyIpO30KCmZ1bmN0aW9uIHJlbmRlckZsaWdodHMocnBhKXsKICBjb25zdCBrZXk9cnBhS2V5KHJwYSksY29udGFpbmVyPWRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdmbGlnaHRzLScra2V5KTsKICBpZighY29udGFpbmVyKXJldHVybjsKICBjb25zdCBmbGlnaHRzPXN0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzLGRsSWQ9J2JhdHRzLScra2V5OwogIGNvbnN0IGtlZXBZPXdpbmRvdy5zY3JvbGxZOwogIGNvbnRhaW5lci5pbm5lckhUTUw9ZmxpZ2h0cy5tYXAoKGZsLGlkeCk9PnsKICAgIGNvbnN0IHNlZ3M9KGZsLnNlZ21lbnRzJiZmbC5zZWdtZW50cy5sZW5ndGgpP2ZsLnNlZ21lbnRzOkRFRkFVTFRfU0VHUygpOwogICAgY29uc3QgcGVha0Z0PU1hdGgubWF4KDAsLi4uc2Vncy5tYXAocz0+cGFyc2VGbG9hdChzLm1heEZ0KXx8MCkpOwogICAgY29uc3Qgb3ZlcjQwMD1wZWFrRnQ+NDAwLHNob3dIPWZsLnNob3dIZWlnaHRzOwogICAgY29uc3Qgc2Vnc0h0bWw9c2Vncy5tYXAoc2VnPT57CiAgICAgIGNvbnN0IG1heFY9cGFyc2VGbG9hdChzZWcubWF4RnQpfHwwLGhhc01heD1zZWcubWF4RnQhPT0nJyxvdmVyPWhhc01heCYmbWF4Vj40MDA7CiAgICAgIGNvbnN0IGJhZGdlSWQ9J2JkLScra2V5KyctJytmbC5pZCsnLScrc2VnLmlkOwogICAgICBjb25zdCBiYWRnZT1oYXNNYXg/KG92ZXI/JzxzcGFuIGNsYXNzPSJiYWRnZS1vdmVyIj4mIzk4ODg7ICZndDs0MDBmdDwvc3Bhbj4nOic8c3BhbiBjbGFzcz0iYmFkZ2Utb2siPiYjMTAwMDM7ICYjODgwNDs0MDBmdDwvc3Bhbj4nKTonPHNwYW4gc3R5bGU9ImNvbG9yOiNjYmQ1ZTEiPiYjODIxMjs8L3NwYW4+JzsKICAgICAgY29uc3QgbWluQ2VsbD1zZWcudXNlUmFuZ2U/JzxpbnB1dCB0eXBlPSJudW1iZXIiIGNsYXNzPSJzZWctaHQtaW5wdXQiIHZhbHVlPSInK2VzYyhzZWcubWluRnQpKyciIHBsYWNlaG9sZGVyPSImIzgyMTI7IiBtaW49IjAiIHN0ZXA9IjEwIiBvbmlucHV0PSJ1cGRhdGVTZWcoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJywnK3NlZy5pZCsnLFwnbWluRnRcJyx0aGlzLnZhbHVlKSIgc3R5bGU9ImJhY2tncm91bmQ6I2VmZjZmZjtib3JkZXItY29sb3I6IzkzYzVmZDtjb2xvcjojMWQ0ZWQ4Ij4nCiAgICAgICAgOic8c3BhbiBzdHlsZT0iY29sb3I6I2NiZDVlMTtkaXNwbGF5OmJsb2NrO3RleHQtYWxpZ246Y2VudGVyIj4mIzgyMTI7PC9zcGFuPic7CiAgICAgIGNvbnN0IHJlbW92ZUJ0bj1zZWdzLmxlbmd0aD4xPyc8YnV0dG9uIGNsYXNzPSJyZW1vdmUtc2VnLWJ0biIgb25jbGljaz0icmVtb3ZlU2VnKFwnJytyYShycGEpKydcJywnK2ZsLmlkKycsJytzZWcuaWQrJykiPiYjMjE1OzwvYnV0dG9uPic6Jyc7CiAgICAgIHJldHVybiAnPHRyPjx0ZD48aW5wdXQgY2xhc3M9InNlZy1uYW1lLWlucHV0IiB0eXBlPSJ0ZXh0IiB2YWx1ZT0iJytlc2Moc2VnLm5hbWUpKyciIG9uaW5wdXQ9InVwZGF0ZVNlZyhcJycrcmEocnBhKSsnXCcsJytmbC5pZCsnLCcrc2VnLmlkKycsXCduYW1lXCcsdGhpcy52YWx1ZSkiPjwvdGQ+JwogICAgICAgICsnPHRkIHN0eWxlPSJ0ZXh0LWFsaWduOmNlbnRlciI+PGlucHV0IHR5cGU9Im51bWJlciIgaWQ9Im14LScra2V5KyctJytmbC5pZCsnLScrc2VnLmlkKyciIGNsYXNzPSJzZWctaHQtaW5wdXQnKyhvdmVyPycgb3Zlcic6JycpKyciIHZhbHVlPSInK2VzYyhzZWcubWF4RnQpKyciIHBsYWNlaG9sZGVyPSImIzgyMTI7IiBtaW49IjAiIHN0ZXA9IjEwIiBvbmlucHV0PSJ1cGRhdGVTZWcoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJywnK3NlZy5pZCsnLFwnbWF4RnRcJyx0aGlzLnZhbHVlKSI+PC90ZD4nCiAgICAgICAgKyc8dGQgc3R5bGU9InRleHQtYWxpZ246Y2VudGVyIj48YnV0dG9uIGNsYXNzPSJzZWctcmFuZ2UtYnRuICcrKHNlZy51c2VSYW5nZT8nb24nOidvZmYnKSsnIiBvbmNsaWNrPSJ1cGRhdGVTZWcoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJywnK3NlZy5pZCsnLFwndXNlUmFuZ2VcJywnKygoIXNlZy51c2VSYW5nZSkpKycpIj48ZGl2IGNsYXNzPSJzZWctcmFuZ2Uta25vYiI+PC9kaXY+PC9idXR0b24+PC90ZD4nCiAgICAgICAgKyc8dGQgc3R5bGU9InRleHQtYWxpZ246Y2VudGVyIj4nK21pbkNlbGwrJzwvdGQ+PHRkIHN0eWxlPSJ0ZXh0LWFsaWduOmNlbnRlciIgaWQ9IicrYmFkZ2VJZCsnIj4nK2JhZGdlKyc8L3RkPjx0ZD4nK3JlbW92ZUJ0bisnPC90ZD48L3RyPic7CiAgICB9KS5qb2luKCcnKTsKICAgIGNvbnN0IHBlYWtCYXI9JzxkaXYgaWQ9InBrLScra2V5KyctJytmbC5pZCsnIj4nK3BlYWtCYXJIdG1sKHBlYWtGdCkrJzwvZGl2Pic7CiAgICBjb25zdCBfdW51c2VkUGVhaz1wZWFrRnQ+MD8nPGRpdiBjbGFzcz0icGVhay1iYXIgJysob3ZlcjQwMD8nb3Zlcic6J29rJykrJyI+Jysob3ZlcjQwMD8nJiM5ODg4Oyc6JyYjMTAwMDM7JykrJyBQZWFrOiAnK3BlYWtGdCsnZnQgQUdMICgnKyhwZWFrRnQvMy4yODEpLnRvRml4ZWQoMCkrJ20pICYjODIxMjsgJysob3ZlcjQwMD8nRXhjZWVkcyA0MDBmdCBBR0wnOidXaXRoaW4gNDAwZnQgQUdMJykrJzwvZGl2Pic6Jyc7CiAgICBjb25zdCBoZWlnaHRzUGFuZWw9c2hvd0g/JzxkaXYgY2xhc3M9ImhlaWdodHMtcGFuZWwiPjx0YWJsZSBjbGFzcz0iaGVpZ2h0cy10YWJsZSI+PHRoZWFkPjx0cj48dGggc3R5bGU9InRleHQtYWxpZ246bGVmdCI+U2VnbWVudDwvdGg+PHRoPk1heCAoZnQpPC90aD48dGg+UmFuZ2U8L3RoPjx0aD5NaW4gKGZ0KTwvdGg+PHRoPiYjODgwNDs0MDBmdDwvdGg+PHRoPjwvdGg+PC90cj48L3RoZWFkPjx0Ym9keT4nK3NlZ3NIdG1sKyc8L3Rib2R5PjwvdGFibGU+PGRpdiBzdHlsZT0ibWFyZ2luLXRvcDo4cHg7ZGlzcGxheTpmbGV4O2dhcDoxMnB4Ij48YnV0dG9uIGNsYXNzPSJhZGQtc2VnLWJ0biIgb25jbGljaz0iYWRkU2VnKFwnJytyYShycGEpKydcJywnK2ZsLmlkKycpIj4rIEFkZCBzZWdtZW50PC9idXR0b24+PGJ1dHRvbiBjbGFzcz0iYWRkLXNlZy1idG4iIHN0eWxlPSJjb2xvcjojOTRhM2I4IiBvbmNsaWNrPSJyZXNldFNlZ3MoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJykiPlJlc2V0IGRlZmF1bHRzPC9idXR0b24+PC9kaXY+JytwZWFrQmFyKyc8L2Rpdj4nOicnOwogICAgY29uc3QgaGVpZ2h0TGFiZWw9c2hvd0g/JyYjOTY2MDsgSGVpZ2h0IFByb2ZpbGUnKyhwZWFrRnQ+MD8nICZtaWRkb3Q7IFBlYWsgJytwZWFrRnQrJ2Z0JzonJyk6JyYjOTY1NDsgSGVpZ2h0IFByb2ZpbGUnKyhwZWFrRnQ+MD8nICZtaWRkb3Q7IFBlYWsgJytwZWFrRnQrJ2Z0Jysob3ZlcjQwMD8nICYjOTg4ODsnOicgJiMxMDAwMzsnKTonICYjODIxMjsgdGFwIHRvIGVudGVyJyk7CiAgICBjb25zdCByZW1vdmVGbGlnaHRCdG49ZmxpZ2h0cy5sZW5ndGg+MT8nPGJ1dHRvbiBvbmNsaWNrPSJyZW1vdmVGbGlnaHQoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJykiIHN0eWxlPSJjb2xvcjojOTRhM2I4O2JhY2tncm91bmQ6bm9uZTtib3JkZXI6bm9uZTtjdXJzb3I6cG9pbnRlcjtmb250LXNpemU6MTZweDtsaW5lLWhlaWdodDoxIj4mIzIxNTs8L2J1dHRvbj4nOicnOwogICAgcmV0dXJuICc8ZGl2IGNsYXNzPSJmbGlnaHQtcm93Ij4nCiAgICAgICsnPGRpdiBjbGFzcz0iZmxpZ2h0LXJvdy1oZWFkZXIiPjxzcGFuIHN0eWxlPSJjb2xvcjojOTRhM2I4O2ZvbnQtd2VpZ2h0OjgwMCI+RmxpZ2h0ICcrKGlkeCsxKSsnPC9zcGFuPicKICAgICAgKyc8aW5wdXQgdHlwZT0idGV4dCIgdmFsdWU9IicrZXNjKGZsLmxhYmVsKSsnIiBwbGFjZWhvbGRlcj0iTGFiZWwgKG9wdGlvbmFsKSIgb25pbnB1dD0idXBkYXRlRmxpZ2h0KFwnJytyYShycGEpKydcJywnK2ZsLmlkKycsXCdsYWJlbFwnLHRoaXMudmFsdWUpIiBzdHlsZT0iZmxleDoxO21hcmdpbjowIDhweDtib3JkZXI6bm9uZTtib3JkZXItYm90dG9tOjFweCBzb2xpZCAjZTJlOGYwO2JvcmRlci1yYWRpdXM6MDtwYWRkaW5nOjJweCA0cHg7Zm9udC1zaXplOjEycHg7YmFja2dyb3VuZDp0cmFuc3BhcmVudCI+JwogICAgICArcmVtb3ZlRmxpZ2h0QnRuKyc8L2Rpdj4nCiAgICAgICsnPGRpdiBjbGFzcz0iZmxpZ2h0LXJvdy1ib2R5Ij48ZGl2PjxsYWJlbD5EdXJhdGlvbiAobWlucyk8L2xhYmVsPjxpbnB1dCB0eXBlPSJudW1iZXIiIHZhbHVlPSInK2VzYyhmbC5kdXJhdGlvbikrJyIgbWluPSIwIiBwbGFjZWhvbGRlcj0iMCIgb25pbnB1dD0idXBkYXRlRmxpZ2h0KFwnJytyYShycGEpKydcJywnK2ZsLmlkKycsXCdkdXJhdGlvblwnLHRoaXMudmFsdWUpIiBzdHlsZT0iZm9udC1mYW1pbHk6bW9ub3NwYWNlO2ZvbnQtd2VpZ2h0OjcwMCI+PC9kaXY+JwogICAgICArJzxkaXY+PGxhYmVsPkJhdHRlcmllcyBVc2VkPC9sYWJlbD48aW5wdXQgdHlwZT0idGV4dCIgbGlzdD0iJytkbElkKyciIHZhbHVlPSInK2VzYyhmbC5iYXR0ZXJpZXMpKyciIHBsYWNlaG9sZGVyPSJCYXR0ZXJ5IElEKHMpJiM4MjMwOyIgb25pbnB1dD0idXBkYXRlRmxpZ2h0KFwnJytyYShycGEpKydcJywnK2ZsLmlkKycsXCdiYXR0ZXJpZXNcJyx0aGlzLnZhbHVlKSI+PC9kaXY+PC9kaXY+JwogICAgICArJzxidXR0b24gY2xhc3M9ImhlaWdodHMtdG9nZ2xlIiBpZD0iaHQtJytrZXkrJy0nK2ZsLmlkKyciIG9uY2xpY2s9InRvZ2dsZUhlaWdodHMoXCcnK3JhKHJwYSkrJ1wnLCcrZmwuaWQrJykiPiYjMTI4MjA4OyAnK2hlaWdodExhYmVsKyc8L2J1dHRvbj4nCiAgICAgICtoZWlnaHRzUGFuZWwrJzwvZGl2Pic7CiAgfSkuam9pbignJyk7CiAgaWYoTWF0aC5hYnMod2luZG93LnNjcm9sbFkta2VlcFkpPjEpd2luZG93LnNjcm9sbFRvKDAsa2VlcFkpOwogIHVwZGF0ZVN0YXR1cygpOwp9CgpmdW5jdGlvbiBwZWFrQmFySHRtbChwZWFrRnQpewogIGNvbnN0IG92ZXI0MDA9cGVha0Z0PjQwMDsKICByZXR1cm4gcGVha0Z0PjA/JzxkaXYgY2xhc3M9InBlYWstYmFyICcrKG92ZXI0MDA/J292ZXInOidvaycpKyciPicrKG92ZXI0MDA/JyYjOTg4ODsnOicmIzEwMDAzOycpKycgUGVhazogJytwZWFrRnQrJ2Z0IEFHTCAoJysocGVha0Z0LzMuMjgxKS50b0ZpeGVkKDApKydtKSAmIzgyMTI7ICcrKG92ZXI0MDA/J0V4Y2VlZHMgNDAwZnQgQUdMJzonV2l0aGluIDQwMGZ0IEFHTCcpKyc8L2Rpdj4nOicnOwp9Ci8vIFR5cGluZyBvbmx5IHVwZGF0ZXMgdGhlIGJpdHMgdGhhdCBkZXBlbmQgb24gdGhlIHZhbHVlIOKAlCB0aGUgaW5wdXRzIHRoZW1zZWx2ZXMgYXJlIG5ldmVyIHJlYnVpbHQsCi8vIHNvIGZvY3VzIGFuZCBzY3JvbGwgcG9zaXRpb24gc3RheSBwdXQuCmZ1bmN0aW9uIHJlZnJlc2hGbGlnaHRNZXRhKHJwYSxmKXsKICBjb25zdCBrZXk9cnBhS2V5KHJwYSksc2Vncz0oZi5zZWdtZW50cyYmZi5zZWdtZW50cy5sZW5ndGgpP2Yuc2VnbWVudHM6REVGQVVMVF9TRUdTKCk7CiAgY29uc3QgcGVha0Z0PU1hdGgubWF4KDAsLi4uc2Vncy5tYXAocz0+cGFyc2VGbG9hdChzLm1heEZ0KXx8MCkpLG92ZXI0MDA9cGVha0Z0PjQwMDsKICBzZWdzLmZvckVhY2goc2VnPT57CiAgICBjb25zdCBtYXhWPXBhcnNlRmxvYXQoc2VnLm1heEZ0KXx8MCxoYXNNYXg9c2VnLm1heEZ0IT09Jycsb3Zlcj1oYXNNYXgmJm1heFY+NDAwOwogICAgY29uc3QgYmQ9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2JkLScra2V5KyctJytmLmlkKyctJytzZWcuaWQpOwogICAgaWYoYmQpYmQuaW5uZXJIVE1MPWhhc01heD8ob3Zlcj8nPHNwYW4gY2xhc3M9ImJhZGdlLW92ZXIiPiYjOTg4ODsgJmd0OzQwMGZ0PC9zcGFuPic6JzxzcGFuIGNsYXNzPSJiYWRnZS1vayI+JiMxMDAwMzsgJiM4ODA0OzQwMGZ0PC9zcGFuPicpOic8c3BhbiBzdHlsZT0iY29sb3I6I2NiZDVlMSI+JiM4MjEyOzwvc3Bhbj4nOwogICAgY29uc3QgbXg9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ214LScra2V5KyctJytmLmlkKyctJytzZWcuaWQpOwogICAgaWYobXgpbXguY2xhc3NMaXN0LnRvZ2dsZSgnb3Zlcicsb3Zlcik7CiAgfSk7CiAgY29uc3QgcGs9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ3BrLScra2V5KyctJytmLmlkKTtpZihwaylway5pbm5lckhUTUw9cGVha0Jhckh0bWwocGVha0Z0KTsKICBjb25zdCBodD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnaHQtJytrZXkrJy0nK2YuaWQpOwogIGlmKGh0KWh0LmlubmVySFRNTD0nJiMxMjgyMDg7ICcrKGYuc2hvd0hlaWdodHM/JyYjOTY2MDsgSGVpZ2h0IFByb2ZpbGUnKyhwZWFrRnQ+MD8nICZtaWRkb3Q7IFBlYWsgJytwZWFrRnQrJ2Z0JzonJyk6JyYjOTY1NDsgSGVpZ2h0IFByb2ZpbGUnKyhwZWFrRnQ+MD8nICZtaWRkb3Q7IFBlYWsgJytwZWFrRnQrJ2Z0Jysob3ZlcjQwMD8nICYjOTg4ODsnOicgJiMxMDAwMzsnKTonICYjODIxMjsgdGFwIHRvIGVudGVyJykpOwogIHVwZGF0ZVN0YXR1cygpOwp9CgpmdW5jdGlvbiB0b2dnbGVIZWlnaHRzKHJwYSxpZCl7Y29uc3QgZj1zdGF0ZS5ycGFMb2dzW3JwYV0uZmxpZ2h0cy5maW5kKHg9PnguaWQ9PT1pZCk7aWYoZil7Zi5zaG93SGVpZ2h0cz0hZi5zaG93SGVpZ2h0cztyZW5kZXJGbGlnaHRzKHJwYSk7fX0KZnVuY3Rpb24gYWRkRmxpZ2h0KHJwYSl7c3RhdGUucnBhTG9nc1tycGFdLmZsaWdodHMucHVzaCh7aWQ6RGF0ZS5ub3coKSxsYWJlbDonJyxkdXJhdGlvbjonJyxiYXR0ZXJpZXM6Jycsc2hvd0hlaWdodHM6ZmFsc2Usc2VnbWVudHM6REVGQVVMVF9TRUdTKCl9KTtyZW5kZXJGbGlnaHRzKHJwYSk7fQpmdW5jdGlvbiByZW1vdmVGbGlnaHQocnBhLGlkKXtpZihzdGF0ZS5ycGFMb2dzW3JwYV0uZmxpZ2h0cy5sZW5ndGg8PTEpcmV0dXJuO3N0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzPXN0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzLmZpbHRlcihmPT5mLmlkIT09aWQpO3JlbmRlckZsaWdodHMocnBhKTt9CmZ1bmN0aW9uIHVwZGF0ZUZsaWdodChycGEsaWQsZmllbGQsdmFsKXtjb25zdCBmPXN0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzLmZpbmQoeD0+eC5pZD09PWlkKTtpZihmKXtmW2ZpZWxkXT12YWw7dXBkYXRlU3RhdHVzKCk7fX0KZnVuY3Rpb24gdXBkYXRlU2VnKHJwYSxmbGlnaHRJZCxzZWdJZCxmaWVsZCx2YWwpewogIGNvbnN0IGY9c3RhdGUucnBhTG9nc1tycGFdLmZsaWdodHMuZmluZCh4PT54LmlkPT09ZmxpZ2h0SWQpO2lmKCFmKXJldHVybjsKICBpZighZi5zZWdtZW50c3x8IWYuc2VnbWVudHMubGVuZ3RoKWYuc2VnbWVudHM9REVGQVVMVF9TRUdTKCk7CiAgY29uc3Qgc2VnPWYuc2VnbWVudHMuZmluZChzPT5zLmlkPT09c2VnSWQpOwogIGlmKHNlZylzZWdbZmllbGRdPShmaWVsZD09PSd1c2VSYW5nZScpPyh2YWw9PT10cnVlfHx2YWw9PT0ndHJ1ZScpOnZhbDsKICBpZihmaWVsZD09PSd1c2VSYW5nZScpcmVuZGVyRmxpZ2h0cyhycGEpOyBlbHNlIHJlZnJlc2hGbGlnaHRNZXRhKHJwYSxmKTsKfQpmdW5jdGlvbiBhZGRTZWcocnBhLGZsaWdodElkKXtjb25zdCBmPXN0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzLmZpbmQoeD0+eC5pZD09PWZsaWdodElkKTtpZihmKXtpZighZi5zZWdtZW50cylmLnNlZ21lbnRzPURFRkFVTFRfU0VHUygpO2Yuc2VnbWVudHMucHVzaCh7aWQ6RGF0ZS5ub3coKSxuYW1lOidOZXcgU2VnbWVudCcsbWF4RnQ6JycsbWluRnQ6JycsdXNlUmFuZ2U6ZmFsc2V9KTtyZW5kZXJGbGlnaHRzKHJwYSk7fX0KZnVuY3Rpb24gcmVtb3ZlU2VnKHJwYSxmbGlnaHRJZCxzZWdJZCl7Y29uc3QgZj1zdGF0ZS5ycGFMb2dzW3JwYV0uZmxpZ2h0cy5maW5kKHg9PnguaWQ9PT1mbGlnaHRJZCk7aWYoZiYmZi5zZWdtZW50cyYmZi5zZWdtZW50cy5sZW5ndGg+MSl7Zi5zZWdtZW50cz1mLnNlZ21lbnRzLmZpbHRlcihzPT5zLmlkIT09c2VnSWQpO3JlbmRlckZsaWdodHMocnBhKTt9fQpmdW5jdGlvbiByZXNldFNlZ3MocnBhLGZsaWdodElkKXtjb25zdCBmPXN0YXRlLnJwYUxvZ3NbcnBhXS5mbGlnaHRzLmZpbmQoeD0+eC5pZD09PWZsaWdodElkKTtpZihmKXtmLnNlZ21lbnRzPURFRkFVTFRfU0VHUygpO3JlbmRlckZsaWdodHMocnBhKTt9fQoKLy8gQnVpbGQgcGVyLVJQQSBmbGlnaHQgc2VjdGlvbnMKY29uc3QgcnBhQ29udGFpbmVyID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ3JwYS1zZWN0aW9ucycpOwooam9iRGF0YS5ycGFUeXBlcyB8fCBbXSkuZm9yRWFjaChycGEgPT4gewogIHN0YXRlLnJwYUxvZ3NbcnBhXSA9IHsgZmxpZ2h0czogW3sgaWQ6IDEsIGxhYmVsOiAnJywgZHVyYXRpb246ICcnLCBiYXR0ZXJpZXM6ICcnLCBzaG93SGVpZ2h0czogZmFsc2UsIHNlZ21lbnRzOiBERUZBVUxUX1NFR1MoKSB9XSB9OwogIGNvbnN0IGJhdHRzID0gKGJhdHRPcHRzW3JwYV0gfHwgW10pOwogIGNvbnN0IGRhdGFsaXN0SWQgPSAnYmF0dHMtJyArIHJwYUtleShycGEpOwoKICBjb25zdCBkbCA9IGRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ2RhdGFsaXN0Jyk7CiAgZGwuaWQgPSBkYXRhbGlzdElkOwogIGJhdHRzLmZvckVhY2goYiA9PiB7IGNvbnN0IG8gPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KCdvcHRpb24nKTsgby52YWx1ZSA9IGI7IGRsLmFwcGVuZENoaWxkKG8pOyB9KTsKICBkb2N1bWVudC5ib2R5LmFwcGVuZENoaWxkKGRsKTsKCiAgY29uc3Qgc2VjID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnZGl2Jyk7CiAgc2VjLmNsYXNzTmFtZSA9ICdzZWN0aW9uJzsKICBzZWMuaW5uZXJIVE1MID0gJzxkaXYgY2xhc3M9InNlY3Rpb24taGVhZGVyIiBzdHlsZT0iYmFja2dyb3VuZDojMWUyOTNiO2NvbG9yOndoaXRlO2xldHRlci1zcGFjaW5nOjAuM3B4O2ZvbnQtc2l6ZToxMnB4Ij4nICsgcnBhICsgJyAmIzgyMTI7IEZsaWdodCBMb2c8L2Rpdj4nCiAgICArICc8ZGl2IGNsYXNzPSJzZWN0aW9uLWJvZHkiPjxkaXYgaWQ9ImZsaWdodHMtJyArIHJwYUtleShycGEpICsgJyI+PC9kaXY+JwogICAgKyAnPGJ1dHRvbiBjbGFzcz0iYWRkLWZsaWdodC1idG4iIG9uY2xpY2s9ImFkZEZsaWdodChcJycgKyByYShycGEpICsgJ1wnKSI+KyBBZGQgRmxpZ2h0PC9idXR0b24+PC9kaXY+JzsKICBycGFDb250YWluZXIuYXBwZW5kQ2hpbGQoc2VjKTsKICByZW5kZXJGbGlnaHRzKHJwYSk7Cn0pOwoKZnVuY3Rpb24gdXBkYXRlU3RhdHVzKCkgewogIGNvbnN0IGhhc1RpbWUgPSBPYmplY3QudmFsdWVzKHN0YXRlLnJwYUxvZ3MpLnNvbWUociA9PiByLmZsaWdodHMuc29tZShmID0+IHBhcnNlSW50KGYuZHVyYXRpb24pID4gMCkpOwogIGNvbnN0IGhhc0luaXRpYWxzID0gISFzdGF0ZS5vbnNpdGVWYWxpZGF0aW9uSW5pdGlhbHMudHJpbSgpOwogIGNvbnN0IGhhc1JQID0gISFzdGF0ZS5jcmV3UlAudHJpbSgpOwogIGNvbnN0IHBhcnRzID0gW107CiAgaWYgKCFoYXNJbml0aWFscykgcGFydHMucHVzaCgnb25zaXRlIGluaXRpYWxzJyk7CiAgaWYgKCFoYXNSUCkgcGFydHMucHVzaCgncHJpbWFyeSBSUCBuYW1lJyk7CiAgaWYgKCFoYXNUaW1lKSBwYXJ0cy5wdXNoKCdhdCBsZWFzdCBvbmUgZmxpZ2h0IGR1cmF0aW9uJyk7CiAgY29uc3QgZWwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnc3VibWl0LXN0YXR1cycpOwogIGlmIChwYXJ0cy5sZW5ndGggPT09IDApIHsgZWwudGV4dENvbnRlbnQgPSAn4pyFIFJlYWR5IHRvIGRvd25sb2FkJzsgZWwuc3R5bGUuY29sb3IgPSAnIzE2YTM0YSc7IH0KICBlbHNlIHsgZWwudGV4dENvbnRlbnQgPSAnU3RpbGwgbmVlZGVkOiAnICsgcGFydHMuam9pbignLCAnKTsgZWwuc3R5bGUuY29sb3IgPSAnIzY0NzQ4Yic7IH0KfQoKZnVuY3Rpb24gZG93bmxvYWRMb2coKSB7CiAgWyd3ZWF0aGVyRGV0YWlscycsJ29uc2l0ZVZhbGlkYXRpb25Jbml0aWFscycsJ3BsYW5uaW5nRXJyb3JzJywnY29uZHVjdGVkQ2hhbmdlcycsJ2RlZmVjdHMnLCdjb21tZW50cycsJ2NyZXdSUCcsJ2NyZXdTZWNvbmRSUCcsJ2NyZXdPYnNlcnZlciddLmZvckVhY2goaWQgPT4gewogICAgY29uc3QgZWwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7CiAgICBpZiAoZWwpIHN0YXRlW2lkXSA9IGVsLnZhbHVlOwogIH0pOwogIGNvbnN0IG91dHB1dCA9IHsKICAgIF90eXBlOiAnd2RmcHZfY3Jld19sb2cnLCBfdmVyc2lvbjogMSwKICAgIGpvYklkZW50aWZpZXI6IGpvYkRhdGEuaWRlbnRpZmllciwgam9iVGl0bGU6IGpvYkRhdGEudGl0bGUsCiAgICBleHBvcnRlZEF0OiBuZXcgRGF0ZSgpLnRvSVNPU3RyaW5nKCksCiAgICBsb2c6IHsKICAgICAgd2VhdGhlck1lZXRzTGltaXRhdGlvbnM6IHN0YXRlLndlYXRoZXJNZWV0c0xpbWl0YXRpb25zLAogICAgICB3ZWF0aGVyRGV0YWlsczogc3RhdGUud2VhdGhlckRldGFpbHMsCiAgICAgIG9uc2l0ZVZhbGlkYXRpb25Jbml0aWFsczogc3RhdGUub25zaXRlVmFsaWRhdGlvbkluaXRpYWxzLAogICAgICBwbGFubmluZ0Vycm9yczogc3RhdGUucGxhbm5pbmdFcnJvcnMsCiAgICAgIGNvbmR1Y3RlZElBVzogc3RhdGUuY29uZHVjdGVkSUFXLAogICAgICBjb25kdWN0ZWRDaGFuZ2VzOiBzdGF0ZS5jb25kdWN0ZWRDaGFuZ2VzLAogICAgICBzZXJ2aWNlYWJsZUF0RW5kOiBzdGF0ZS5zZXJ2aWNlYWJsZUF0RW5kLAogICAgICBkZWZlY3RzOiBzdGF0ZS5kZWZlY3RzLAogICAgICBjb21tZW50czogc3RhdGUuY29tbWVudHMsCiAgICAgIGNyZXdSUDogc3RhdGUuY3Jld1JQLAogICAgICBjcmV3U2Vjb25kUlA6IHN0YXRlLmNyZXdTZWNvbmRSUCwKICAgICAgY3Jld09ic2VydmVyOiBzdGF0ZS5jcmV3T2JzZXJ2ZXIsCiAgICAgIHJwYUxvZ3M6IHN0YXRlLnJwYUxvZ3MsCiAgICB9CiAgfTsKICBjb25zdCBibG9iID0gbmV3IEJsb2IoW0pTT04uc3RyaW5naWZ5KG91dHB1dCwgbnVsbCwgMildLCB7IHR5cGU6ICdhcHBsaWNhdGlvbi9qc29uJyB9KTsKICBjb25zdCBhID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnYScpOwogIGEuaHJlZiA9IFVSTC5jcmVhdGVPYmplY3RVUkwoYmxvYik7CiAgYS5kb3dubG9hZCA9ICdjcmV3LWxvZy0nICsgKGpvYkRhdGEuaWRlbnRpZmllciB8fCAnam9iJykgKyAnLmpzb24nOwogIGEuY2xpY2soKTsKICBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnc3VjY2Vzcy1iYW5uZXInKS5zdHlsZS5kaXNwbGF5ID0gJ2Jsb2NrJzsKICB3aW5kb3cuc2Nyb2xsVG8oeyB0b3A6IDAsIGJlaGF2aW9yOiAnc21vb3RoJyB9KTsKfQoKdXBkYXRlU3RhdHVzKCk7Cg==');document.head.appendChild(_s);})();
-${'<'}/script>
-</body>
-</html>`;
+            const ops = jsa.operationTypes || [];
+            const checks = PREFLIGHT_CHECKS.map(g => ({ id: g.id, title: g.title, ops: g.ops, rel: !g.ops || g.ops.some(o => ops.includes(o)), items: g.items.map(it => ({ id: it.id, title: it.title, text: it.text })) }));
+            return { jobData, battOpts, checks };
+          };
+          // v7.1: send the crew form to a phone as a link (job details travel inside the link) or, offline, as a file
+          const [phoneSend, setPhoneSend] = useState(null);
+          const openSendToPhone = async () => {
+            if (!(overview.rpaTypes || []).length && !window.confirm('No RPA is selected in Section 1, so the phone form will have no flight log section. Send it anyway?')) return;
+            const title = getOpTitle(overview), company = (db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA', payload = crewPayload();
+            const html = crewFormHtml(title, company, payload);
+            const file = new File([html], `crew-log-${overview.identifier || 'job'}.html`, { type: 'text/html' });
+            const hosted = /^https?:$/.test(location.protocol);
+            let link = '', qr = '';
+            if (hosted) {
+              link = location.origin + location.pathname + '#crew=' + (await crewLinkEncode(crewLinkPack(title, company, payload)));
+              try { const q = qrcode(0, 'L'); q.addData(link, 'Byte'); q.make(); qr = q.createSvgTag({ cellSize: 3, margin: 2, scalable: true }); } catch (e) { qr = ''; }
+            }
+            setPhoneSend({ title, link, qr, file, copied: false });
+          };
+          const generateCrewLog = () => {
+            const title = getOpTitle(overview);
+            const html = crewFormHtml(title, (db.companyProfile && db.companyProfile.name) || 'Dream Planner RPA', crewPayload());
             const blob = new Blob([html], { type: 'text/html' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -8998,6 +9049,46 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               <WdProgressOverlay />
+              {/* v7.1: send the crew form to a phone */}
+              {phoneSend && (() => {
+                const ps = phoneSend, close = () => setPhoneSend(null);
+                const body = `Crew log for ${ps.title}. Open this on your phone, fill in the pre-flight checks and flights, then tap "Send completed log back":\n${ps.link}`;
+                const shareFile = async () => { try { await navigator.share({ files: [ps.file], title: 'Crew log', text: 'Crew log for ' + ps.title + '. Open the file in your browser, fill it in, then send the completed log back.' }); } catch (e) {} };
+                const canShareFile = typeof navigator !== 'undefined' && navigator.canShare && (() => { try { return navigator.canShare({ files: [ps.file] }); } catch (e) { return false; } })();
+                const dl = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(ps.file); a.download = ps.file.name; a.click(); };
+                const btn = 'flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold';
+                return (
+                  <div className="fixed inset-0 z-[4900] bg-slate-900/60 flex items-stretch sm:items-center justify-center p-0 sm:p-4 print:hidden" data-testid="send-phone" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+                    <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-lg flex flex-col h-[100dvh] sm:h-auto sm:max-h-[calc(100dvh-2rem)]">
+                      <div className="flex items-center gap-3 px-4 sm:px-5 py-2 border-b border-slate-200 shrink-0" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
+                        <h2 className="font-bold text-slate-800 flex-1"><i className="fa-solid fa-mobile-screen-button text-indigo-600 mr-2"></i>Send to phone</h2>
+                        <button type="button" onClick={close} aria-label="Close" className="flex items-center gap-1.5 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-10 text-sm font-semibold"><i className="fa-solid fa-xmark text-lg"></i><span>Close</span></button>
+                      </div>
+                      <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 min-h-0 text-sm text-slate-700">
+                        <p>The pilot or spotter fills in the <b>pre-flight checklist</b>, Part A/B and their <b>flights</b> on their phone, then taps <b>Send completed log back</b>. You add it with <b>Flight Log › Import log</b>.</p>
+                        {ps.link ? (<>
+                          {ps.qr ? <div className="flex flex-col items-center gap-1"><div data-phone-qr="1" className="w-60 h-60 p-2 bg-white border border-slate-200 rounded-xl [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: ps.qr }} /><div className="text-xs text-slate-500">Scan with the phone's camera</div></div>
+                            : <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">This job's link is too long for a QR code. Text or email it instead.</div>}
+                          <div className="grid grid-cols-2 gap-2">
+                            <a data-phone-sms="1" href={'sms:?&body=' + encodeURIComponent(body)} className={btn + ' bg-indigo-600 hover:bg-indigo-700 text-white'}><i className="fa-solid fa-comment-sms"></i>Text it</a>
+                            <a href={'mailto:?subject=' + encodeURIComponent('Crew log: ' + ps.title) + '&body=' + encodeURIComponent(body)} className={btn + ' border border-slate-300 hover:bg-slate-50'}><i className="fa-solid fa-envelope"></i>Email it</a>
+                            <button type="button" data-phone-copy="1" onClick={() => { try { navigator.clipboard.writeText(ps.link); setPhoneSend(p => ({ ...p, copied: true })); } catch (e) {} }} className={btn + ' border border-slate-300 hover:bg-slate-50'}><i className="fa-solid fa-copy"></i>{ps.copied ? 'Copied' : 'Copy link'}</button>
+                            {typeof navigator !== 'undefined' && navigator.share ? <button type="button" onClick={() => navigator.share({ title: 'Crew log', text: 'Crew log for ' + ps.title, url: ps.link }).catch(() => {})} className={btn + ' border border-slate-300 hover:bg-slate-50'}><i className="fa-solid fa-share-nodes"></i>Share…</button>
+                              : <button type="button" onClick={dl} className={btn + ' border border-slate-300 hover:bg-slate-50'}><i className="fa-solid fa-download"></i>Download file</button>}
+                          </div>
+                          <p className="text-[11px] text-slate-500"><i className="fa-solid fa-lock mr-1"></i>The job details (name, date, location, client, aircraft, battery names) travel inside the link itself and aren't stored on a server, so anyone you send the link to can see them. The phone keeps what's typed if the page reloads. Cloud-synced jobs will replace this once crew sign in.</p>
+                        </>) : (<>
+                          <p className="text-xs text-slate-500">This offline copy can't make a link, so send the form as a file. It opens in any phone browser.</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {canShareFile && <button type="button" onClick={shareFile} className={btn + ' bg-indigo-600 hover:bg-indigo-700 text-white'}><i className="fa-solid fa-share-nodes"></i>Share file…</button>}
+                            <button type="button" onClick={dl} className={btn + ' border border-slate-300 hover:bg-slate-50'}><i className="fa-solid fa-download"></i>Download file</button>
+                          </div>
+                        </>)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               {/* v6.8: sign in first (hosted) */}
               {showGate && (
                 <div className="fixed inset-0 z-[4880] overflow-y-auto print:hidden" data-testid="gate" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
@@ -12702,6 +12793,9 @@ View in the Database & Settings tab.`);
                             return (<>
                               <div className="flex items-center gap-3 flex-wrap">
                                 <h3 className="text-sm font-bold text-indigo-900 uppercase tracking-wider flex-1"><i className="fa-solid fa-list-check mr-2"></i>Pre-Flight Checklist <span className="normal-case font-normal text-slate-500 tracking-normal">(optional)</span></h3>
+                                <button type="button" data-pfc-checkall="1" onClick={() => setPf(cur => { const items = { ...(cur.items || {}) }; PREFLIGHT_CHECKS.forEach(g => { const rel = !g.ops || g.ops.some(o => ops.includes(o)); g.items.forEach(it => { const k = g.id + '.' + it.id; if (!items[k]) items[k] = rel ? 'done' : 'na'; }); }); return { ...cur, enabled: true, items }; })}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"><i className="fa-solid fa-check-double"></i>Check all</button>
+                                <button type="button" data-pfc-phone="1" onClick={openSendToPhone} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-300 bg-white hover:bg-indigo-50 text-indigo-800 text-sm font-semibold"><i className="fa-solid fa-mobile-screen-button"></i>Send to phone</button>
                                 <label className="inline-flex items-center gap-2 text-sm font-medium text-indigo-900 cursor-pointer">
                                   <input type="checkbox" data-pfc-enable="1" checked={!!pf.enabled} onChange={() => setPf(cur => ({ ...cur, enabled: !cur.enabled }))} className="rounded" />
                                   Include in this job &amp; the PDF
@@ -12713,7 +12807,7 @@ View in the Database & Settings tab.`);
                                 <div className="mt-3 space-y-4">
                                   <div className="flex items-center gap-3 text-xs text-slate-600">
                                     <span>{doneN} of {allKeys.length} recorded</span>
-                                    <button type="button" data-pfc-all="1" onClick={() => setPf(cur => { const items = { ...(cur.items || {}) }; PREFLIGHT_CHECKS.forEach(g => { const rel = !g.ops || g.ops.some(o => ops.includes(o)); g.items.forEach(it => { const k = g.id + '.' + it.id; if (!items[k]) items[k] = rel ? 'done' : 'na'; }); }); return { ...cur, items }; })} className="bg-indigo-50 border border-indigo-200 text-indigo-800 hover:bg-indigo-100 px-2 py-0.5 rounded font-semibold">Mark the rest done</button>
+                                    <button type="button" data-pfc-all="1" onClick={() => setPf(cur => { const items = { ...(cur.items || {}) }; PREFLIGHT_CHECKS.forEach(g => { const rel = !g.ops || g.ops.some(o => ops.includes(o)); g.items.forEach(it => { const k = g.id + '.' + it.id; if (!items[k]) items[k] = rel ? 'done' : 'na'; }); }); return { ...cur, items }; })} className="bg-indigo-50 border border-indigo-200 text-indigo-800 hover:bg-indigo-100 px-2 py-0.5 rounded font-semibold">Check all</button>
                                     <button type="button" onClick={() => setPf(cur => ({ ...cur, items: {} }))} className="text-slate-500 underline">Clear</button>
                                   </div>
                                   {PREFLIGHT_CHECKS.map(g => {
@@ -12906,6 +13000,7 @@ View in the Database & Settings tab.`);
                             {/* Crew log share / import */}
                             <div className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 print:hidden">
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Crew</span>
+                              <button type="button" data-crew-phone="1" onClick={openSendToPhone} title="Send the crew form to a pilot's or spotter's phone" className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white"><i className="fa-solid fa-mobile-screen-button text-[10px]"></i> Send to phone</button>
                               <button onClick={generateCrewLog} title="Generate a standalone HTML form for your crew member to fill out and return"
                                 className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md bg-violet-100 text-violet-700 hover:bg-violet-200 transition-colors">
                                 <i className="fa-solid fa-arrow-up-from-bracket text-[10px]"></i> Share log
@@ -14043,8 +14138,8 @@ View in the Database & Settings tab.`);
           );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(
+        const root = window.__WD_CREW_MODE ? null : ReactDOM.createRoot(document.getElementById('root'));
+        if (root) root.render(
           <ErrorBoundary>
             <FlightRecordApp />
           </ErrorBoundary>
