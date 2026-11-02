@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.2';
+        const APP_VERSION = '7.2.1';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4652,6 +4652,8 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
           const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...(db.companyProfile || {}) };
             Object.keys(op).forEach(k => { if (String(op[k] || '').trim()) out[k] = op[k]; }); return out; };
+          // v7.2.1: the company name goes into crew invite emails
+          useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
           const [cloudCrew, setCloudCrew] = useState(0);
           useEffect(() => { const h = () => { const c = window.wdCloud; setCloudCrew(c ? ((c.people || []).length - 1) + (c.invites || []).filter(i => !i.accepted_user_id).length : 0); };
             h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);

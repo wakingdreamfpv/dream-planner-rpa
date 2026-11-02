@@ -138,7 +138,7 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
   useEffect(() => { const h = () => { const c = window.wdCloud; if (c) { setPeople(c.people); setInvites(c.invites); } }; window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
   const invite = async (e) => {
     e.preventDefault(); setBusy(true); setNote(null);
-    const { data, error } = await sb.functions.invoke('invite-user', { body: { ...form, email: form.email.trim().toLowerCase(), redirectTo: location.origin + location.pathname } });
+    const { data, error } = await sb.functions.invoke('invite-user', { body: { ...form, email: form.email.trim().toLowerCase(), company: window.wdCompany || '', redirectTo: location.origin + location.pathname } });
     setBusy(false);
     const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
     if (error || (data && data.error)) setNote({ ok: false, t: fnHelp(msg) || 'Invite failed' });
@@ -264,7 +264,7 @@ function AccountPanel() {
       publish({ isCrp: true, people: p.data || [], invites: i.data || [], refresh, invite });
     };
     const invite = async ({ full_name, email, role }) => {
-      const { data, error } = await sb.functions.invoke('invite-user', { body: { full_name, email: String(email || '').trim().toLowerCase(), role, redirectTo: location.origin + location.pathname } });
+      const { data, error } = await sb.functions.invoke('invite-user', { body: { full_name, email: String(email || '').trim().toLowerCase(), role, company: window.wdCompany || '', redirectTo: location.origin + location.pathname } });
       const msg = error ? ((data && data.error) || error.message) : (data && (data.error || data.message));
       await refresh();
       return (error || (data && data.error)) ? { ok: false, msg: fnHelp(msg) || 'Invite failed' } : { ok: true, msg: msg || 'Invite sent' };
