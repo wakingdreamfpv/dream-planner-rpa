@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.3';
+        const APP_VERSION = '7.4';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8967,6 +8967,133 @@ View in the Database & Settings tab.`);
           const [awaitingInd, setAwaitingInd] = useState(0);
           useEffect(() => { const h = () => setAwaitingInd(window.wdAwaitingCount || 0); h(); window.addEventListener('wd-awaiting', h); return () => window.removeEventListener('wd-awaiting', h); }, []);
           const planFileRef = useRef(null);
+          // ── v7.4 Chunk 2b: cloud jobs ──────────────────────────────────────────────────────────
+          // The account panel does the cloud calls (src/cloud/cloudJobs.js); the planner talks to it with window events.
+          const isCrpCloud = IS_HOSTED && signedIn && auth.role === 'crp' && WD_NS === '';
+          const [cloudReady, setCloudReady] = useState(() => !!window.__wdCloudReady);
+          useEffect(() => { const h = () => setCloudReady(!!window.__wdCloudReady); h(); window.addEventListener('wd-cloud-ready', h); return () => window.removeEventListener('wd-cloud-ready', h); }, []);
+          const lsJson = (k, dflt) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } };
+          const lsJsonSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+          const planCrew = (p) => { const ov = p.overview || {}, ap = p.approval || {}, lg = p.log || {}, out = [];
+            const add = (n, role) => String(n || '').split(/[,;/&]|\band\b/).map(x => x.trim()).filter(Boolean).forEach(name => out.push({ name, role }));
+            add(ov.rpic, 'rpic'); add(ap.rpName, 'rpic'); add(lg.crewRP, 'pilot'); add(lg.crewSecondRP, 'pilot'); add(ov.supportPersonnel, 'observer'); add(lg.crewObserver, 'observer');
+            return out; };
+          const isoDay = (x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x || '')) ? x : null;
+          const cloudJobsList = () => {
+            const rank = { draft: 1, approved: 2, completed: 3 }, best = {};
+            const put = (p, status, when) => { const ov = p.overview || {}; const uid = ov.uid || ('op:' + (p.id || ov.identifier || '')); if (uid === 'op:') return;
+              const cur = best[uid]; if (!cur || rank[status] > rank[cur.status] || (rank[status] === rank[cur.status] && Date.parse(when || 0) > Date.parse(cur.when || 0))) best[uid] = { uid, p, status, when }; };
+            (db.draftPlans || []).forEach(p => put(p, 'draft', p.savedAt));
+            (db.savedPlans || []).forEach(p => put(p, p.status === 'completed' ? 'completed' : 'approved', p.savedAt));
+            (db.completedFlights || []).forEach(p => put(p, 'completed', p.completedAt || p.savedAt));
+            return Object.values(best);
+          };
+          // CRP: every saved draft, approved plan and completed record goes to the cloud, with who is on it
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady) return;
+            const t = setTimeout(() => {
+              const synced = lsJson('wd_cloud_synced', {});
+              cloudJobsList().forEach(({ uid, p, status, when }) => {
+                const sig = status + '|' + (when || '') + '|' + JSON.stringify(planCrew(p));
+                if (synced[uid] === sig) return;
+                const ov = p.overview || {};
+                window.dispatchEvent(new CustomEvent('wd-job-saved', { detail: { uid, sig, opId: ov.identifier || p.id || null, title: getOpTitle(ov) || p.title || '', status,
+                  startDate: isoDay(ov.operationDate), endDate: isoDay(ov.operationEndDate) || isoDay(ov.operationDate), plan: p, crew: planCrew(p) } }));
+              });
+            }, 1200);
+            return () => clearTimeout(t);
+          }, [isCrpCloud, cloudReady, dbReady, db.draftPlans, db.savedPlans, db.completedFlights]); // eslint-disable-line
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const job = cloudJobsList().find(j => j.uid === d.uid); if (!job) return;
+              const synced = lsJson('wd_cloud_synced', {}); synced[d.uid] = job.status + '|' + (job.when || '') + '|' + JSON.stringify(planCrew(job.p)); lsJsonSet('wd_cloud_synced', synced); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h);
+          }); // eslint-disable-line
+          // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady) return;
+            const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
+            const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
+            const all = loggedTimeStats(db.completedFlights);
+            const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
+              return { name, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', flights: x.flights, sec: x.sec + (Number(f.priorMinutes) || 0) * 60 }; });
+            const bnames = [...new Set([...(db.batteries || []), ...Object.values(db.rpaBatteries || {}).flat(), ...Object.keys(all.bat)])];
+            const batteries = bnames.map(name => ({ name, flights: (all.bat[name] || {}).flights || 0, minCell: (all.bat[name] || {}).minCell || null, rpa: (all.bat[name] || {}).rpa || '' }));
+            const records = [...(db.completedFlights || [])].sort((x, y) => Date.parse(y.completedAt || 0) - Date.parse(x.completedAt || 0)).slice(0, 60).map(r => { const st = loggedTimeStats([r]).acft;
+              return { name: getOpTitle(r.overview || {}) || r.title || '', date: (r.overview || {}).operationDate || (r.completedAt || '').slice(0, 10), rpic: (r.overview || {}).rpic || '',
+                flights: Object.values(st).reduce((t, x) => t + x.flights, 0), sec: Object.values(st).reduce((t, x) => t + x.sec, 0) }; });
+            const per = {}; (db.completedFlights || []).forEach(r => { const st = loggedTimeStats([r]); Object.keys(st.pil).forEach(pn => Object.entries(st.acft).forEach(([rpa, x]) => {
+              const k = pn + '\u0000' + rpa, o = per[k] = per[k] || { name: pn, rpa, flights: 0, seconds: 0, last: 0 }; o.flights += x.flights; o.seconds += x.sec; o.last = Math.max(o.last, x.last || 0); })); });
+            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights]); // eslint-disable-line
+          // CRP: flights crew logged in the cloud, and access requests
+          const [crewFlights, setCrewFlights] = useState(() => window.wdCrewFlights || null);
+          const [accessReqs, setAccessReqs] = useState(() => window.wdAccessRequests || null);
+          const [importedFl, setImportedFl] = useState(() => lsJson('wd_cloud_imported', []));
+          useEffect(() => { const h1 = () => setCrewFlights(window.wdCrewFlights || null), h2 = () => setAccessReqs(window.wdAccessRequests || null);
+            window.addEventListener('wd-crew-flights', h1); window.addEventListener('wd-access-requests', h2); h1(); h2();
+            return () => { window.removeEventListener('wd-crew-flights', h1); window.removeEventListener('wd-access-requests', h2); }; }, []);
+          const importCloudFlights = (grp) => {
+            const uid = grp.job && grp.job.plan_uid; const local = cloudJobsList().find(j => j.uid === uid);
+            const inc = { rpaLogs: {} }; grp.flights.forEach(f => { const r = f.rpa || 'RPA'; (inc.rpaLogs[r] = inc.rpaLogs[r] || { flights: [] }).flights.push({ ...(f.flight || {}), crewBy: f.who }); });
+            const finish = () => { let changes = []; setLog(prev => { const m = mergeCrewLog(prev, inc); changes = m.changes; return m.log; });
+              const ids = [...new Set([...importedFl, ...grp.flights.map(f => f.id)])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); setActiveTab('log');
+              setTimeout(() => alert(`Flights from ${grp.who} added to “${grp.name}”.\n\n${changes.join('\n') || 'They were already in the log.'}\n\nCheck them in Section 4, then save the job.`), 200); };
+            if (overview.uid && overview.uid === uid) { finish(); return; }
+            if (!local) { alert(`“${grp.name}” isn't saved on this device, so its flights can't be added here.`); return; }
+            if (dirty && !window.confirm(`Open “${grp.name}” to add the crew's flights? The job that's open now has unsaved changes, which will be lost.`)) return;
+            handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 450);
+          };
+          const cloudAwaiting = () => {
+            const aw = [];
+            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id)).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
+            Object.values(byJob).forEach(g => aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: `${g.flights.length} flight${g.flights.length === 1 ? '' : 's'} logged by ${g.who}`, sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
+            const AREA = { fleet: 'fleet management', batteries: 'battery management', records: 'job records', planning: 'flight planning' };
+            (accessReqs || []).filter(r => r.status === 'requested').forEach(r => aw.push({ kind: 'access', icon: 'fa-key', color: 'text-amber-600', label: `${r.who} asks for ${AREA[r.area] || r.area}`, sub: r.note || 'Access request',
+              cta: 'Grant', act: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'granted' } })),
+              cta2: 'Decline', act2: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'declined' } })) }));
+            return aw;
+          };
+          // Crew: their jobs, hours, company and access, from the cloud
+          const [crewCloud, setCrewCloud] = useState(() => window.wdCrew || null);
+          useEffect(() => { const h = () => setCrewCloud(window.wdCrew || null); h(); window.addEventListener('wd-crew', h); return () => window.removeEventListener('wd-crew', h); }, []);
+          const cjKey = 'wd_cloud_job:' + String(auth.email || '').toLowerCase();
+          const [cloudJob, setCloudJobState] = useState(() => lsJson(cjKey, null));
+          useEffect(() => { setCloudJobState(lsJson(cjKey, null)); }, [cjKey]); // eslint-disable-line
+          const setCloudJob = (v) => { setCloudJobState(v); lsJsonSet(cjKey, v); };
+          const flightKey = (rpa, f) => rpa + '|' + (f.id != null ? f.id : [String(f.label || ''), String(f.duration == null ? '' : f.duration), String(f.batteries || ''), (f.telemetry && f.telemetry.startMs) || ''].join('|'));
+          const cloudLogFlights = (lg) => { const out = []; Object.entries((lg && lg.rpaLogs) || {}).forEach(([rpa, rl]) => ((rl && rl.flights) || []).forEach(f => { if (!crewBlankFlight(f)) out.push({ key: flightKey(rpa, f), rpa, f }); })); return out; };
+          const openCloudJob = (j) => {
+            if (dirty && !window.confirm(`Open “${j.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
+            window.dispatchEvent(new CustomEvent('wd-open-cloud-job', { detail: { id: j.id } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {};
+              if (d.error || !d.plan) { alert('Couldn\'t open the job: ' + (d.error || 'no plan saved yet')); return; }
+              const plan = { ...d.plan, title: d.job.title, status: 'draft' };
+              handleLoadPlan(plan, { silent: true });
+              const base = cloudLogFlights(d.plan.log).map(x => x.key);
+              const prev = lsJson(cjKey, null);
+              setCloudJob({ ...d.job, base, sent: prev && prev.id === d.job.id ? (prev.sent || []) : [] });
+              setTimeout(() => setActiveTab(d.job.status === 'completed' ? 'preliminary' : 'log'), 120);
+            };
+            window.addEventListener('wd-load-cloud-job', h); return () => window.removeEventListener('wd-load-cloud-job', h);
+          }); // eslint-disable-line
+          const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
+          const unsentFlights = onCloudJob ? cloudLogFlights(log).filter(x => !(cloudJob.base || []).includes(x.key) && !(cloudJob.sent || []).includes(x.key)) : [];
+          const [pushing, setPushing] = useState(false);
+          const pushCloudFlights = () => {
+            if (!unsentFlights.length) return; setPushing(true);
+            window.dispatchEvent(new CustomEvent('wd-push-flights', { detail: { jobId: cloudJob.id, flights: unsentFlights.map(x => ({ key: x.key, rpa: x.rpa, flight: (() => { const c = JSON.parse(JSON.stringify(x.f)); if (c.telemetry) { delete c.telemetry.altRaw; delete c.telemetry.spdRaw; } return c; })() })) } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {}; setPushing(false);
+              if (!d.ok) { alert('Couldn\'t send your flights: ' + (d.error || 'unknown error') + '\n\nThey are still in your log. Try again when you have signal.'); return; }
+              const cj = lsJson(cjKey, null); if (cj) setCloudJob({ ...cj, sent: [...new Set([...(cj.sent || []), ...(d.keys || [])])] });
+              alert(`${d.sent} flight${d.sent === 1 ? '' : 's'} sent to the CRP. They'll add them to the job record.`); };
+            window.addEventListener('wd-push-result', h); return () => window.removeEventListener('wd-push-result', h);
+          }); // eslint-disable-line
+          const requestAccess = (area) => { const note = window.prompt('Ask the CRP for access. Add a note if you like (optional):', ''); if (note === null) return; window.dispatchEvent(new CustomEvent('wd-request-access', { detail: { area, note } })); };
+
           const buildDashData = () => {
             const today = cToday(), todayIso = cYmd(today);
             const parseLL = (txt) => { const m = String(txt || '').match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/); return m ? { lat: +m[1], lng: +m[2] } : null; };
@@ -9008,6 +9135,7 @@ View in the Database & Settings tab.`);
             comp.sort((x, y) => x.days - y.days);
             // awaiting action
             const aw = [];
+            if (isCrpCloud) aw.push(...cloudAwaiting());
             if (awaitingInd > 0) aw.push({ icon: 'fa-id-card', color: 'text-violet-600', label: `${awaitingInd} pilot induction${awaitingInd === 1 ? '' : 's'} to review`, sub: 'Check, sign and certify', cta: 'Review', act: () => window.dispatchEvent(new Event('wd-open-account')) });
             if (curStarted && curMissing > 0) aw.push({ icon: 'fa-asterisk', color: 'text-rose-500', label: `${curMissing} mandatory item${curMissing === 1 ? '' : 's'} left on “${cur.name}”`, cta: 'Fix', act: () => setActiveTab('preliminary') });
             drafts.forEach(x => { if (x.approved && x.rpName && !x.rpSigned) aw.push({ icon: 'fa-signature', color: 'text-sky-600', label: `RPIC signature pending: ${x.name}`, sub: x.rpName, act: () => openDashJob(x) }); });
@@ -9021,8 +9149,9 @@ View in the Database & Settings tab.`);
             const jl = siteOf(overview, mapData);
             const hr = new Date().getHours(), first = String(auth.name || (db.companyProfile || {}).crpName || '').split(' ')[0];
             return {
+              crewMode: !!isCrewRole, crew: isCrewRole ? crewCloud : null,
               free: isFree, greeting: (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (first ? ', ' + first : ''),
-              company: isFree ? ((overview.operatorProfile || {}).name || '') : ((db.companyProfile || {}).name || ''),
+              company: isFree ? ((overview.operatorProfile || {}).name || '') : isCrewRole ? (((crewCloud || {}).company || {}).name || '') : ((db.companyProfile || {}).name || ''),
               current: { started: curStarted, name: String(overview.operationName || '').trim() },
               jobLoc: jl ? { ...jl, label: (String(overview.operationName || '').trim() || 'Current job') + ' site' } : null,
               nextJob: upcoming[0] || null, drafts, completed, pilots, fleet: fleetRows, compliance: comp, awaiting: aw, batteries, monthly,
@@ -9042,6 +9171,7 @@ View in the Database & Settings tab.`);
             exportBackup: () => handleExportDb(),
             openPlanFile: () => planFileRef.current && planFileRef.current.click(),
             openJob: openDashJob,
+            openCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
           };
           const jumpToDbSection = (id) => {
             const fe = document.querySelector(`[data-dbfold="${id}"]`);
@@ -12818,6 +12948,11 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log</h2>
                       </div>
                       <ReqStrip tab="log" title="to complete the record" />
+                      {onCloudJob && <div data-cloud-push="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-center gap-3 flex-wrap">
+                        <i className="fa-solid fa-cloud-arrow-up text-sky-600 text-lg"></i>
+                        <div className="flex-1 min-w-[12rem] text-sm text-sky-900"><b>Company job.</b> Log your flights below, then send them to the CRP. {unsentFlights.length ? <span data-cloud-unsent={unsentFlights.length}>{unsentFlights.length} flight{unsentFlights.length === 1 ? '' : 's'} not sent yet.</span> : <span data-cloud-unsent="0">Nothing new to send.</span>}</div>
+                        <button type="button" data-cloud-send="1" disabled={!unsentFlights.length || pushing} onClick={pushCloudFlights} className="px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-sm font-semibold"><i className="fa-solid fa-paper-plane mr-1"></i>{pushing ? 'Sending…' : 'Send my flights to the CRP'}</button>
+                      </div>}
 
                       {/* PRINT: Log page title */}
                       <div className="hidden print:flex print-page-title">

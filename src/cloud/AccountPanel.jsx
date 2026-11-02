@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { getSupabase } from './client.js';
 import { cloudAvailable } from './config.js';
 import { PilotInduction, CrpInductions, CrpReview, StatusPill } from './Induction.jsx';
+import { useCloudJobs } from './cloudJobs.js';
 
 const ROLE_LABEL = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
 const ROLE_STYLE = { crp: 'bg-violet-100 text-violet-800', pilot: 'bg-sky-100 text-sky-800', observer: 'bg-emerald-100 text-emerald-800' };
@@ -253,6 +254,8 @@ function AccountPanel() {
     return () => sub && sub.subscription && sub.subscription.unsubscribe();
   }, [sb, loadMe]);
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
+  // v7.4 (Chunk 2b): jobs, crew, shared data and access requests in the cloud
+  useCloudJobs(sb, me);
   // v6.8: the planner routes first-time users by sign-in state and role
   useEffect(() => {
     const v = loading ? { state: 'loading' } : !session ? { state: 'out' }
