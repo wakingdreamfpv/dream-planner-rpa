@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
       html = page(subject,
         P(`<b>${esc(pilot.full_name)}</b> (${esc(pilot.email)}) has completed Part 1 of the pilot induction and signed the declaration.`) +
         P(`Types: ${esc((a.types || []).join(', ') || '—')} · Approvals sought: ${esc((a.approvals || []).map((x: string) => COMPETENCY[x] || x).join(', ') || 'Induction & type only')}`) +
-        P('Open the planner to review it and complete Part 2.'), 'Review the induction', appUrl);
+        P('Open the planner to review it and complete Part 2.'), 'Review the induction', appUrl + '#review-induction=' + rec.id);
     } else if (event === 'induction_certified') {
       if (me.role !== 'crp' || !['certified', 'not_yet_competent'].includes(rec.status)) return json({ error: 'Nothing to send' }, 400);
       to = [pilot.email].filter(Boolean);
@@ -75,13 +75,13 @@ Deno.serve(async (req) => {
         html = page(subject,
           P(`Hi ${esc(pilot.full_name || '')},`) + P('Your induction has been checked and certified by the Chief Remote Pilot.') +
           P((certs || []).map((c: any) => `• ${esc(compLabel(c.competency))}: due again ${esc(c.next_due)}`).join('<br>')) +
-          P('Sign in to the planner to see your record.'), 'Open the planner', appUrl);
+          P('Sign in to the planner to see your record.'), 'Open the planner', appUrl + '#my-induction');
       } else {
         subject = 'Your induction: not yet competent';
         html = page(subject,
           P(`Hi ${esc(pilot.full_name || '')},`) + P('The Chief Remote Pilot has reviewed your induction and recorded it as <b>not yet competent</b> for now.') +
           (crp.notes ? P('Notes: ' + esc(crp.notes)) : '') + P('Talk to the CRP about the next step; you can start a new induction from the planner.'),
-          'Open the planner', appUrl);
+          'Open the planner', appUrl + '#my-induction');
       }
     } else return json({ error: 'Unknown event' }, 400);
 

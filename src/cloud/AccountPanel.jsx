@@ -249,6 +249,19 @@ function AccountPanel() {
     if (session) { try { localStorage.removeItem('wd_edition'); } catch (e) {} }
   }, [loading, session, me]);
   const [toast, setToast] = useState('');
+  // v7.2.4: links from the induction emails open the right screen (#review-induction=<id> for the CRP, #my-induction for the pilot)
+  const readDeep = () => { const h = (typeof location !== 'undefined' && location.hash) || ''; const m = /^#review-induction=([A-Za-z0-9_-]{4,})$/.exec(h); return m ? { review: m[1] } : h === '#my-induction' ? { mine: true } : null; };
+  const [deep, setDeep] = useState(readDeep);
+  useEffect(() => { const h = () => { const d = readDeep(); if (d) setDeep(d); }; window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
+  const [reviewId, setReviewId] = useState(null);
+  useEffect(() => {
+    if (!deep || !me || !me.active) return;
+    // wait until the planner has opened this person's own data space (it may reload once after sign-in)
+    const ns = window.__WD_NS; if (ns !== undefined && (me.role === 'crp' ? ns !== '' : !String(ns).startsWith('crew:'))) return;
+    if (deep.review && me.role === 'crp') { setReviewId(null); setTimeout(() => setReviewId(deep.review), 0); }
+    setOpen(true);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  }, [deep, me]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 5000); return () => clearTimeout(t); }, [toast]);
   // v6.2: share the CRP's view of logins with the planner (Crew & users shows login status and Invite per person)
   useEffect(() => {
@@ -317,7 +330,7 @@ function AccountPanel() {
                   <button type="button" onClick={signOut} className={btn + ' border border-slate-300 text-slate-600'} data-testid="signout">Sign out</button>
                 </div>
                 {me && !me.active && <div className="text-sm bg-amber-50 text-amber-900 border border-amber-200 rounded-lg px-3 py-2" data-testid="inactive-note">Your login isn't active. Ask the CRP to invite or activate you.</div>}
-                {me && me.active && me.role === 'crp' && <CrpInductions sb={sb} me={me} onCount={setAwaiting} />}
+                {me && me.active && me.role === 'crp' && <CrpInductions sb={sb} me={me} onCount={setAwaiting} autoOpenId={inlineCtx ? null : reviewId} />}
                 {me && me.active && me.role === 'crp' && <CrewAdmin sb={sb} me={me} defaultOpen={!!inlineCtx} />}
                 {me && me.active && me.role === 'pilot' && <PilotInduction sb={sb} me={me} />}
                 {me && me.active && me.role !== 'crp' && <MyProfile sb={sb} me={me} onSaved={() => loadMe(session)} />}

@@ -254,8 +254,9 @@ function PilotForm({ sb, me, person, rec, onClose }) {
 }
 
 // ── Part 2: the CRP ────────────────────────────────────────────────────────────────────────────
-export function CrpInductions({ sb, me, onCount }) {
-  const [list, setList] = useState(null), [err, setErr] = useState(''), [open, setOpen] = useState(null);
+export function CrpInductions({ sb, me, onCount, autoOpenId }) {
+  const [list, setList] = useState(null), [err, setErr] = useState(''), [open, setOpen] = useState(autoOpenId || null);
+  useEffect(() => { if (autoOpenId) setOpen(autoOpenId); }, [autoOpenId]);
   const [manual, setManual] = useState(''), [mvMsg, setMvMsg] = useState('');
   const load = useCallback(async () => {
     const { data, error } = await sb.from('signoff_records')
