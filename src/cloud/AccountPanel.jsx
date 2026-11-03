@@ -6,6 +6,7 @@ import { getSupabase } from './client.js';
 import { cloudAvailable } from './config.js';
 import { PilotInduction, CrpInductions, CrpReview, StatusPill } from './Induction.jsx';
 import { useCloudJobs } from './cloudJobs.js';
+import CrewProfile from './CrewProfile.jsx';
 
 const ROLE_LABEL = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
 const ROLE_STYLE = { crp: 'bg-violet-100 text-violet-800', pilot: 'bg-sky-100 text-sky-800', observer: 'bg-emerald-100 text-emerald-800' };
@@ -127,7 +128,7 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
   const [show, setShow] = useState(defaultOpen);
   const [people, setPeople] = useState([]), [invites, setInvites] = useState([]), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [note, setNote] = useState(null);
   const [form, setForm] = useState({ full_name: '', email: '', role: 'pilot' });
-  const [ind, setInd] = useState({}), [review, setReview] = useState(null);
+  const [ind, setInd] = useState({}), [review, setReview] = useState(null), [profileOf, setProfileOf] = useState(null);
   const load = useCallback(async () => {
     const [p, i] = await Promise.all([
       sb.from('profiles').select('id,email,full_name,role,active,created_at').order('full_name'),
@@ -185,7 +186,7 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
           {people.map(p => (
             <div key={p.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 text-sm ${p.active ? '' : 'bg-slate-50 opacity-70'}`} data-crew-row={p.email}>
               <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">{initials(p.full_name, p.email)}</span>
-              <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{p.full_name || '—'}{p.id === me.id && <span className="ml-1 text-xs font-normal text-slate-400">(you)</span>}</div><div className="text-xs text-slate-500 truncate">{p.email}</div></div>
+              <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate"><button type="button" data-crew-profile={p.email} onClick={() => setProfileOf(p)} className="hover:text-violet-700 hover:underline text-left" title="Open their profile: details, induction, hours, jobs and access">{p.full_name || '—'}</button>{p.id === me.id && <span className="ml-1 text-xs font-normal text-slate-400">(you)</span>}</div><div className="text-xs text-slate-500 truncate">{p.email}</div></div>
               <select value={p.role} disabled={p.id === me.id} onChange={e => update(p.id, { role: e.target.value })} className="text-xs border border-slate-300 rounded px-1.5 py-1" title="Role">
                 <option value="pilot">Pilot</option><option value="observer">Observer</option><option value="crp">CRP</option>
               </select>
@@ -199,6 +200,7 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
           ))}
         </div>
       </div>
+      {profileOf && !review && <CrewProfile sb={sb} profile={profileOf} onClose={() => setProfileOf(null)} onReview={(id) => setReview(id)} />}
       {review && <CrpReview sb={sb} me={me} id={review} onClose={() => { setReview(null); load(); }} />}
       {pending.length > 0 && (
         <div>
@@ -254,6 +256,7 @@ function AccountPanel() {
     return () => sub && sub.subscription && sub.subscription.unsubscribe();
   }, [sb, loadMe]);
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
+  useEffect(() => { const h = () => setOpen(false); window.addEventListener('wd-close-account', h); return () => window.removeEventListener('wd-close-account', h); }, []);
   // v7.4 (Chunk 2b): jobs, crew, shared data and access requests in the cloud
   useCloudJobs(sb, me);
   // v7.5.2: the planner needs to know if a pilot has already done their induction (so it stops asking)

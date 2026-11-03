@@ -49,6 +49,35 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const event = String(body.event || '');
 
+    // v7.5.7: the CRP asks crew on a job to fill in the post-flight log
+    if (event === 'log_request') {
+      if (me.role !== 'crp') return json({ error: 'Only the CRP can send this' }, 403);
+      const { data: job } = await admin.from('jobs').select('id, title, op_id, start_date').eq('id', String(body.job_id || '')).single();
+      if (!job) return json({ error: 'Job not found' }, 404);
+      const emails = (Array.isArray(body.emails) ? body.emails : []).map((x: any) => String(x || '').trim().toLowerCase()).filter(Boolean).slice(0, 20);
+      const { data: crew } = await admin.from('job_crew').select('job_role, people:person_id (full_name, email)').eq('job_id', job.id);
+      const onJob: Record<string, any> = {}; (crew || []).forEach((c: any) => { if (c.people?.email) onJob[String(c.people.email).toLowerCase()] = c; });
+      const { data: crpP } = await admin.from('profiles').select('full_name').eq('id', who.user.id).single();
+      const send = emails.filter((e: string) => onJob[e]), skipped = emails.filter((e: string) => !onJob[e]);
+      if (!send.length) return json({ ok: true, sent: 0, skipped, message: 'Nobody selected is on this job in the cloud.' });
+      if (!resendKey) return json({ ok: true, sent: 0, skipped, message: 'Email not set up (RESEND_API_KEY missing)' });
+      const note = String(body.note || '').slice(0, 500);
+      let sent = 0;
+      for (const e of send) {
+        const c = onJob[e], nm = c.people?.full_name || '';
+        const subject3 = `Please fill in the post-flight log: ${job.title || job.op_id || 'your job'}`;
+        const html3 = page(subject3,
+          P(`Hi ${esc(nm.split(' ')[0] || '')},`) +
+          P(`${esc(crpP?.full_name || 'The Chief Remote Pilot')} has asked you to fill in the post-flight log for <b>${esc(job.title || '')}</b>${job.op_id ? ' (' + esc(job.op_id) + ')' : ''}${job.start_date ? ' · ' + esc(job.start_date) : ''}.`) +
+          (note ? P('Note: ' + esc(note)) : '') +
+          P('Open the job, log each flight (length, height, batteries, telemetry if you have it), answer the post-flight questions, then tap <b>Send my log to the CRP</b>.'),
+          'Open the flight log', appUrl + '#crew-job=' + job.id);
+        const r3 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from, to: [e], subject: subject3, html: html3 }) });
+        if (r3.ok) sent++;
+      }
+      return json({ ok: true, sent, skipped });
+    }
     // v7.5.2: a crew member signed as RPIC on a company job → email the CRP(s)
     if (event === 'rpic_signed') {
       const { data: row } = await admin.from('job_flights')

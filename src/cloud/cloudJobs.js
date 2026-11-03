@@ -104,13 +104,25 @@ export function useCloudJobs(sb, me) {
       } catch (err) { emit('wd-cloud-job-fetched', { req: d.req, error: String((err && err.message) || err) }); }
     };
     window.addEventListener('wd-fetch-cloud-job', onFetch);
+    // v7.5.7: ask crew on a job to fill in the post-flight log (the notify function checks they're on the job and emails them)
+    const onRequestLog = async (e) => {
+      const d = e.detail || {};
+      try {
+        const { data: job, error } = await sb.from('jobs').select('id').eq('plan_uid', d.uid).single();
+        if (error || !job) throw error || new Error('Job not in the cloud yet: save it first');
+        const { data, error: fe } = await sb.functions.invoke('notify', { body: { event: 'log_request', job_id: job.id, emails: d.emails || [], note: d.note || '' } });
+        if (fe || (data && data.error)) throw new Error((data && data.error) || fe.message);
+        emit('wd-request-log-result', { ok: true, sent: (data && data.sent) || 0, skipped: (data && data.skipped) || [], message: data && data.message });
+      } catch (err) { emit('wd-request-log-result', { ok: false, error: String((err && err.message) || err) }); }
+    };
+    window.addEventListener('wd-request-log', onRequestLog);
     const onDecide = async (e) => { const d = e.detail || {}; try { await sb.rpc('decide_access', { p_id: d.id, p_status: d.status }); } catch (err) {} refreshInbox(); };
     window.addEventListener('wd-job-saved', onSaved); window.addEventListener('wd-cloud-publish', onPublish); window.addEventListener('wd-decide-access', onDecide);
     window.addEventListener('wd-cloud-refresh', refreshInbox);
     loadPeople().then(refreshInbox); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
     return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish);
-      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
+      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
 
   // ── Crew ─────────────────────────────────────────────────────────────────────────────────────
