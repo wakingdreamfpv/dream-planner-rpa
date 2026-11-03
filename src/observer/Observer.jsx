@@ -1,0 +1,336 @@
+// Chunk 4 (v7.7): EVLOS Class 1 observer sign-off.
+// Three ways in: a one-time QR / link on the observer's own phone (no login), on the CRP's device (works offline,
+// synced later), or a logged-in observer on the job (after reviewing the full plan). The CRP countersigns.
+import React, { useEffect, useMemo, useState } from 'react';
+import qrcode from 'qrcode-generator';
+import SignaturePad, { SignatureView } from '../cloud/SignaturePad.jsx';
+import { getSupabase } from '../cloud/client.js';
+
+export const OBS_TLDR = [
+  'Stand beside the pilot and watch the drone. Nothing else while it flies: no phone, no filming, no radio.',
+  'Call out hazards early: aircraft, birds, people, vehicles, weather, obstacles.',
+  'Say "Area clear" before every take-off and landing, once you have checked.',
+  'Say "Land now" if you lose sight of the drone or anything is unsafe. The pilot lands straight away.',
+];
+export const OBS_DECLARATION = [
+  'The Operations Manual as it applies to my role (s1.3.1)',
+  'Induction for this operation (s1.5.2, G1.1)',
+  'Fitness for duty: no alcohol in the 8 hours before, not fatigued or impaired (s1.7)',
+  'The pre-operation briefing (s2.3.2)',
+  'Standard calls (D6.8)',
+  'Observer duties (D6.4.3, MOS 5.04)',
+  'EVLOS Class 1 observer theory (G6.1.2)',
+];
+export const CRP_CHECKS = [
+  'Eyesight sighted: driver licence or equivalent (D6.4.2)',
+  'The observer will not operate the radio / controls (D6.4.1)',
+  'Practical demonstrated: scanning, calls and hand-over (G6.1.3, G6.3)',
+  'EVLOS brief given, callsign agreed and comms check done (D6.6)',
+];
+const fmtD = (d) => { if (!d) return ''; const x = new Date(d); return isNaN(x) ? String(d) : x.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); };
+const fmtDT = (d) => { const x = new Date(d); return isNaN(x) ? '' : x.toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+const input = 'w-full px-3 py-2.5 border border-slate-300 rounded-lg text-base sm:text-sm bg-white';
+const btn = 'px-4 py-2.5 rounded-xl font-semibold text-sm';
+
+function Tick({ checked, onChange, children, testid }) {
+  return (
+    <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer ${checked ? 'border-emerald-300 bg-emerald-50' : 'border-slate-300 bg-white'}`}>
+      <input type="checkbox" className="mt-1 w-5 h-5 accent-emerald-600 shrink-0" checked={!!checked} onChange={e => onChange(e.target.checked)} data-testid={testid} />
+      <span className="text-sm text-slate-800">{children}</span>
+    </label>
+  );
+}
+
+// Plan summary for an observer (the "simple viewer"): what, where, when, who, the hazards and who to call
+export function JobSummary({ s }) {
+  if (!s) return null;
+  const ov = s.overview || {}, jsa = s.jsa || {}, risks = s.risks || [];
+  const rows = [['Job', s.job && s.job.title], ['Date', fmtD((s.job && s.job.start_date) || ov.operationDate) + (ov.startTime ? ' · ' + ov.startTime + (ov.endTime ? '–' + ov.endTime : '') : '')],
+    ['Location', ov.location], ['RPIC', ov.rpic], ['Aircraft', (ov.rpaTypes || []).join(', ')], ['Max height', ov.maxHeight ? ov.maxHeight + ' ft AGL' : ''],
+    ['Operation', (jsa.operationTypes || []).join(', ')]].filter(r => r[1]);
+  const ec = ((jsa.emergencyContacts && jsa.emergencyContacts.rows) || []).filter(r => r && (r.phone || r.name));
+  return (
+    <div className="space-y-3" data-obs-summary="1">
+      <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm">{rows.map(([k, v]) => <React.Fragment key={k}><dt className="text-slate-500">{k}</dt><dd className="text-slate-800 font-medium">{v}</dd></React.Fragment>)}</dl>
+      {risks.length > 0 && <details className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2" open={risks.length <= 6}>
+        <summary className="text-sm font-semibold text-amber-900 cursor-pointer">Hazards for this job ({risks.length})</summary>
+        <ul className="mt-2 space-y-1.5 text-sm" data-obs-hazards="1">{risks.map((r, i) => <li key={i}><b className="text-slate-800">{r.hazard}</b>{r.controls ? <span className="block text-xs text-slate-600 whitespace-pre-line">{r.controls}</span> : null}</li>)}</ul>
+      </details>}
+      {ec.length > 0 && <div className="text-sm"><div className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Emergency contacts</div>
+        {ec.map((r, i) => <div key={i} className="flex gap-2"><span className="text-slate-500 w-40 shrink-0 truncate">{r.role}</span><span className="text-slate-800">{[r.name, r.phone].filter(Boolean).join(' · ')}</span></div>)}</div>}
+    </div>
+  );
+}
+
+// The observer's part. mode: 'link' (own phone, no login), 'device' (CRP's device), 'login' (signed-in observer)
+export function ObserverPart({ mode, summary, defaults = {}, onSubmit, busy, error, onOpenPlan }) {
+  const [f, setF] = useState(() => ({ name: defaults.name || '', phone: defaults.phone || '', email: defaults.email || '', declaration: false, reviewedPlan: false, sig: null }));
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }));
+  const missing = [!f.name.trim() && 'your name', mode !== 'login' && !f.phone.trim() && 'your phone', mode === 'login' && !f.reviewedPlan && 'confirm you reviewed the plan', !f.declaration && 'the declaration', !f.sig && 'your signature'].filter(Boolean);
+  return (
+    <div className="space-y-4" data-obs-part={mode}>
+      <div className="rounded-xl bg-violet-50 border border-violet-200 p-4">
+        <div className="text-xs font-bold uppercase tracking-wider text-violet-700 mb-1.5">Your job in one minute</div>
+        <ul className="space-y-1.5 text-sm text-violet-950" data-obs-tldr="1">{OBS_TLDR.map((t, i) => <li key={i} className="flex gap-2"><span className="text-violet-500 font-bold">{i + 1}.</span><span>{t}</span></li>)}</ul>
+      </div>
+      {summary && <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">The job</div><JobSummary s={summary} /></div>}
+      <div className="rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Your details</div>
+        <input className={input} placeholder="Full name" value={f.name} onChange={e => set('name', e.target.value)} disabled={mode === 'login'} data-obs-f="name" autoComplete="name" />
+        {mode !== 'login' && <input className={input} placeholder="Mobile" inputMode="tel" value={f.phone} onChange={e => set('phone', e.target.value)} data-obs-f="phone" autoComplete="tel" />}
+        {mode !== 'login' && <input className={input} placeholder="Email (optional)" type="email" value={f.email} onChange={e => set('email', e.target.value)} data-obs-f="email" autoComplete="email" />}
+      </div>
+      {mode === 'login' && <Tick checked={f.reviewedPlan} onChange={v => set('reviewedPlan', v)} testid="obs-reviewed">I have reviewed this job's flight plan and risk assessment in the planner{onOpenPlan && <> (<button type="button" onClick={e => { e.preventDefault(); onOpenPlan(); }} className="underline text-violet-700">open the plan</button>)</>}.</Tick>}
+      <div>
+        <Tick checked={f.declaration} onChange={v => set('declaration', v)} testid="obs-declaration">I have been briefed and trained as an EVLOS Class 1 observer for this operation, I understand my duties and the standard calls, and I am fit to do this role.</Tick>
+        <details className="text-xs text-slate-600 mt-1 ml-1"><summary className="cursor-pointer text-violet-700 font-semibold">What this covers</summary>
+          <ul className="list-disc ml-5 mt-1 space-y-0.5">{OBS_DECLARATION.map((t, i) => <li key={i}>{t}</li>)}</ul></details>
+      </div>
+      <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Your signature</div>
+        <SignaturePad name={f.name} value={f.sig} onChange={v => set('sig', v)} testid="obs-sig" /></div>
+      {error && <div className="text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700" data-obs-error="1">{error}</div>}
+      <button type="button" data-obs-submit="1" disabled={!!missing.length || busy} onClick={() => onSubmit({ name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), answers: { declaration: true, reviewedPlan: !!f.reviewedPlan, items: OBS_DECLARATION, tldr: true, date: new Date().toISOString().slice(0, 10) }, signature: { ...f.sig, name: f.name.trim() } })}
+        className={btn + ' w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-base py-3'}>{busy ? 'Sending…' : mode === 'device' ? 'Done: hand back to the CRP' : 'Sign and send to the CRP'}</button>
+      {missing.length > 0 && <p className="text-xs text-slate-500 text-center">Still needed: {missing.join(', ')}.</p>}
+    </div>
+  );
+}
+
+// The CRP's part
+export function CrpPart({ crpName, onSubmit, busy, error }) {
+  const [f, setF] = useState({ checks: false, callsign: '', notes: '', result: 'certified', sig: null });
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }));
+  const ok = (f.result === 'not_yet_competent' || f.checks) && f.sig;
+  return (
+    <div className="space-y-4" data-crp-part="1">
+      <div>
+        <Tick checked={f.checks} onChange={v => set('checks', v)} testid="crp-obs-checks">I have checked the observer: eyesight, they won't operate the controls, practical demonstrated, and the EVLOS brief, callsign and comms check are done.</Tick>
+        <details className="text-xs text-slate-600 mt-1 ml-1"><summary className="cursor-pointer text-violet-700 font-semibold">What this covers</summary>
+          <ul className="list-disc ml-5 mt-1 space-y-0.5">{CRP_CHECKS.map((t, i) => <li key={i}>{t}</li>)}</ul></details>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input className={input} placeholder="Callsign (optional)" value={f.callsign} onChange={e => set('callsign', e.target.value)} data-crp-obs="callsign" />
+        <select className={input} value={f.result} onChange={e => set('result', e.target.value)} data-crp-obs="result"><option value="certified">Certified (12 months)</option><option value="not_yet_competent">Not yet competent</option></select>
+      </div>
+      <textarea className={input} rows={2} placeholder="Notes (optional)" value={f.notes} onChange={e => set('notes', e.target.value)} data-crp-obs="notes" />
+      <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">CRP signature</div>
+        <SignaturePad name={crpName} value={f.sig} onChange={v => set('sig', v)} testid="crp-obs-sig" /></div>
+      {error && <div className="text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700">{error}</div>}
+      <button type="button" data-crp-obs-submit="1" disabled={!ok || busy} onClick={() => onSubmit({ result: f.result, crp: { crpCertifies: true, checks: f.checks ? CRP_CHECKS : [], callsign: f.callsign.trim(), notes: f.notes.trim(), assessor: crpName },
+        signature: { ...f.sig, name: crpName } })} className={btn + ' w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-base py-3'}>{busy ? 'Saving…' : f.result === 'certified' ? 'Certify the observer' : 'Record as not yet competent'}</button>
+    </div>
+  );
+}
+
+function Sheet({ title, sub, onClose, children, testid, z = 'z-[5100]' }) {
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape' && onClose) onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  return (
+    <div className={`fixed inset-0 ${z} bg-slate-900/70 flex items-stretch sm:items-center justify-center sm:p-4 print:hidden`} data-testid={testid}>
+      <div className="bg-white w-full sm:max-w-xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[94dvh]">
+        <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-3"><i className="fa-solid fa-binoculars text-violet-600"></i>
+          <div className="flex-1 min-w-0"><div className="font-bold text-slate-800 truncate">{title}</div>{sub && <div className="text-xs text-slate-500 truncate">{sub}</div>}</div>
+          {onClose && <button type="button" onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-slate-800 font-semibold text-sm px-2 py-1 rounded-lg border border-slate-200"><i className="fa-solid fa-xmark mr-1"></i>Close</button>}</div>
+        <div className="overflow-y-auto p-4 sm:p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Offline queue for sign-offs done on the CRP's device ─────────────────────────────────────────────
+const QKEY = 'wd_obs_queue';
+const qGet = () => { try { return JSON.parse(localStorage.getItem(QKEY) || '[]'); } catch (e) { return []; } };
+const qSet = (q) => { try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch (e) {} window.dispatchEvent(new Event('wd-obs-queue')); };
+export async function syncObserverQueue(sb) {
+  const q = qGet(); if (!q.length || (typeof navigator !== 'undefined' && navigator.onLine === false)) return { synced: 0, left: q.length };
+  const left = []; let synced = 0;
+  for (const it of q) {
+    try {
+      let jobId = it.jobId;
+      if (!jobId) { const { data } = await sb.from('jobs').select('id').eq('plan_uid', it.jobUid).maybeSingle(); jobId = data && data.id; }
+      if (!jobId) { left.push({ ...it, note: 'Waiting for the job to be saved to the cloud' }); continue; }
+      const { error } = await sb.rpc('record_observer_signoff', { p_job_id: jobId, p_person: it.person, p_answers: it.answers, p_person_sig: it.personSig, p_signed_at: it.signedAt, p_result: it.result, p_crp: it.crp, p_crp_sig: it.crpSig });
+      if (error) throw error;
+      synced++;
+    } catch (e) { left.push({ ...it, note: String((e && e.message) || e) }); }
+  }
+  qSet(left); return { synced, left: left.length };
+}
+
+// ── The CRP's panel on a job ─────────────────────────────────────────────────────────────────────────
+export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refreshKey, onChanged }) {
+  const sb = getSupabase();
+  const [list, setList] = useState(null), [queue, setQueue] = useState(qGet), [qr, setQr] = useState(null), [device, setDevice] = useState(null), [review, setReview] = useState(null), [msg, setMsg] = useState('');
+  const load = async () => {
+    if (!jobId) { setList([]); return; }
+    const { data } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,crp_signature,crp_signed_at,people:person_id (full_name, phone, email)').eq('type', 'evlos_observer').eq('job_id', jobId).order('created_at', { ascending: false });
+    setList(data || []);
+  };
+  useEffect(() => { load(); }, [jobId, refreshKey]); // eslint-disable-line
+  useEffect(() => { const h = () => setQueue(qGet()); const on = () => syncObserverQueue(sb).then(() => { setQueue(qGet()); load(); });
+    window.addEventListener('wd-obs-queue', h); window.addEventListener('online', on); on();
+    return () => { window.removeEventListener('wd-obs-queue', h); window.removeEventListener('online', on); }; }, [jobId]); // eslint-disable-line
+  const mine = queue.filter(q => q.jobUid === jobUid);
+  const makeQr = async () => {
+    setMsg('');
+    if (!jobId) { setMsg('Save the job first so it is in the cloud, then make the link.'); return; }
+    const { data, error } = await sb.rpc('create_observer_token', { p_job_id: jobId, p_days: 7 });
+    if (error || !data) { setMsg('Couldn\'t make the link: ' + ((error && error.message) || 'unknown error')); return; }
+    const link = location.origin + location.pathname + '#observer=' + data;
+    let svg = ''; try { const q = qrcode(0, 'M'); q.addData(link, 'Byte'); q.make(); svg = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); } catch (e) {}
+    setQr({ link, svg, copied: false });
+  };
+  const saveDevice = (obs) => (crp) => {
+    const it = { id: 'o' + Date.now(), jobUid, jobId: jobId || null, title: jobTitle, person: { name: obs.name, phone: obs.phone, email: obs.email }, answers: obs.answers, personSig: obs.signature,
+      signedAt: obs.at, result: crp.result, crp: crp.crp, crpSig: crp.signature, savedAt: new Date().toISOString() };
+    qSet([...qGet(), it]); setDevice(null);
+    syncObserverQueue(sb).then(r => { setQueue(qGet()); load(); onChanged && onChanged();
+      setMsg(r.left && qGet().some(x => x.id === it.id) ? 'Saved on this device. It will upload when you are online and the job is saved.' : `${obs.name} is ${crp.result === 'certified' ? 'certified' : 'recorded as not yet competent'}.`); });
+  };
+  const S = { awaiting_crp: ['Waiting for you', 'bg-amber-100 text-amber-900'], certified: ['Certified', 'bg-emerald-100 text-emerald-800'], not_yet_competent: ['Not yet competent', 'bg-rose-100 text-rose-800'], draft: ['Draft', 'bg-slate-100 text-slate-600'] };
+  return (
+    <div className="rounded-xl border border-violet-200 bg-white overflow-hidden print:hidden" data-obs-panel="1">
+      <div className="px-4 py-3 bg-violet-50 border-b border-violet-200 flex items-center gap-2 flex-wrap">
+        <i className="fa-solid fa-binoculars text-violet-600"></i><h4 className="font-semibold text-violet-900 text-sm flex-1">EVLOS observer sign-off</h4>
+        <button type="button" data-obs-device="1" onClick={() => setDevice({ step: 1 })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-tablet-screen-button mr-1"></i>Sign off on this device</button>
+        <button type="button" data-obs-qr="1" onClick={makeQr} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-violet-300 text-violet-800 hover:bg-violet-100"><i className="fa-solid fa-qrcode mr-1"></i>QR for their phone</button>
+      </div>
+      <div className="p-4 space-y-2 text-sm">
+        <p className="text-xs text-slate-500">Observers with a login sign from the job in their planner, after reviewing the full plan. Observers without one: scan the QR on their own phone, or hand them this device (works offline).</p>
+        {msg && <div className="text-xs rounded-lg px-3 py-2 bg-violet-50 text-violet-900" data-obs-msg="1">{msg}</div>}
+        {mine.map(q => <div key={q.id} className="flex items-center gap-2 border border-dashed border-amber-300 rounded-lg px-3 py-2" data-obs-queued="1"><i className="fa-solid fa-cloud-arrow-up text-amber-600"></i><span className="flex-1"><b>{q.person.name}</b> · signed on this device {fmtDT(q.signedAt)}<span className="block text-[11px] text-amber-800">{q.note || 'Not uploaded yet'}</span></span></div>)}
+        {list === null ? <p className="text-xs text-slate-400">Loading…</p> : list.length === 0 && !mine.length ? <p className="text-xs text-slate-400" data-obs-none="1">No observer sign-offs for this job yet.</p>
+          : list.map(r => { const s = S[r.status] || [r.status, 'bg-slate-100']; const p = r.people || {};
+            return <div key={r.id} className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2" data-obs-row={r.status}>
+              <span className="flex-1 min-w-0"><b className="text-slate-800">{p.full_name || (r.answers && r.answers.name)}</b><span className="text-xs text-slate-500"> · {r.answers && r.answers.via === 'login' ? 'signed in the planner' : r.answers && r.answers.via === 'link' ? 'signed on their phone' : 'signed on your device'} {fmtDT(r.person_signed_at)}</span></span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s[1]}`}>{s[0]}</span>
+              {r.status === 'awaiting_crp' && <button type="button" data-obs-countersign={r.id} onClick={() => setReview(r)} className="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-600 text-white">Countersign</button>}
+            </div>; })}
+      </div>
+      {qr && <Sheet title="Observer sign-off link" sub={jobTitle} onClose={() => setQr(null)} testid="obs-qr-sheet">
+        <div className="space-y-3 text-sm text-center">
+          <p className="text-slate-600">The observer scans this with their phone camera, reads the job and their duties, and signs. No login needed. The link works for 7 days and up to 5 observers on this job.</p>
+          {qr.svg ? <div className="mx-auto w-56 h-56" data-obs-qr-svg="1" dangerouslySetInnerHTML={{ __html: qr.svg }} /> : null}
+          <div className="flex gap-2 justify-center flex-wrap">
+            <button type="button" className={btn + ' border border-slate-300'} data-obs-copy="1" onClick={() => { try { navigator.clipboard.writeText(qr.link); } catch (e) {} setQr({ ...qr, copied: true }); }}>{qr.copied ? 'Copied' : 'Copy link'}</button>
+            <a className={btn + ' border border-slate-300'} href={'sms:?&body=' + encodeURIComponent('EVLOS observer sign-off for ' + jobTitle + ': ' + qr.link)}>Text it</a>
+          </div>
+          <p className="text-xs text-slate-500">Their sign-off appears here (and in Awaiting action on Home) for you to countersign.</p>
+        </div></Sheet>}
+      {device && <Sheet title={device.step === 1 ? 'Hand this device to the observer' : 'CRP check and signature'} sub={jobTitle} onClose={() => { if (device.step === 1 || window.confirm('Discard this observer sign-off?')) setDevice(null); }} testid="obs-device-sheet">
+        {device.step === 1 ? <ObserverPart mode="device" summary={summary} onSubmit={(o) => setDevice({ step: 2, obs: { ...o, at: new Date().toISOString() } })} />
+          : <div className="space-y-3"><div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm" data-obs-device-summary="1"><b>{device.obs.name}</b> · {device.obs.phone} signed {fmtDT(device.obs.at)}<div className="mt-2"><SignatureView sig={device.obs.signature} at={device.obs.at} /></div></div>
+            <CrpPart crpName={crpName} onSubmit={saveDevice(device.obs)} /></div>}
+      </Sheet>}
+      {review && <CrpObserverReview rec={review} crpName={crpName} onClose={(changed) => { setReview(null); if (changed) { load(); onChanged && onChanged(); } }} />}
+    </div>
+  );
+}
+
+// The CRP countersigns a sign-off made on a phone or by a logged-in observer
+export function CrpObserverReview({ rec, crpName, onClose }) {
+  const sb = getSupabase();
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const p = rec.people || {}, a = rec.answers || {};
+  const submit = async ({ result, crp, signature }) => {
+    setBusy(true); setErr('');
+    const { error } = await sb.rpc('certify_observer', { p_id: rec.id, p_result: result, p_crp: crp, p_signature: signature });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    window.dispatchEvent(new Event('wd-cloud-refresh')); onClose(true);
+  };
+  return (
+    <Sheet title={'Countersign: ' + (p.full_name || a.name || 'observer')} sub={rec.job_title || ''} onClose={() => onClose(false)} testid="obs-review-sheet" z="z-[5200]">
+      <div className="space-y-3">
+        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm space-y-1" data-obs-review-observer="1">
+          <div><b>{p.full_name || a.name}</b>{(p.phone || a.phone) ? ' · ' + (p.phone || a.phone) : ''}{p.email ? ' · ' + p.email : ''}</div>
+          <div className="text-xs text-slate-600">{a.via === 'login' ? 'Signed in the planner after reviewing the plan and risk assessment' : 'Signed on their own phone (link)'} · {fmtDT(rec.person_signed_at)}</div>
+          <div className="text-xs text-emerald-700"><i className="fa-solid fa-check mr-1"></i>Observer declaration ticked{a.reviewedPlan ? ' · reviewed the flight plan and risks' : ''}</div>
+          <SignatureView sig={rec.person_signature} at={rec.person_signed_at} />
+        </div>
+        <CrpPart crpName={crpName} onSubmit={submit} busy={busy} error={err} />
+      </div>
+    </Sheet>
+  );
+}
+
+// A logged-in observer signs for a job they're on
+export function SelfObserverSheet({ jobId, jobTitle, summary, name, onOpenPlan, onClose }) {
+  const sb = getSupabase();
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(''), [done, setDone] = useState(false);
+  const submit = async (o) => {
+    setBusy(true); setErr('');
+    const { error } = await sb.rpc('submit_observer_self', { p_job_id: jobId, p_answers: o.answers, p_signature: o.signature });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setDone(true); window.dispatchEvent(new Event('wd-obs-self-signed'));
+  };
+  return (
+    <Sheet title="EVLOS observer sign-off" sub={jobTitle} onClose={onClose} testid="obs-self-sheet">
+      {done ? <div className="text-center space-y-3 py-6" data-obs-self-done="1"><i className="fa-solid fa-circle-check text-emerald-500 text-4xl"></i><p className="font-semibold text-slate-800">Signed and sent to the CRP.</p><p className="text-sm text-slate-500">They'll check and countersign before the job.</p><button type="button" onClick={onClose} className={btn + ' bg-slate-800 text-white'}>Close</button></div>
+        : <ObserverPart mode="login" summary={summary} defaults={{ name }} onSubmit={submit} busy={busy} error={err} onOpenPlan={onOpenPlan ? () => { onClose(); onOpenPlan(); } : null} />}
+    </Sheet>
+  );
+}
+
+// ── Standalone page for the QR / link (no login, observer's own phone) ───────────────────────────────
+export function ObserverLinkApp({ token }) {
+  const sb = getSupabase();
+  const [st, setSt] = useState({ loading: true }), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [done, setDone] = useState(null);
+  const pendKey = 'wd_obs_pending:' + token.slice(0, 16);
+  useEffect(() => { (async () => {
+    try { const { data, error } = await sb.rpc('get_observer_form', { p_token: token }); if (error) throw error; setSt({ loading: false, data });
+      try { localStorage.setItem('wd_obs_form:' + token.slice(0, 16), JSON.stringify(data)); } catch (e) {} }
+    catch (e) { let cached = null; try { cached = JSON.parse(localStorage.getItem('wd_obs_form:' + token.slice(0, 16)) || 'null'); } catch (x) {}
+      setSt({ loading: false, data: cached, offline: true, error: cached ? '' : 'No signal. Open this link again when you have reception, or ask the CRP to sign you off on their device.' }); }
+  })(); }, [token]); // eslint-disable-line
+  const send = async (o) => {
+    setBusy(true); setErr('');
+    try { localStorage.setItem(pendKey, JSON.stringify(o)); } catch (e) {}
+    try {
+      const { error } = await sb.rpc('submit_observer_signoff', { p_token: token, p_name: o.name, p_phone: o.phone, p_email: o.email || null, p_answers: o.answers, p_signature: o.signature });
+      if (error) throw error;
+      try { localStorage.removeItem(pendKey); } catch (e) {}
+      setDone(o.name);
+    } catch (e) { setErr((navigator.onLine === false ? 'No signal: your sign-off is saved on this phone. Tap the button again when you have reception.' : (e && e.message) || 'Couldn\'t send.')); }
+    setBusy(false);
+  };
+  const d = st.data;
+  return (
+    <div className="min-h-[100dvh] bg-slate-100" data-observer-app="1">
+      <div className="text-white px-4 py-4" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+        <div className="text-xs uppercase tracking-widest opacity-75">{(d && d.company) || 'Dream Planner RPA'}</div>
+        <h1 className="text-xl font-bold mt-0.5">EVLOS observer sign-off</h1>
+        {d && d.job && <div className="text-sm opacity-85">{d.job.title}</div>}
+      </div>
+      <div className="max-w-xl mx-auto p-4">
+        {st.loading ? <p className="text-slate-500 text-sm">Loading…</p>
+          : done ? <div className="bg-white rounded-2xl p-6 text-center space-y-2" data-obs-link-done="1"><i className="fa-solid fa-circle-check text-emerald-500 text-5xl"></i><h2 className="text-lg font-bold text-slate-800">Thanks, {done.split(' ')[0]}.</h2><p className="text-sm text-slate-600">Your sign-off has gone to the Chief Remote Pilot, who will check it with you before the flight.</p></div>
+          : d && d.error ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{d.error}</div>
+          : !d ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{st.error}</div>
+          : <div className="bg-white rounded-2xl p-4 sm:p-5">{st.offline && <div className="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-900 mb-3">No signal: showing the job saved on this phone. You can fill it in; it sends when you have reception.</div>}
+              <ObserverPart mode="link" summary={d} onSubmit={send} busy={busy} error={err} /></div>}
+      </div>
+    </div>
+  );
+}
+
+// A logged-in crew member on a job: their observer sign-off status and the button to sign
+export function CrewObserverBar({ jobId, jobTitle, summary, name, onOpenPlan }) {
+  const sb = getSupabase();
+  const [rec, setRec] = useState(undefined), [open, setOpen] = useState(false);
+  const load = async () => { if (!jobId) return; const { data } = await sb.from('signoff_records').select('id,status,person_signed_at,crp_signed_at').eq('type', 'evlos_observer').eq('job_id', jobId).order('created_at', { ascending: false }).limit(1); setRec((data && data[0]) || null); };
+  useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-obs-self-signed', h); return () => window.removeEventListener('wd-obs-self-signed', h); }, [jobId]); // eslint-disable-line
+  if (rec === undefined) return null;
+  const st = rec && rec.status;
+  return (
+    <div className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 flex items-center gap-3 flex-wrap" data-obs-crew-bar={st || 'none'}>
+      <i className="fa-solid fa-binoculars text-violet-600 text-lg"></i>
+      <div className="flex-1 min-w-[12rem] text-sm text-violet-900">{!st || st === 'not_yet_competent' ? <><b>You're an observer on this job.</b> Review the plan and risk assessment, then sign your EVLOS observer sign-off.</>
+        : st === 'awaiting_crp' ? <><b>Observer sign-off sent</b> {fmtDT(rec.person_signed_at)}. The CRP will countersign.</> : <><b>Observer sign-off certified</b> {fmtDT(rec.crp_signed_at)}.</>}</div>
+      {(!st || st === 'not_yet_competent') && <button type="button" data-obs-self-open="1" onClick={() => setOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold"><i className="fa-solid fa-signature mr-1"></i>Sign as observer</button>}
+      {open && <SelfObserverSheet jobId={jobId} jobTitle={jobTitle} summary={summary} name={name} onOpenPlan={onOpenPlan} onClose={() => { setOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+export const observerTokenFromHash = () => { const m = /^#observer=([a-f0-9]{40,80})$/i.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; };

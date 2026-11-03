@@ -56,6 +56,9 @@ export function useCloudJobs(sb, me) {
         const name = (pid) => ((ppl.find(p => p.id === pid) || {}).full_name) || 'Crew member';
         publish('wdCrewFlights', (fl || []).map(f => ({ ...f, who: name(f.person_id), job: jById[f.job_id] || null })), 'wd-crew-flights');
         publish('wdAccessRequests', (rq || []).map(r => ({ ...r, who: name(r.person_id) })), 'wd-access-requests');
+        // Chunk 4: observer sign-offs waiting for the CRP to countersign
+        try { const { data: ob } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,job_id,people:person_id (full_name, phone, email)').eq('type', 'evlos_observer').eq('status', 'awaiting_crp').order('person_signed_at', { ascending: false });
+          publish('wdObsWaiting', (ob || []).map(r => ({ ...r, job: jById[r.job_id] || null })), 'wd-obs-waiting'); } catch (e) {}
       } catch (e) { /* offline: try again later */ }
     };
     const onSaved = async (e) => {

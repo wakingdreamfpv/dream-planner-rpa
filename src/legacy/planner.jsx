@@ -4,6 +4,7 @@
 import Dashboard, { Access as CrewAccess, Shared as CrewShared } from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
+import { ObserverPanel, CrpObserverReview, CrewObserverBar } from '../observer/Observer.jsx';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
@@ -173,7 +174,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.6';
+        const APP_VERSION = '7.7';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9278,7 +9279,9 @@ View in the Database & Settings tab.`);
           const lsJsonSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
           const planCrew = (p) => { const ov = p.overview || {}, ap = p.approval || {}, lg = p.log || {}, out = [];
             const add = (n, role) => String(n || '').split(/[,;/&]|\band\b/).map(x => x.trim()).filter(Boolean).forEach(name => out.push({ name, role }));
+            const js = p.jsa || {};
             add(ov.rpic, 'rpic'); add(ap.rpName, 'rpic'); add(lg.crewRP, 'pilot'); add(lg.crewSecondRP, 'pilot'); add(ov.supportPersonnel, 'observer'); add(lg.crewObserver, 'observer');
+            add(js.evlosObserver, 'observer'); add(js.bvlosObserver, 'observer'); add(js.nvlosObserver, 'observer');
             return out; };
           const isoDay = (x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x || '')) ? x : null;
           const cloudJobsList = () => {
@@ -9367,7 +9370,7 @@ View in the Database & Settings tab.`);
           // v7.5.7: the CRP asks the RPIC / observers on a job to fill in the post-flight log (email with a link to the job)
           const [logInvite, setLogInvite] = useState(null); // { picks: {email: bool}, note, busy }
           const jobCrewLogins = () => { const seen = new Set(), out = [];
-            planCrew({ overview, approval, log }).forEach(c => { const p = cloudPeople.find(x => x.name.toLowerCase() === c.name.toLowerCase()); if (!p || !p.email || seen.has(p.email) || p.role === 'crp' && sameName(p.name, auth.name)) return; seen.add(p.email); out.push({ ...p, jobRole: c.role }); });
+            planCrew({ overview, approval, log, jsa }).forEach(c => { const p = cloudPeople.find(x => x.name.toLowerCase() === c.name.toLowerCase()); if (!p || !p.email || seen.has(p.email) || p.role === 'crp' && sameName(p.name, auth.name)) return; seen.add(p.email); out.push({ ...p, jobRole: c.role }); });
             return out; };
           const openLogInvite = () => {
             const inCloud = (cloudJobsAll || []).some(j => j.plan_uid === overview.uid);
@@ -9385,6 +9388,14 @@ View in the Database & Settings tab.`);
           // crew: the email link #crew-job=<id> opens that job on the flight log
           const [crewJobLink, setCrewJobLink] = useState(() => { const m = /^#crew-job=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
           useEffect(() => { const h = () => { const m = /^#crew-job=([\w-]+)$/.exec(location.hash || ''); if (m) setCrewJobLink(m[1]); }; window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          // Chunk 4: EVLOS observer sign-off — a plan summary for the observer, and countersigning from Awaiting action
+          const obsSummary = () => ({ job: { title: getOpTitle(overview), op_id: overview.identifier, start_date: overview.operationDate || '' },
+            overview: { location: overview.location, operationDate: overview.operationDate, startTime: overview.startTime, endTime: overview.endTime, rpaTypes: overview.rpaTypes, rpic: approval.rpName || overview.rpic, maxHeight: jsa.maxOperatingHeightAgl || overview.maxHeightPlanned },
+            jsa: { operationTypes: jsa.operationTypes, emergencyContacts: getEmergency(jsa) },
+            risks: (risks || []).filter(r => String(r.hazard || '').trim()).map(r => ({ hazard: r.hazard, risk: r.riskDescription, controls: [r.existingControls, r.additionalControls].filter(x => String(x || '').trim()).join('\n') })) });
+          const [obsWaiting, setObsWaiting] = useState(() => window.wdObsWaiting || []);
+          useEffect(() => { const h = () => setObsWaiting(window.wdObsWaiting || []); window.addEventListener('wd-obs-waiting', h); return () => window.removeEventListener('wd-obs-waiting', h); }, []);
+          const [obsReview, setObsReview] = useState(null);
           const importCloudFlights = (grp) => {
             const uid = grp.job && grp.job.plan_uid; const local = cloudJobsList().find(j => j.uid === uid);
             const inc = { rpaLogs: {} };
@@ -9408,6 +9419,8 @@ View in the Database & Settings tab.`);
             const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id) && !(f.flight && f.flight.kind && f.flight.kind !== 'post_flight')).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
             Object.values(byJob).forEach(g => aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: (() => { const n = g.flights.filter(f => !(f.flight && f.flight.kind)).length, pf = g.flights.some(f => f.flight && f.flight.kind === 'post_flight');
               return [n ? `${n} flight${n === 1 ? '' : 's'}` : '', pf ? 'post-flight answers' : ''].filter(Boolean).join(' and ') + ` from ${g.who}`; })(), sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
+            (obsWaiting || []).forEach(r => aw.push({ kind: 'obs-signed', icon: 'fa-binoculars', color: 'text-violet-600', label: `${(r.people && r.people.full_name) || (r.answers && r.answers.name) || 'An observer'} signed as EVLOS observer${r.job ? ': ' + r.job.title : ''}`,
+              sub: r.answers && r.answers.via === 'login' ? 'Reviewed the plan in the planner' : 'Signed on their phone', cta: 'Countersign', act: () => setObsReview({ ...r, job_title: r.job && r.job.title }) }));
             const AREA = { fleet: 'fleet management', batteries: 'battery management', records: 'job records', planning: 'flight planning' };
             (accessReqs || []).filter(r => r.status === 'requested').forEach(r => aw.push({ kind: 'access', icon: 'fa-key', color: 'text-amber-600', label: `${r.who} asks for ${AREA[r.area] || r.area}`, sub: r.note || 'Access request',
               cta: 'Grant', act: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'granted' } })),
@@ -9448,6 +9461,8 @@ View in the Database & Settings tab.`);
             openCloudJob(j);
           }, [crewJobLink, isCrewRole, crewCloud]); // eslint-disable-line
           const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
+          const isObserverOnJob = onCloudJob && ((((crewCloud && crewCloud.jobs) || []).find(j => j.id === cloudJob.id) || {}).myRole === 'observer'
+            || [jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel, log.crewObserver].some(n => String(n || '').split(/[,;/&]|\band\b/).some(x => sameName(x, auth.name))));
           // v7.5.7: the post-flight answers (weather, conducted as planned, serviceable, defects, crew…) go to the CRP too
           const logFieldsOf = (lg) => { const o = {}; Object.keys(lg || {}).sort().forEach(k => { if (k === 'rpaLogs' || k === 'yn60') return; const v = lg[k];
             if (v === '' || v == null || v === false && !['weatherMeetsLimitations', 'conductedIAW', 'serviceableAtEnd'].includes(k)) return;
@@ -9952,6 +9967,7 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
                 const crew = jobCrewLogins(), picked = crew.filter(c => logInvite.picks[c.email]);
                 const R = { rpic: 'RPIC', pilot: 'Remote pilot', observer: 'Observer / VO' };
@@ -12937,6 +12953,8 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation</h2>
                       </div>
                       <ReqStrip tab="approval" />
+                      {isCrpCloud && (jsa.operationTypes || []).includes('EVLOS') && <div className="mx-4 sm:mx-6 mt-4"><ObserverPanel jobUid={overview.uid} jobId={(((cloudJobsAll || []).find(j => j.plan_uid === overview.uid)) || {}).id || null} jobTitle={getOpTitle(overview)} summary={obsSummary()} crpName={auth.name || approval.crpName || ''} /></div>}
+                      {onCloudJob && (jsa.operationTypes || []).includes('EVLOS') && isObserverOnJob && <CrewObserverBar jobId={cloudJob.id} jobTitle={cloudJob.title || getOpTitle(overview)} summary={obsSummary()} name={auth.name || ''} onOpenPlan={() => setActiveTab('preliminary')} />}
 
                       {/* Expiry check for this job's dates */}
                       {(() => {
@@ -13485,6 +13503,7 @@ View in the Database & Settings tab.`);
                         <div className="flex-1 min-w-[12rem] text-sm text-violet-900">Want the RPIC or observer to fill this in? They get an email with a link to this job's flight log, and their flights and answers come back to you in Awaiting action.</div>
                         <button type="button" data-log-invite="1" onClick={openLogInvite} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold"><i className="fa-solid fa-paper-plane mr-1"></i>Ask crew to fill in the log</button>
                       </div>}
+                      {onCloudJob && (jsa.operationTypes || []).includes('EVLOS') && isObserverOnJob && <CrewObserverBar jobId={cloudJob.id} jobTitle={cloudJob.title || getOpTitle(overview)} summary={obsSummary()} name={auth.name || ''} onOpenPlan={() => setActiveTab('preliminary')} />}
                       {onCloudJob && <div data-cloud-push="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-center gap-3 flex-wrap">
                         <i className="fa-solid fa-cloud-arrow-up text-sky-600 text-lg"></i>
                         <div className="flex-1 min-w-[12rem] text-sm text-sky-900"><b>Company job.</b> Log your flights and fill in the post-flight questions below, then send them to the CRP. {logUnsent && <span data-cloud-log-unsent="1">Post-flight answers not sent yet. </span>}{unsentFlights.length ? <span data-cloud-unsent={unsentFlights.length}>{unsentFlights.length} flight{unsentFlights.length === 1 ? '' : 's'} not sent yet.</span> : <span data-cloud-unsent="0">Nothing new to send.</span>}</div>
@@ -14999,7 +15018,7 @@ View in the Database & Settings tab.`);
           );
         }
 
-        const root = window.__WD_CREW_MODE ? null : ReactDOM.createRoot(document.getElementById('root'));
+        const root = (window.__WD_CREW_MODE || window.__WD_OBS_MODE) ? null : ReactDOM.createRoot(document.getElementById('root'));
         if (root) root.render(
           <ErrorBoundary>
             <FlightRecordApp />

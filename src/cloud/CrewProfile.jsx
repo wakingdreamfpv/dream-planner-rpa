@@ -5,7 +5,7 @@ import { StatusPill } from './Induction.jsx';
 const ROLE = { crp: 'CRP', pilot: 'Pilot', observer: 'Observer' };
 const JOB_ROLE = { rpic: 'RPIC', pilot: 'Pilot', observer: 'Observer' };
 const AREA = { fleet: 'Fleet management', batteries: 'Battery management', records: 'Job records', planning: 'Flight planning' };
-const COMP = { induction: 'Induction', evlos: 'EVLOS', oonp: 'OONP', night: 'Night' };
+const COMP = { induction: 'Induction', evlos: 'EVLOS', oonp: 'OONP', night: 'Night', evlos_observer: 'EVLOS observer' };
 const fmtD = (d) => { if (!d) return ''; const x = new Date(d); return isNaN(x) ? d : x.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtHM = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`; };
 
