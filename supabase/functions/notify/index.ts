@@ -61,8 +61,8 @@ Deno.serve(async (req) => {
       const html2 = page(subject2,
         P(`<b>${esc(who2.full_name)}</b> (${esc(who2.email)}) has reviewed and signed the flight plan as Remote Pilot in Command.`) +
         P(`Job: <b>${esc(job.title || '')}</b>${job.op_id ? ' (' + esc(job.op_id) + ')' : ''}${job.start_date ? ' · ' + esc(job.start_date) : ''}`) +
-        P('Open the planner: the signature is waiting in Awaiting action on Home. Add it to the job, then sign as CRP and approve the flight.'),
-        'Review and sign', appUrl + '#awaiting');
+        P('Review and sign opens the job on the Authorisation tab with their signature added, ready for you to sign as CRP and approve the flight.'),
+        'Review and sign', appUrl + '#rpic-signed=' + row.id);
       if (!to2.length) return json({ ok: true, sent: 0, message: 'No CRP to email' });
       if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing); shown in the planner only' });
       const r2 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
