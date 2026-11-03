@@ -256,6 +256,22 @@ function AccountPanel() {
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
   // v7.4 (Chunk 2b): jobs, crew, shared data and access requests in the cloud
   useCloudJobs(sb, me);
+  // v7.5.2: the planner needs to know if a pilot has already done their induction (so it stops asking)
+  useEffect(() => {
+    let dead = false;
+    const pub = (v) => { window.wdMyInduction = v; window.dispatchEvent(new Event('wd-my-induction')); };
+    if (!(me && me.active && me.role && me.role !== 'crp')) { pub(undefined); return; }
+    const load = async () => {
+      try {
+        const { data: person } = await sb.from('people').select('id').eq('user_id', me.id).maybeSingle();
+        if (!person) { if (!dead) pub({ status: null }); return; }
+        const { data: recs } = await sb.from('signoff_records').select('status,person_signed_at,crp_signed_at').eq('person_id', person.id).eq('type', 'pilot_induction').order('created_at', { ascending: false }).limit(1);
+        if (!dead) pub({ status: (recs && recs[0] && recs[0].status) || null, at: recs && recs[0] && (recs[0].crp_signed_at || recs[0].person_signed_at) });
+      } catch (e) { /* offline: leave unknown */ }
+    };
+    load(); window.addEventListener('wd-induction-changed', load);
+    return () => { dead = true; window.removeEventListener('wd-induction-changed', load); };
+  }, [sb, me]);
   // v6.8: the planner routes first-time users by sign-in state and role
   useEffect(() => {
     const v = loading ? { state: 'loading' } : !session ? { state: 'out' }

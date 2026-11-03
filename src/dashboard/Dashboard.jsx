@@ -325,7 +325,9 @@ function MyHours({ c, a }) {
     {rows.length > 0 ? <div className="mt-2 divide-y divide-slate-100">{rows.map(h => <div key={h.rpa_type} className="flex items-center gap-3 py-1.5 text-sm"><span className="flex-1 min-w-0 truncate text-slate-700">{h.rpa_type}</span><span className="text-slate-500 text-xs">{h.flights} fl</span><span className="font-semibold text-slate-800 w-20 text-right">{fmtHM(h.seconds)}</span></div>)}</div>
       : <p className="text-xs text-slate-500 mt-1">Time shows here once the CRP completes a job you flew.</p>}
     {c.inductionHours != null && <p className="text-xs text-slate-500 mt-2">Total hours declared at induction: {c.inductionHours}</p>}
-    <div className="mt-2"><Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn></div>
+    <div className="mt-2 flex items-center gap-2 flex-wrap">{(() => { const st = c.induction && c.induction.status; const m = { certified: ['Induction certified', 'bg-emerald-100 text-emerald-800'], awaiting_crp: ['Induction with the CRP', 'bg-sky-100 text-sky-800'], not_yet_competent: ['Induction: not yet competent', 'bg-rose-100 text-rose-800'], draft: ['Induction started', 'bg-amber-100 text-amber-900'] }[st] || (c.induction ? ['Induction not started', 'bg-slate-100 text-slate-700'] : null);
+      return m ? <span data-crew-ind-status={st || 'none'} className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${m[1]}`}>{m[0]}</span> : null; })()}
+      <Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn></div>
   </div>;
 }
 function Access({ c, a }) {

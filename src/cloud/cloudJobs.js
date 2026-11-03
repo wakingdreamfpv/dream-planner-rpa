@@ -140,10 +140,23 @@ export function useCloudJobs(sb, me) {
         emit('wd-push-result', { ok: true, sent: rows.length, keys: (d.flights || []).map(f => f.key) });
       } catch (err) { emit('wd-push-result', { ok: false, error: String((err && err.message) || err) }); }
     };
+    // v7.5.2: an RPIC signature on a company job goes to the CRP (stored with the job's crew entries) and emails them
+    const onSign = async (e) => {
+      const d = e.detail || {};
+      try {
+        if (!personId) await load();
+        const { data, error } = await sb.from('job_flights').insert({ job_id: d.jobId, person_id: personId, rpa: null, flight: d.sig }).select('id').single();
+        if (error) throw error;
+        let emailed = false;
+        try { const r = await sb.functions.invoke('notify', { body: { event: 'rpic_signed', flight_id: data.id } }); emailed = !!(r && r.data && r.data.sent); } catch (x) { /* the CRP still sees it in Awaiting action */ }
+        emit('wd-signature-result', { ok: true, emailed });
+      } catch (err) { emit('wd-signature-result', { ok: false, error: String((err && err.message) || err) }); }
+    };
+    window.addEventListener('wd-push-signature', onSign);
     const onRequest = async (e) => { const d = e.detail || {}; try { const { error } = await sb.rpc('request_access', { p_area: d.area, p_note: d.note || null }); if (error) throw error; } catch (err) { emit('wd-request-result', { ok: false, error: String(err.message || err) }); } load(); };
     window.addEventListener('wd-open-cloud-job', onOpen); window.addEventListener('wd-push-flights', onPush); window.addEventListener('wd-request-access', onRequest); window.addEventListener('wd-cloud-refresh', load);
     load(); const iv = setInterval(load, 90000);
     return () => { dead = true; clearInterval(iv); window.removeEventListener('wd-open-cloud-job', onOpen); window.removeEventListener('wd-push-flights', onPush);
-      window.removeEventListener('wd-request-access', onRequest); window.removeEventListener('wd-cloud-refresh', load); };
+      window.removeEventListener('wd-request-access', onRequest); window.removeEventListener('wd-cloud-refresh', load); window.removeEventListener('wd-push-signature', onSign); };
   }, [sb, isCrew, me && me.id]); // eslint-disable-line
 }
