@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5';
+        const APP_VERSION = '7.5.1';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4849,6 +4849,14 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // v7.2.1: the company name goes into crew invite emails
           useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
           const [cloudCrew, setCloudCrew] = useState(0);
+          // v7.5.1: crew with logins appear in every pilot / observer picker (the CRP sees them from the cloud)
+          const [cloudPeople, setCloudPeople] = useState([]);
+          useEffect(() => { const h = () => { const c = window.wdCloud; setCloudPeople(c ? (c.people || []).filter(x => x.active && String(x.full_name || '').trim()).map(x => ({ name: String(x.full_name).trim(), role: x.role })) : []); };
+            h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
+          const uniqNames = (list) => { const seen = new Set(); return list.map(x => String(x || '').trim()).filter(x => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase())); };
+          const myName = (auth && auth.state === 'in' && auth.name) ? [auth.name] : [];
+          const pilotOpts = uniqNames([...(db.pilots || []).map(p => p.name), ...cloudPeople.filter(x => x.role === 'crp' || x.role === 'pilot').map(x => x.name), ...(auth && auth.role && auth.role !== 'observer' ? myName : [])]);
+          const obsOpts = uniqNames([...(db.observers || []), ...cloudPeople.map(x => x.name), ...myName]);
           useEffect(() => { const h = () => { const c = window.wdCloud; setCloudCrew(c ? ((c.people || []).length - 1) + (c.invites || []).filter(i => !i.accepted_user_id).length : 0); };
             h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
           useEffect(() => {
@@ -10290,7 +10298,7 @@ View in the Database & Settings tab.`);
                           
                           <div>
                             <label data-req-anchor="rpic" className="block text-sm font-medium text-gray-700 mb-1">Remote Pilot in Command (RPIC)<ReqMark why={reqWhy('rpic')} /></label>
-                            <ComboBox name="rpic" value={overview.rpic} onChange={handleOverviewChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select or type RPIC..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                            <ComboBox name="rpic" value={overview.rpic} onChange={handleOverviewChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select or type RPIC..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             {(() => {
                               const p = db.pilots.find(px => px.name === overview.rpic);
                               if (!p) return null;
@@ -10305,7 +10313,7 @@ View in the Database & Settings tab.`);
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Visual Observer / Support</label>
                             <div className="flex gap-2">
-                              <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                              <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             </div>
                           </div>
                           <div className="md:col-span-2" data-req-box="1">
@@ -11445,7 +11453,7 @@ View in the Database & Settings tab.`);
                                 <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg animate-in fade-in slide-in-from-top-2">
                                   <label className="block text-sm font-medium text-blue-900 mb-2">Visual Observer (VO)</label>
                                   <div className="flex gap-2">
-                                    <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                    <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                   </div>
                                 </div>
                               )}
@@ -11575,7 +11583,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Remote Observers (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <ComboBox name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -11590,7 +11598,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Night Visual Observer (NVO) (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <ComboBox name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -13008,7 +13016,7 @@ View in the Database & Settings tab.`);
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
                                 <div className="flex gap-2">
-                                  <ComboBox name="crpName" value={approval.crpName} onChange={(e) => handlePersonnelSelect('crp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select CRP..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
+                                  <ComboBox name="crpName" value={approval.crpName} onChange={(e) => handlePersonnelSelect('crp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select CRP..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
                                   <input type="text" placeholder="ARN" name="crpArn" value={approval.crpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
@@ -13037,7 +13045,7 @@ View in the Database & Settings tab.`);
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
                                 <div className="flex gap-2">
-                                  <ComboBox name="rpName" value={approval.rpName} onChange={(e) => handlePersonnelSelect('rp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select RPIC..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
+                                  <ComboBox name="rpName" value={approval.rpName} onChange={(e) => handlePersonnelSelect('rp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select RPIC..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
                                   <input type="text" placeholder="ARN" name="rpArn" value={approval.rpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
@@ -13437,15 +13445,15 @@ View in the Database & Settings tab.`);
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label data-req-anchor="crewRP" className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Primary RP<ReqMark why={reqWhy('crewRP')} /></label>
-                              <ComboBox name="crewRP" value={log.crewRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewRP" value={log.crewRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Second RP</label>
-                              <ComboBox name="crewSecondRP" value={log.crewSecondRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Name / Initials (If applicable)" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewSecondRP" value={log.crewSecondRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Name / Initials (If applicable)" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Observer/Crew</label>
-                              <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                           </div>
                           
