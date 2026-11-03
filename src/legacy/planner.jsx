@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5.2';
+        const APP_VERSION = '7.5.3';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9318,6 +9318,7 @@ View in the Database & Settings tab.`);
             window.addEventListener('wd-signature-result', h); return () => window.removeEventListener('wd-signature-result', h);
           }, []);
           const applyCloudSignature = (row) => {
+            try { sigTried.current.add(row.id); } catch (e) {}
             const sig = row.flight || {}, uid = row.job && row.job.plan_uid, local = cloudJobsList().find(j => j.uid === uid);
             const done = () => { const ids = [...new Set([...importedFl, row.id])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); };
             const finish = async () => {
@@ -9339,6 +9340,37 @@ View in the Database & Settings tab.`);
             if (dirty && !window.confirm(`Open “${row.job.title}” to add ${row.who}'s signature? The job that's open now has unsaved changes, which will be lost.`)) return;
             handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 500);
           };
+          // v7.5.3: the "signed as RPIC" email links to #rpic-signed=<id>: open that job, add the signature, go to Authorisation
+          const [signLink, setSignLink] = useState(() => { const m = /^#rpic-signed=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
+          useEffect(() => { const h = () => { const m = /^#rpic-signed=([\w-]+)$/.exec(location.hash || ''); if (m) { setSignLink(m[1]); window.dispatchEvent(new Event('wd-cloud-refresh')); } };
+            window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          useEffect(() => {
+            if (!signLink || !isCrpCloud || !dbReady || !crewFlights) return;
+            const row = crewFlights.find(f => String(f.id) === signLink);
+            try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+            setSignLink(null);
+            if (!row) { setActiveTab('home'); alert('That signature isn\'t in the cloud any more. Check Awaiting action on Home.'); return; }
+            if (importedFl.includes(row.id)) {
+              const local = cloudJobsList().find(j => j.uid === (row.job && row.job.plan_uid));
+              if (local && overview.uid !== local.uid) handleLoadPlan(local.p, { silent: true });
+              setTimeout(() => setActiveTab('approval'), 400); return;
+            }
+            applyCloudSignature(row);
+          }, [signLink, isCrpCloud, dbReady, crewFlights]); // eslint-disable-line
+          // v7.5.3: a crew RPIC signature waiting for the job that's open is added as soon as the job is open (fingerprint-checked)
+          const pendingSig = isCrpCloud && overview.uid ? (crewFlights || []).filter(f => f.flight && f.flight.kind === 'rpic_signature' && !importedFl.includes(f.id) && f.job && f.job.plan_uid === overview.uid)
+            .sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || '')))[0] || null : null;
+          const sigTried = useRef(new Set());
+          useEffect(() => {
+            if (!pendingSig || !dbReady || sigTried.current.has(pendingSig.id)) return;
+            sigTried.current.add(pendingSig.id);
+            const t = setTimeout(() => applyCloudSignature(pendingSig), 600);
+            return () => clearTimeout(t);
+          }, [pendingSig && pendingSig.id, dbReady]); // eslint-disable-line
+          // fetch new crew signatures and flights when the CRP comes back to the planner or opens Authorisation
+          useEffect(() => { if (!isCrpCloud) return; const h = () => { if (document.visibilityState === 'visible') window.dispatchEvent(new Event('wd-cloud-refresh')); };
+            window.addEventListener('focus', h); document.addEventListener('visibilitychange', h); return () => { window.removeEventListener('focus', h); document.removeEventListener('visibilitychange', h); }; }, [isCrpCloud]);
+          useEffect(() => { if (isCrpCloud && activeTab === 'approval') window.dispatchEvent(new Event('wd-cloud-refresh')); }, [activeTab, isCrpCloud]);
           const requestAccess = (area) => { const note = window.prompt('Ask the CRP for access. Add a note if you like (optional):', ''); if (note === null) return; window.dispatchEvent(new CustomEvent('wd-request-access', { detail: { area, note } })); };
 
           const buildDashData = () => {
@@ -13090,6 +13122,9 @@ View in the Database & Settings tab.`);
                             {/* RPIC Signature Block */}
                             <div className="space-y-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm relative print:border-slate-400 print:shadow-none">
                               <h4 className="font-semibold text-sm text-slate-700 uppercase tracking-wider">Remote Pilot in Command (RPIC)</h4>
+                              {pendingSig && <div data-pending-sig="1" className="print:hidden rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 flex items-center gap-2 flex-wrap">
+                                <i className="fa-solid fa-signature text-emerald-600"></i><span className="flex-1 min-w-[10rem]"><b>{pendingSig.who}</b> signed this plan as RPIC in the planner{pendingSig.flight.date ? ' on ' + fmtDate(pendingSig.flight.date) : ''}.</span>
+                                <button type="button" data-pending-sig-add="1" onClick={() => applyCloudSignature(pendingSig)} className="px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700">Add their signature</button></div>}
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
                                 <div className="flex gap-2">
