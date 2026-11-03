@@ -3238,11 +3238,11 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         // scope 'operator' = issued to this ReOC; 'all' = general instruments that apply to every operator.
         // excludes = operation types the instrument does not cover (warned about when the job includes them).
         const DEFAULT_OFFICIAL_AUTHS = [
-          { id: 'auth-oonp0079', code: 'CASA.OONP.0079', title: 'Over or near people (OONP)', scope: 'operator', expiry: '', excludes: ['EVLOS', 'Night', 'Swarm'], exclusionMode: 'manual', note: 'Schedule 1.3 lists EVLOS, night and swarm. Read with the CASA delegate as applying only where these are not already approved in the operations manual (ours approves EVLOS and night). Written CASA confirmation pending.' },
-          { id: 'auth-evlos0346', code: 'CASA.EVLOS.0346', title: 'Extended visual line of sight (EVLOS)', scope: 'operator', expiry: '', excludes: [], note: '' },
-          { id: 'auth-casa2025', code: 'CASA 20/25', title: 'Operation of Certain Unmanned Aircraft and Rockets – Directions Instrument 2025', scope: 'all', expiry: '2028-03-31', excludes: [], note: 'Height, 30 m people safety zone, public safety areas, one RPA at a time.' },
-          { id: 'auth-ex8725', code: 'CASA EX87/25', title: 'Obtaining Experience (medium RPA / RePL category upgrade) Exemption 2025', scope: 'all', expiry: '2028-09-30', excludes: [], note: '' },
-          { id: 'auth-night', code: 'Night VLOS', title: 'Night operations under the ReOC (Part 101 MOS and the operations manual night procedures)', scope: 'all', expiry: '', excludes: [], note: '' },
+          { id: 'auth-oonp0079', code: 'CASA.OONP.0079', title: 'Over or near people (OONP)', scope: 'operator', expiry: '', needFor: ['OONP'], excludes: ['EVLOS', 'Night', 'Swarm'], exclusionMode: 'manual', note: 'Schedule 1.3 lists EVLOS, night and swarm. Read with the CASA delegate as applying only where these are not already approved in the operations manual (ours approves EVLOS and night). Written CASA confirmation pending.' },
+          { id: 'auth-evlos0346', code: 'CASA.EVLOS.0346', title: 'Extended visual line of sight (EVLOS)', scope: 'operator', expiry: '', needFor: ['EVLOS'], excludes: [], note: '' },
+          { id: 'auth-casa2025', code: 'CASA 20/25', title: 'Operation of Certain Unmanned Aircraft and Rockets – Directions Instrument 2025', scope: 'all', expiry: '2028-03-31', needFor: [], excludes: [], note: 'Height, 30 m people safety zone, public safety areas, one RPA at a time.' },
+          { id: 'auth-ex8725', code: 'CASA EX87/25', title: 'Obtaining Experience (medium RPA / RePL category upgrade) Exemption 2025', scope: 'all', expiry: '2028-09-30', needFor: [], excludes: [], note: '' },
+          { id: 'auth-night', code: 'Night VLOS', title: 'Night operations under the ReOC (Part 101 MOS and the operations manual night procedures)', scope: 'all', expiry: '', needFor: ['Night'], excludes: [], note: '' },
         ];
         const officialAuthList = (dbObj) => (dbObj && Array.isArray(dbObj.officialAuths)) ? dbObj.officialAuths : DEFAULT_OFFICIAL_AUTHS;
         const authSelected = (text, a) => !!a.code && String(text || '').toLowerCase().includes(a.code.toLowerCase());
@@ -3257,6 +3257,42 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const j = jsaObj || {}, ops = j.operationTypes || [], night = ops.includes('NVLOS') || /night/i.test(j.timeOfDay || '');
           return (a.excludes || []).filter(x => x === 'Night' ? night : x === 'Swarm' ? false : ops.includes(x));
         };
+        // v7.4: instrument copies (a scan or PDF of the CASA instrument) and which kinds of job need them
+        const AUTH_NEED_KINDS = ['OONP', 'EVLOS', 'Night', 'BVLOS'];
+        const authNeedFor = (a) => Array.isArray(a.needFor) ? a.needFor
+          : /oonp/i.test(a.code || '') ? ['OONP'] : /\bbvlos/i.test(a.code || '') ? ['BVLOS'] : /evlos/i.test(a.code || '') ? ['EVLOS'] : /night/i.test((a.code || '') + ' ' + (a.id || '')) ? ['Night'] : [];
+        const jobNeedKinds = (jsaObj, oonpOn) => { const j = jsaObj || {}, ops = j.operationTypes || [];
+          return AUTH_NEED_KINDS.filter(k => k === 'Night' ? (ops.includes('NVLOS') || /night/i.test(j.timeOfDay || '')) : k === 'OONP' ? (ops.includes('OONP') || !!oonpOn) : ops.includes(k)); };
+        const authAttached = (a, appr, required, chosen) => { const m = (appr && appr.authAttach) || {}; return a.file ? (m[a.id] !== undefined ? !!m[a.id] : (required || chosen)) : false; };
+        const authExpiryState = (a, onDate) => { if (!a.expiry) return null; const fmtDate = (iso) => { const [y, m, d] = String(iso).split('-'); return d ? `${d}/${m}/${y}` : iso; }; const d = Math.round((Date.parse(a.expiry) - Date.parse(onDate || localISODate())) / 864e5);
+          return d < 0 ? { bad: true, label: 'Expired ' + fmtDate(a.expiry) } : d <= 30 ? { soon: true, label: 'Expires ' + fmtDate(a.expiry) + ' (' + d + ' d)' } : { label: 'Valid to ' + fmtDate(a.expiry) }; };
+        let pdfjsP = null;
+        const loadPdfJs = () => pdfjsP || (pdfjsP = new Promise((res, rej) => {
+          if (window.pdfjsLib) return res(window.pdfjsLib);
+          const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          sc.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); } catch (e) { rej(e); } };
+          sc.onerror = () => { pdfjsP = null; rej(new Error('PDF reader unavailable offline')); }; document.head.appendChild(sc);
+        }));
+        // read an uploaded instrument; PDFs are also turned into page images (up to 8) so they print inside the plan PDF
+        const readInstrumentFile = (file) => new Promise((res, rej) => {
+          if (!file) return rej(new Error('No file'));
+          if (file.size > 15 * 1048576) return rej(new Error('That file is over 15 MB. Save a smaller scan or PDF and try again.'));
+          const fr = new FileReader();
+          fr.onerror = () => rej(new Error('Couldn\'t read the file'));
+          fr.onload = async () => {
+            const out = { name: file.name, type: file.type || '', size: file.size, data: fr.result, at: new Date().toISOString() };
+            if (out.type === 'application/pdf') {
+              try {
+                const lib = await loadPdfJs(); const bin = atob(String(fr.result).split(',')[1] || ''); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const doc = await lib.getDocument({ data: bytes }).promise; out.pageCount = doc.numPages; out.pages = [];
+                for (let n = 1; n <= Math.min(8, doc.numPages); n++) { const pg = await doc.getPage(n); const vp = pg.getViewport({ scale: 1.6 }); const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+                  await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise; out.pages.push(c.toDataURL('image/jpeg', 0.82)); }
+              } catch (e) { out.pages = null; out.pageNote = String(e.message || e); }
+            }
+            res(out);
+          };
+          fr.readAsDataURL(file);
+        });
 
         // Checks every expiry that matters for one job against the job's own dates (not today's date):
         // company items from the Compliance Calendar, the pilots named on the job, and the aircraft selected.
@@ -4779,6 +4815,20 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             });
           };
 
+          // v7.4: instrument copies
+          const [authBusy, setAuthBusy] = useState(null);
+          const uploadAuthFile = async (id, file) => {
+            if (!file) return; setAuthBusy(id);
+            try {
+              const f = await readInstrumentFile(file);
+              setDb(prev => { const list = officialAuthList(prev).map(x => x.id === id ? { ...x, file: f } : x); const newDb = { ...prev, officialAuths: list };
+                if (dbSaveTimer.current) clearTimeout(dbSaveTimer.current); dbSaveTimer.current = setTimeout(() => { if (dbReadyRef.current) wdStore.save(newDb); }, 400); return newDb; });
+            } catch (e) { alert(e.message || String(e)); }
+            setAuthBusy(null);
+          };
+          const openAuthFile = (x) => { const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); try { const w = window.open(); if (!w) return; if (x.file.type === 'application/pdf') w.document.write('<title>' + esc(x.code || 'Instrument') + '</title><iframe src="' + x.file.data + '" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>');
+            else w.document.write('<title>' + esc(x.code || 'Instrument') + '</title><img src="' + x.file.data + '" style="max-width:100%">'); w.document.close(); } catch (e) {} };
+
           const [dbInputAssessor, setDbInputAssessor] = useState('');
           const [batteryFilter, setBatteryFilter] = useState('active');
 
@@ -5659,6 +5709,23 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (siteAttachments.length > 0) {
               P.push('<div style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin:0 0 8pt;break-before:page;"><span style="opacity:0.7;font-size:8pt;">Appendix A</span><span style="font-size:13pt;font-weight:800;margin-left:8pt;">Site Attachments</span></div>');
               P.push(attHtml);
+            }
+            // v7.4: copies of the instruments attached to this job
+            {
+              const need = jobNeedKinds(jsa, oonpMode);
+              const inst = officialAuthList(db).filter(x => authAttached(x, approval, authNeedFor(x).some(k => need.includes(k)), authSelected(approval.officialAuth, x)));
+              if (inst.length) {
+                const ex = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+                P.push('<div data-pdf-instruments="1" style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin:0 0 8pt;break-before:page;"><span style="opacity:0.7;font-size:8pt;">Appendix ' + (siteAttachments.length > 0 ? 'B' : 'A') + '</span><span style="font-size:13pt;font-weight:800;margin-left:8pt;">Authorisation Instruments</span></div>');
+                inst.forEach((x, i) => {
+                  const f = x.file, es = authExpiryState(x, ov.operationDate);
+                  P.push('<div style="' + (i ? 'break-before:page;' : '') + 'border:1px solid '+S2+';border-radius:4pt;padding:6pt 8pt;margin-bottom:6pt;background:#f8fafc;"><div style="font-size:10pt;font-weight:800;color:'+NV+';">' + ex(x.code) + '</div><div style="font-size:8pt;color:'+S6+';">' + ex(x.title) + (es ? ' · ' + ex(es.bad ? 'EXPIRED ' + x.expiry : es.label) : '') + ' · copy: ' + ex(f.name) + '</div></div>');
+                  const imgs = f.type && f.type.startsWith('image/') ? [f.data] : (f.pages || []);
+                  imgs.forEach((src, k) => P.push('<div data-pdf-instrument-page="1" style="' + (k ? 'break-before:page;' : '') + 'text-align:center;"><img src="' + src + '" style="max-width:100%;max-height:245mm;object-fit:contain;border:1px solid '+S2+';"/></div>'));
+                  if (!imgs.length) P.push('<div style="font-size:8pt;color:'+S6+';font-style:italic;">The PDF copy of this instrument (' + ex(f.name) + ') is held in the planner and should be appended when distributing.</div>');
+                  else if (f.pageCount > imgs.length) P.push('<div style="font-size:7pt;color:'+S6+';font-style:italic;">First ' + imgs.length + ' of ' + f.pageCount + ' pages shown.</div>');
+                });
+              }
             }
             // Heatmap page — only if canvas has content or there are heatmap exclusion zones
             if (hasHeatContent) {
@@ -12605,6 +12672,32 @@ View in the Database & Settings tab.`);
                               );
                             })()}
                             <textarea name="officialAuth" value={approval.officialAuth} onChange={handleApprovalChange} onInput={handleAutoResize} rows={Math.max(2, String(approval.officialAuth || '').split('\n').length + 1)} className="auto-resize w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
+                            {(() => {
+                              // v7.4: copies of the instruments this job relies on, attached to the plan PDF
+                              const need = jobNeedKinds(jsa, oonpMode), list = officialAuthList(db);
+                              const rows = list.filter(x => authSelected(approval.officialAuth, x) || authNeedFor(x).some(k => need.includes(k)));
+                              if (!rows.length) return null;
+                              const setAtt = (id, v) => setApproval(prev => ({ ...prev, authAttach: { ...(prev.authAttach || {}), [id]: v } }));
+                              return (
+                                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 print:hidden" data-auth-attach="1">
+                                  <div className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1"><i className="fa-solid fa-paperclip mr-1"></i>Instrument copies for this job</div>
+                                  {need.length > 0 && <div className="text-xs text-slate-500 mb-2">This job includes {need.join(', ')}. Attach a copy of each instrument it relies on to the plan PDF.</div>}
+                                  <div className="divide-y divide-slate-200">{rows.map(x => {
+                                    const req = authNeedFor(x).filter(k => need.includes(k)), chosen = authSelected(approval.officialAuth, x), att = authAttached(x, approval, req.length > 0, chosen), es = authExpiryState(x, overview.operationDate);
+                                    return (
+                                      <div key={x.id} className="flex items-center gap-2 py-1.5 flex-wrap" data-auth-attach-row={x.id}>
+                                        <div className="flex-1 min-w-[12rem]">
+                                          <div className="text-sm font-semibold text-slate-800">{x.code}{req.length > 0 && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">needed: {req.join(', ')}</span>}</div>
+                                          <div className="text-xs text-slate-500">{x.title}{es && <span data-auth-attach-exp={es.bad ? 'expired' : es.soon ? 'soon' : 'ok'} className={`ml-1.5 font-semibold ${es.bad ? 'text-rose-600' : es.soon ? 'text-amber-600' : 'text-emerald-700'}`}>{es.bad ? 'Expired by the job date (' + fmtDate(x.expiry) + ')' : es.label}</span>}</div>
+                                          {req.length > 0 && !chosen && <button type="button" data-auth-add-chip={x.id} onClick={() => setApproval(prev => ({ ...prev, officialAuth: authToggle(prev.officialAuth, x) }))} className="text-xs text-violet-700 underline mt-0.5">Add {x.code} to the authorisation reference</button>}
+                                        </div>
+                                        {x.file
+                                          ? <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer"><input type="checkbox" data-auth-attach-toggle={x.id} checked={att} onChange={e => setAtt(x.id, e.target.checked)} />Attach to PDF <span className="font-normal text-slate-400 max-w-[8rem] truncate">({x.file.name})</span></label>
+                                          : <label className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded border border-dashed border-slate-300 text-slate-600 hover:bg-white cursor-pointer" data-auth-attach-upload={x.id}><i className="fa-solid fa-upload"></i>{authBusy === x.id ? 'Reading…' : 'Upload a copy'}<input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>}
+                                      </div>);
+                                  })}</div>
+                                </div>);
+                            })()}
                           </div>
                           <div className="md:col-span-2">
                             <div className="flex justify-between items-center mb-1">
@@ -13720,16 +13813,30 @@ View in the Database & Settings tab.`);
                                       <button data-auth-add="1" onClick={() => save([...list, { id: 'auth-' + Date.now(), code: '', title: '', scope: 'operator', expiry: '', excludes: [], note: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"><i className="fa-solid fa-plus mr-1"></i>Add</button>
                                     </div>
                                   </div>
-                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation.</p>
+                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation. Upload a copy of each instrument and tick what it's <b>needed for</b>: a job that includes OONP, EVLOS, night or BVLOS offers that copy as an attachment to its plan PDF.</p>
                                   <div className="overflow-x-auto">
                                     <table className="w-full text-xs">
-                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
+                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1" title="Jobs of these kinds need this instrument; its copy is offered as a PDF attachment">Needed for</th><th className="px-1.5 py-1">Copy of instrument</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
                                       <tbody>{list.map(x => (
                                         <tr key={x.id} className="border-t border-slate-100 align-top" data-auth-row={x.id}>
                                           <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0079" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
                                           <td className="px-1.5 py-1"><input value={x.title || ''} placeholder="What it covers" onChange={e => upd(x.id, 'title', e.target.value)} className={inp + ' w-full min-w-[12rem]'} /></td>
                                           <td className="px-1.5 py-1"><select value={x.scope || 'operator'} onChange={e => upd(x.id, 'scope', e.target.value)} className={inp}><option value="operator">Your approval</option><option value="all">All operators</option></select></td>
-                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} /></td>
+                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} />
+                                            {(() => { const es = authExpiryState(x); return es && (es.bad || es.soon) ? <div data-auth-exp={es.bad ? 'expired' : 'soon'} className={`text-[10px] font-semibold mt-0.5 ${es.bad ? 'text-rose-600' : 'text-amber-600'}`}>{es.bad ? 'Expired' : 'Expires soon'}</div> : null; })()}</td>
+                                          <td className="px-1.5 py-1 whitespace-nowrap" data-auth-needfor={x.id}>{AUTH_NEED_KINDS.map(t => (
+                                            <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" data-needfor={t} checked={authNeedFor(x).includes(t)} onChange={e => upd(x.id, 'needFor', e.target.checked ? [...authNeedFor(x), t] : authNeedFor(x).filter(y => y !== t))} />{t}</label>
+                                          ))}</td>
+                                          <td className="px-1.5 py-1 whitespace-nowrap" data-auth-file={x.id}>
+                                            {x.file ? <div className="flex items-center gap-1.5">
+                                                <button type="button" onClick={() => openAuthFile(x)} data-auth-view={x.id} className="text-blue-700 hover:underline max-w-[9rem] truncate" title={x.file.name}><i className={`fa-solid ${x.file.type === 'application/pdf' ? 'fa-file-pdf text-rose-600' : 'fa-file-image text-sky-600'} mr-1`}></i>{x.file.name}</button>
+                                                <label className="text-slate-500 hover:text-blue-700 cursor-pointer" title="Replace"><i className="fa-solid fa-arrows-rotate"></i><input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>
+                                                <button type="button" title="Remove the copy" onClick={() => { if (window.confirm('Remove the uploaded copy of ' + (x.code || 'this instrument') + '?')) upd(x.id, 'file', null); }} className="text-slate-400 hover:text-red-600"><i className="fa-solid fa-xmark"></i></button>
+                                              </div>
+                                              : <label className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 cursor-pointer" data-auth-upload={x.id}><i className="fa-solid fa-upload"></i>Upload PDF / scan<input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>}
+                                            {authBusy === x.id && <div className="text-[10px] text-slate-500 mt-0.5"><i className="fa-solid fa-spinner fa-spin mr-1"></i>Reading…</div>}
+                                            {x.file && x.file.type === 'application/pdf' && !x.file.pages && authBusy !== x.id && <div className="text-[10px] text-amber-700 mt-0.5" title={x.file.pageNote || ''}>Listed in the PDF only (pages couldn't be read offline). Replace it online to print the pages.</div>}
+                                          </td>
                                           <td className="px-1.5 py-1 whitespace-nowrap">{['EVLOS', 'Night', 'BVLOS'].map(t => (
                                             <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" checked={(x.excludes || []).includes(t)} onChange={e => upd(x.id, 'excludes', e.target.checked ? [...(x.excludes || []), t] : (x.excludes || []).filter(y => y !== t))} />{t}</label>
                                           ))}
