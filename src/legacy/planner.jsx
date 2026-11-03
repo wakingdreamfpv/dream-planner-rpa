@@ -4129,7 +4129,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 </div>
               </div>
 
-              {replay && <FlightReplay file={replay.file} video={replay.fl.video} flight={flights.find(f => f.id === replay.fl.id) || replay.fl} kg={fleetKg}
+              {replay && <FlightReplay file={replay.file} video={replay.fl.video} flight={flights.find(f => f.id === replay.fl.id) || replay.fl} kg={fleetKg} flags={replay.fl.telemetry ? tlmAnomalies(replay.fl.telemetry) : []} flagLabel={ANOM_LABEL}
                   title={rpa + ' · Flight ' + (replay.idx + 1) + (replay.fl.label ? ' · ' + replay.fl.label : '')}
                   sub={replay.fl.telemetry ? fmtTlmDate(replay.fl.telemetry.startMs) + ' ' + fmtTlmTime(replay.fl.telemetry.startMs) : 'No telemetry on this flight'}
                   company={(typeof window !== 'undefined' && window.wdCompany) || ''}

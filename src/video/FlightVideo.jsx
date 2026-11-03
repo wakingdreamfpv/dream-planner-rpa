@@ -216,7 +216,7 @@ async function exportVideo({ url, t, kg, offsetSec, opt, onProgress, cancelRef }
 }
 
 // ── Replay window ─────────────────────────────────────────────────────────────────────────────────────
-export function FlightReplay({ file, video, flight, kg, title, sub, company, onClose, onSaveOffset }) {
+export function FlightReplay({ file, video, flight, kg, title, sub, company, onClose, onSaveOffset, flags = [], flagLabel = {} }) {
   const t = flight.telemetry || null;
   const url = useMemo(() => URL.createObjectURL(file.type ? file : new Blob([file], { type: 'video/mp4' })), [file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
@@ -291,8 +291,13 @@ export function FlightReplay({ file, video, flight, kg, title, sub, company, onC
               <polyline points={aPts} fill="none" stroke="#60a5fa" strokeWidth="2" vectorEffect="non-scaling-stroke" />
               <polyline points={sPts} fill="none" stroke="#f59e0b" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
               <rect x={X(offset)} y="0" width={Math.max(0, X(offset + (vdur || 0)) - X(offset))} height={H} fill="#a78bfa" opacity="0.12" />
+              {flags.map((f, i) => <line key={'f' + i} data-replay-flag-mark={f.kind} x1={X(f.t)} x2={X(f.t)} y1="0" y2={H} stroke={f.sev === 'warn' ? '#fb923c' : '#c084fc'} strokeWidth="1.5" strokeDasharray="4,3" vectorEffect="non-scaling-stroke" />)}
               <line x1={X(cur + offset)} x2={X(cur + offset)} y1="0" y2={H} stroke="#fff" strokeWidth="2" vectorEffect="non-scaling-stroke" />
             </svg>
+            {flags.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2" data-replay-flags="1">{flags.map((f, i) => (
+              <button key={i} type="button" data-replay-flag={f.kind} onClick={() => seekTel(Math.max(0, f.t - 2))} title={f.text}
+                className={`text-[11px] px-2 py-0.5 rounded-full border ${f.sev === 'warn' ? 'border-orange-400/60 text-orange-200 hover:bg-orange-500/20' : 'border-violet-400/60 text-violet-200 hover:bg-violet-500/20'}`}>
+                {f.sev === 'warn' ? '⚑' : '◇'} {mmss(f.t)} {flagLabel[f.kind] || f.kind}</button>))}<span className="text-[11px] text-slate-500 self-center">tap a flag to watch it (from 2 s before)</span></div>}
             <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-slate-400 mt-1">
               <span><span className="text-sky-400">— altitude</span> · <span className="text-amber-400">— speed</span> · shaded = the video · click the chart to jump</span>
               <span className="flex items-center gap-1.5" data-replay-sync="1">Sync: telemetry is <b className="text-white font-mono">{offset >= 0 ? '+' : ''}{offset.toFixed(1)} s</b> ahead of the video
