@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.2.7';
+        const APP_VERSION = '7.3';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -8866,17 +8866,40 @@ View in the Database & Settings tab.`);
           // Built from the visible section headings, so it follows whatever the tab shows.
           const [dbSections, setDbSections] = useState([]);
           const [dbActiveSection, setDbActiveSection] = useState('');
+          // v7.3: Settings items fold to a one-line preview; which are open is remembered on this device
+          const [dbOpen, setDbOpen] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_db_open') || '{}') || {}; } catch (e) { return {}; } });
+          const setAllFolds = (v) => setDbOpen(() => { const next = { '*': v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
+          const setFold = (id, v) => setDbOpen(prev => { const next = { ...prev, [id]: v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
+          const dbFold = (id, title, icon, preview, body) => {
+            const open = dbOpen[id] !== undefined ? !!dbOpen[id] : !!dbOpen['*'];
+            return (
+              <section id={id} data-dbfold={id} data-fold-title={title} data-open={open ? '1' : '0'} className={`rounded-xl border ${open ? 'border-indigo-200 bg-white' : 'border-slate-200 bg-white hover:border-indigo-200'} scroll-mt-16`}>
+                <div role="button" tabIndex={0} data-fold-toggle={id} onClick={() => setFold(id, !open)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFold(id, !open); } }}
+                  className="flex items-center gap-3 px-4 py-2.5 cursor-pointer select-none">
+                  <i className={`fa-solid ${icon} text-indigo-500 w-5 text-center`}></i>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm text-slate-800">{title}</div>
+                    {!open && <div className="text-xs text-slate-500 truncate" data-fold-preview={id}>{preview}</div>}
+                  </div>
+                  <i className={`fa-solid fa-chevron-${open ? 'up' : 'down'} text-slate-400 text-xs`}></i>
+                </div>
+                {open && <div className="px-3 pb-3 sm:px-4 sm:pb-4" data-fold-body={id}>{body}</div>}
+              </section>
+            );
+          };
+          // one-line preview of a plan list: count + the latest three, each one click to open
+          const dbPlanPreview = (list, verb = 'Open') => {
+            const l = list || [];
+            if (!l.length) return <span>None yet</span>;
+            return <span className="inline-flex items-center gap-1.5 flex-wrap whitespace-normal"><b className="text-slate-700">{l.length}</b>
+              {l.slice(0, 3).map(pl => <button key={pl.id + (pl.completedAt || pl.savedAt || '')} type="button" data-fold-open-plan={pl.id} onClick={e => { e.stopPropagation(); handleLoadPlan(pl); }}
+                className="inline-flex items-center gap-1 max-w-[17rem] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 text-slate-700"><span className="truncate">{pl.title || pl.id}</span><span className="text-indigo-600 font-semibold shrink-0">{verb}</span></button>)}
+              {l.length > 3 && <span>+{l.length - 3} more</span>}</span>;
+          };
           const scanDbSections = () => {
             const root = document.querySelector('[data-db-root]'); if (!root) return;
-            const seen = {}, out = [];
-            root.querySelectorAll('h2, h3').forEach(h => {
-              if (!h.offsetParent || h.closest('[data-no-db-menu]')) return;
-              let label = (h.innerText || '').split('\n')[0].split(' · ')[0].replace(/\s+/g, ' ').trim();
-              if (!label || label.length > 60) return;
-              if (seen[label]) return; seen[label] = 1;
-              if (!h.id) h.id = 'dbsec-' + label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-              out.push({ id: h.id, label });
-            });
+            const out = [];
+            root.querySelectorAll('[data-dbfold]').forEach(el => { const g = el.closest('[data-db-group]'); const gt = g && g.querySelector('h2'); out.push({ id: el.id, label: el.dataset.foldTitle, group: gt ? gt.innerText.trim() : '' }); });
             setDbSections(prev => JSON.stringify(prev) === JSON.stringify(out) ? prev : out);
           };
           useEffect(() => {
@@ -8895,6 +8918,13 @@ View in the Database & Settings tab.`);
             return () => { clearTimeout(t); clearTimeout(pend); mo && mo.disconnect(); window.removeEventListener('scroll', onScroll); };
           }, [activeTab]); // eslint-disable-line
           const dbSectionsRef = useRef([]); dbSectionsRef.current = dbSections;
+          // v7.3: the section menu always fits the screen (its top moves while the page header scrolls away)
+          useEffect(() => {
+            if (activeTab !== 'database') return;
+            const fit = () => { const m = document.querySelector('[data-db-menu]'); if (!m) return; const top = m.getBoundingClientRect().top; m.style.maxHeight = Math.max(180, window.innerHeight - Math.max(0, top) - 16) + 'px'; };
+            const t = setTimeout(fit, 80); window.addEventListener('scroll', fit, { passive: true }); window.addEventListener('resize', fit);
+            return () => { clearTimeout(t); window.removeEventListener('scroll', fit); window.removeEventListener('resize', fit); };
+          }, [activeTab, dbSections.length]); // eslint-disable-line
           // v6.3: publish the fleet's RPA types for the cloud (pilots pick them in their induction)
           useEffect(() => { try { window.wdFleetTypes = Object.keys(db.fleet || {}); window.dispatchEvent(new Event('wd-fleet')); } catch (e) {} }, [db.fleet]);
           // v6.2: login status per crew member (from the account panel's bridge; CRP only, hosted app only)
@@ -9014,8 +9044,10 @@ View in the Database & Settings tab.`);
             openJob: openDashJob,
           };
           const jumpToDbSection = (id) => {
+            const fe = document.querySelector(`[data-dbfold="${id}"]`);
+            if (fe && fe.dataset.open !== '1' && !jumpToDbSection.busy) { jumpToDbSection.busy = true; setFold(id, true); setTimeout(() => { jumpToDbSection.busy = false; jumpToDbSection(id); }, 90); return; }
             const h = document.getElementById(id); if (!h) return;
-            const card = h.closest('.rounded-xl, .rounded-lg') || h;
+            const card = h.closest('[data-dbfold]') || h.closest('.rounded-xl, .rounded-lg') || h;
             const y = card.getBoundingClientRect().top + window.scrollY - (window.innerWidth < 768 ? 112 : 60); // v6.7: clear the sticky section picker on phones
             window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
             setDbActiveSection(id);
@@ -9651,8 +9683,8 @@ View in the Database & Settings tab.`);
               <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-3 md:mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-8 pb-24 md:pb-0">
                 
                 <div className="hidden md:block md:col-span-1 print:hidden">
-                  <div className="md:sticky md:top-16 space-y-3">
-                  <nav className="space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
+                  <div className={`md:sticky md:top-16 ${activeTab === 'database' ? 'flex flex-col gap-3 max-h-[calc(100dvh-5rem)]' : 'space-y-3'}`}>
+                  <nav data-side-nav="1" className={`${activeTab === 'database' ? 'wd-nav-compact shrink-0' : 'space-y-1'} bg-white p-3 rounded-xl shadow-sm border border-slate-200`}>
                     <button data-allow-locked="1" data-nav-home="1" onClick={() => setActiveTab('home')} className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === 'home' ? 'bg-violet-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
                       <i className={`fa-solid fa-house text-lg w-6 ${activeTab === 'home' ? '' : 'text-violet-600'}`}></i> Home
                     </button>
@@ -9689,17 +9721,18 @@ View in the Database & Settings tab.`);
                   </nav>
                   {/* v6.1: Database & Settings section menu (scrolls on its own) */}
                   {activeTab === 'database' && dbSections.length > 0 && (
-                    <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-db-menu="1">
+                    <div className="hidden md:flex flex-col min-h-0 flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-db-menu="1">
                       <div className="px-4 py-2.5 border-b border-slate-100 text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
                         <i className="fa-solid fa-list text-indigo-500"></i> Jump to a section
                       </div>
-                      <div className="overflow-y-auto p-2 space-y-0.5 wd-db-menu" style={{ maxHeight: 'calc(100dvh - 31rem)', minHeight: '10rem' }}>
-                        {dbSections.map(sec => (
-                          <button key={sec.id} type="button" data-allow-locked="1" data-db-jump={sec.id} onClick={() => jumpToDbSection(sec.id)}
+                      <div className="overflow-y-auto overscroll-contain p-2 space-y-0.5 wd-db-menu flex-1 min-h-0">
+                        {dbSections.map((sec, i) => (<React.Fragment key={sec.id}>
+                          {sec.group && (i === 0 || dbSections[i - 1].group !== sec.group) && <div className="px-3 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400" data-db-menu-group="1">{sec.group}</div>}
+                          <button type="button" data-allow-locked="1" data-db-jump={sec.id} onClick={() => jumpToDbSection(sec.id)}
                             className={`w-full text-left text-[13px] px-3 py-1.5 rounded-md transition-colors ${dbActiveSection === sec.id ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
                             {sec.label}
                           </button>
-                        ))}
+                        </React.Fragment>))}
                       </div>
                     </div>
                   )}
@@ -13279,101 +13312,20 @@ View in the Database & Settings tab.`);
                         <select data-db-jump-select="1" value={dbActiveSection || ''} onChange={e => { if (e.target.value) jumpToDbSection(e.target.value); }}
                           className="w-full px-3 py-2.5 text-sm font-semibold text-indigo-900 border border-indigo-200 rounded-lg bg-white shadow-sm">
                           <option value="">☰ Jump to a section…</option>
-                          {dbSections.map(sec => <option key={sec.id} value={sec.id}>{sec.label}</option>)}
+                          {[...new Set(dbSections.map(x => x.group))].map(g => <optgroup key={g || 'x'} label={g || 'Settings'}>{dbSections.filter(x => x.group === g).map(sec => <option key={sec.id} value={sec.id}>{sec.label}</option>)}</optgroup>)}
                         </select>
                       </div>
                     )}
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="bg-indigo-50 px-6 py-4 border-b border-indigo-100 flex items-center gap-2">
                         <i className="fa-solid fa-database text-lg text-indigo-600"></i>
-                        <h2 className="text-lg font-semibold text-slate-800">Fleet & Personnel Database</h2>
+                        <h2 className="text-lg font-semibold text-slate-800" data-no-db-menu="1">Database & Settings</h2>
                       </div>
                       <div className="p-6 space-y-8">
 
-                        {/* Saved Approved Plans */}
-                        <div className="border border-emerald-200 rounded-xl overflow-hidden shadow-sm">
-                          <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center gap-2">
-                            <i className="fa-solid fa-folder-open text-emerald-600"></i>
-                            <h3 className="font-semibold text-emerald-900 text-sm">Saved Approved Plans</h3>
-                            <span className="text-xs bg-emerald-200 text-emerald-800 font-bold px-2 py-0.5 rounded-full">{(db.savedPlans || []).length}</span>
-                          </div>
-                          {(!db.savedPlans || db.savedPlans.length === 0) ? (
-                            <div className="p-4 text-sm text-slate-400 italic text-center">No saved plans yet. Complete Section 3 and click "Save Approved Plan".</div>
-                          ) : (db.savedPlans || []).map(plan => (
-                            <div key={plan.id} className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${plan.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-100 text-emerald-700'}`}>
-                                    {plan.status === 'completed' ? '✓ Completed' : '⏳ Awaiting Flight'}
-                                  </span>
-                                  <span className="font-semibold text-slate-800 text-sm">{plan.title}</span>
-                                </div>
-                                <div className="text-xs text-slate-400 mt-0.5">
-                                  Saved {new Date(plan.savedAt).toLocaleString('en-AU', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})} · <span className="font-mono">{plan.id}</span>
-                                  {plan.overview && plan.overview.rpic && <span className="ml-2">· RPIC: {plan.overview.rpic}</span>}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button onClick={() => handleLoadPlan(plan)} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
-                                  <i className="fa-solid fa-folder-open text-[10px]"></i> Load
-                                </button>
-                                <button onClick={() => handleCopyPlan(plan)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
-                                  <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
-                                </button>
-                                <button onClick={() => { if (window.confirm(`Delete "${plan.title}"?`)) updateDb('savedPlans', (db.savedPlans||[]).filter(p => p.id !== plan.id)); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
-                                  <i className="fa-solid fa-trash-can"></i>
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Completed Flight Records */}
-                        <div className="border border-blue-200 rounded-xl overflow-hidden shadow-sm">
-                          <div className="bg-blue-50 px-4 py-3 border-b border-blue-200 flex items-center gap-2">
-                            <i className="fa-solid fa-circle-check text-blue-600"></i>
-                            <h3 className="font-semibold text-blue-900 text-sm">Completed Flight Records</h3>
-                            <span className="text-xs bg-blue-200 text-blue-800 font-bold px-2 py-0.5 rounded-full">{(db.completedFlights || []).length}</span>
-                          </div>
-                          {(!db.completedFlights || db.completedFlights.length === 0) ? (
-                            <div className="p-4 text-sm text-slate-400 italic text-center">No completed flights yet. Fill in the Flight Log and click "Log Completed Flight".</div>
-                          ) : (db.completedFlights || []).map(record => {
-                            const totalMins = record.overview && record.overview.rpaTypes
-                              ? record.overview.rpaTypes.reduce((sum, rpa) => {
-                                  const rl = ((record.log || {}).rpaLogs || {})[rpa] || {};
-                                  const flts = rl.flights && rl.flights.length > 0 ? rl.flights : [];
-                                  return sum + flts.reduce((s, f) => s + (parseInt(f.duration) || 0), 0);
-                                }, 0)
-                              : 0;
-                            return (
-                              <div key={record.id} className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">✓ Logged</span>
-                                    <span className="font-semibold text-slate-800 text-sm">{record.title}</span>
-                                  </div>
-                                  <div className="text-xs text-slate-400 mt-0.5">
-                                    {new Date(record.completedAt).toLocaleDateString('en-AU', {day:'2-digit',month:'short',year:'numeric'})}
-                                    {totalMins > 0 && <span className="ml-2">· {totalMins} mins</span>}
-                                    {record.overview && record.overview.rpic && <span className="ml-2">· RPIC: {record.overview.rpic}</span>}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <button onClick={() => handleLoadPlan(record)} className="text-xs bg-slate-600 hover:bg-slate-700 text-white px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
-                                    <i className="fa-solid fa-eye text-[10px]"></i> Review
-                                  </button>
-                                <button onClick={() => handleCopyPlan(record)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
-                                  <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
-                                </button>
-                                  <button onClick={() => { if (window.confirm(`Delete "${record.title}"?`)) updateDb('completedFlights', (db.completedFlights||[]).filter(r => r.id !== record.id)); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
-                                    <i className="fa-solid fa-trash-can"></i>
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
+                        {/* v7.3: grouped and folded; each item shows a one-line preview with quick actions */}
+                        <div className="flex items-center gap-3 text-xs -mb-4" data-fold-all="1"><span className="flex-1 text-slate-500">Tap a heading to open it. The preview line has quick actions.</span>
+                          <button type="button" onClick={() => setAllFolds(true)} className="text-indigo-700 font-semibold">Expand all</button><button type="button" onClick={() => setAllFolds(false)} className="text-indigo-700 font-semibold">Collapse all</button></div>
                         {/* Compliance & Expiry Alerts */}
                         {complianceAlerts.length > 0 && (
                           <div className={`border rounded-xl overflow-hidden shadow-sm ${complianceAlerts.some(a => a.severity === 'expired') ? 'border-red-300' : 'border-amber-300'}`}>
@@ -13399,154 +13351,9 @@ View in the Database & Settings tab.`);
                             </div>
                           </div>
                         )}
-
-                        {/* Import Operation Plan */}
-                        <div className="flex justify-between items-center bg-slate-100 p-4 rounded-lg border border-slate-200 flex-wrap gap-3">
-                            <div>
-                                <h3 className="font-bold text-slate-800 text-sm">Import Operation Plan</h3>
-                                <p className="text-xs text-slate-600 mt-1">Restore a single draft, approved, or completed plan from a JSON file — e.g. one recovered from an old printed PDF, or handed over from another device. Routes automatically into the matching list below.</p>
-                            </div>
-                            <label className="bg-slate-700 border border-slate-800 text-white hover:bg-slate-800 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm cursor-pointer flex items-center gap-1 flex-shrink-0">
-                                <i className="fa-solid fa-file-import"></i> Import Plan
-                                <input type="file" accept=".json" className="hidden" onChange={handleImportPlan} />
-                            </label>
-                        </div>
-
-                        {/* ── Risk Assessment Library (v5.50) ── */}
-                        {(() => {
-                          const names = Object.keys(customTemplates).sort((a, b) => a.localeCompare(b));
-                          const uniq = (n) => { let x = n, k = 2; while (customTemplates[x] || BUILTIN_RISK_TEMPLATE_NAMES[x]) x = n + ' (' + (k++) + ')'; return x; };
-                          const saveAll = (next) => { setCustomTemplates(next); try { localStorage.setItem('customRiskTemplates', JSON.stringify(next)); } catch (e) {} };
-                          const exportJson = (name, list) => wdDownload(fileSafe(name) + '.risk.json', JSON.stringify({ _type: 'wdfpv_risk_template', version: 1, name, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, risks: list }, null, 1));
-                          const exportCsv = (name, list) => wdDownload(fileSafe(name) + '.csv', '﻿' + risksToCsv(list), 'text/csv');
-                          const useInJob = (name, list) => {
-                            if (approval.flightAuthApproved) { alert('This job is approved and locked. Amend the plan first (Authorisation tab) to change its risk register.'); return; }
-                            const empty = risks.every(r => !String(r.hazard || '').trim());
-                            const replace = empty || window.confirm(`Use "${name}" in the open job (${getOpTitle(overview)})?\n\nOK: REPLACE the job's current ${risks.length} risk(s)\nCancel: ADD these ${list.length} risks to the end`);
-                            const fresh = list.map((r, i) => ({ ...r, id: Date.now() + Math.random() + i }));
-                            setRisks(replace ? fresh : [...risks, ...fresh.map((r, i) => ({ ...r, refNo: String(risks.length + i + 1).padStart(3, '0') }))]);
-                            setActiveTab('jsa');
-                          };
-                          const onImport = async (e) => {
-                            const files = Array.from(e.target.files || []); e.target.value = ''; if (!files.length) return;
-                            const raw = await wdReadFiles(files, 'text', 'Importing risk assessment' + (files.length > 1 ? 's' : ''));
-                            const next = { ...customTemplates }, done = [], bad = [];
-                            raw.forEach(x => {
-                              if (x.error) { bad.push(x.name + ': ' + x.error); return; }
-                              try {
-                                parseRiskImport(x.result, x.name).forEach(t => {
-                                  if (!t.risks.length) { bad.push(x.name + ': no hazards found'); return; }
-                                  let n = t.name; if (next[n] || BUILTIN_RISK_TEMPLATE_NAMES[n]) { n = (() => { let y = n, k = 2; while (next[y] || BUILTIN_RISK_TEMPLATE_NAMES[y]) y = t.name + ' (' + (k++) + ')'; return y; })(); }
-                                  next[n] = t.risks; done.push(`${n} — ${t.risks.length} risk${t.risks.length === 1 ? '' : 's'}`);
-                                });
-                              } catch (err) { bad.push(x.name + ': ' + err.message); }
-                            });
-                            if (done.length) saveAll(next);
-                            if (bad.length) wdProgress.fail(bad.length + ' file(s) not imported'); else wdProgress.finish(done.length + ' imported');
-                            alert((done.length ? '✅ Imported into the Risk Assessment Library:\n' + done.map(d => '• ' + d).join('\n') : 'Nothing imported.') + (bad.length ? '\n\n⚠ Not imported:\n' + bad.map(b => '• ' + b).join('\n') : ''));
-                            setRiskLibOpen(true);
-                          };
-                          const Row = ({ name, list, builtin, keyId }) => {
-                            const open = riskLibView === keyId;
-                            return (
-                              <div className="px-4 py-2.5" data-risklib-row={builtin ? 'builtin' : 'custom'} data-risklib-name={name}>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <button type="button" onClick={() => setRiskLibView(open ? null : keyId)} className="flex-1 min-w-[12rem] text-left text-sm font-semibold text-slate-800 hover:text-indigo-700">
-                                    <i className={`fa-solid ${open ? 'fa-chevron-down' : 'fa-chevron-right'} text-[10px] mr-1.5 text-slate-400`}></i>{name}
-                                    <span className="ml-2 text-xs font-normal text-slate-500">{list.length} risk{list.length === 1 ? '' : 's'}</span>
-                                    {builtin && <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">built-in</span>}
-                                  </button>
-                                  <button type="button" data-risklib-use="1" onClick={() => useInJob(name, list)} className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold">Use in open job</button>
-                                  <button type="button" onClick={() => exportJson(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Download as a file you can import again or share">JSON</button>
-                                  <button type="button" onClick={() => exportCsv(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Open in Excel / Google Sheets">CSV</button>
-                                  <button type="button" data-risklib-dup="1" onClick={() => { const n = window.prompt('Name for the copy:', uniq(name + ' (copy)')); if (n && n.trim()) saveAll({ ...customTemplates, [uniq(n.trim())]: list.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Duplicate</button>
-                                  {!builtin && <>
-                                    <button type="button" data-risklib-rename="1" onClick={() => { const n = window.prompt('Rename to:', name); if (!n || !n.trim() || n.trim() === name) return; const nn = uniq(n.trim()); const next = {}; Object.keys(customTemplates).forEach(k => { next[k === name ? nn : k] = customTemplates[k]; }); saveAll(next); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Rename</button>
-                                    <button type="button" onClick={() => { if (!risks.some(r => String(r.hazard || '').trim())) { alert('The open job has no risks to save.'); return; } if (window.confirm(`Replace "${name}" with the open job's ${risks.length} risk(s)?`)) saveAll({ ...customTemplates, [name]: risks.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Overwrite this template with the risk register of the job that's open now">Update from job</button>
-                                    <button type="button" data-risklib-del="1" onClick={() => { if (!window.confirm(`Delete the risk assessment "${name}"? Jobs that already use it keep their copy.`)) return; const next = { ...customTemplates }; delete next[name]; saveAll(next); }} className="text-xs text-slate-400 hover:text-red-600 px-1"><i className="fa-solid fa-trash-can"></i></button>
-                                  </>}
-                                </div>
-                                {open && (
-                                  <div className="mt-2 overflow-x-auto">
-                                    <table className="w-full text-[11px] border border-slate-200">
-                                      <thead className="bg-slate-50 text-slate-500 uppercase text-[9px]"><tr><th className="px-1.5 py-1 text-left">Ref</th><th className="px-1.5 py-1 text-left">Hazard</th><th className="px-1.5 py-1">Initial</th><th className="px-1.5 py-1">Residual</th><th className="px-1.5 py-1 text-left">Owner</th></tr></thead>
-                                      <tbody>{list.map((r, i) => (
-                                        <tr key={i} className="border-t border-slate-100 align-top">
-                                          <td className="px-1.5 py-1 font-mono text-slate-400">{r.refNo || String(i + 1).padStart(3, '0')}</td>
-                                          <td className="px-1.5 py-1"><div className="font-semibold text-slate-800">{r.hazard}</div>{r.existingControls && <div className="text-slate-500 line-clamp-2">{r.existingControls}</div>}</td>
-                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.initL, r.initC)}>{r.initL}{r.initC}</span></td>
-                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.resL, r.resC)}>{r.resL}{r.resC}</span></td>
-                                          <td className="px-1.5 py-1 text-slate-600">{r.riskOwner}</td>
-                                        </tr>))}</tbody>
-                                    </table>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          };
-                          return (
-                            <div className="border border-indigo-200 rounded-xl overflow-hidden shadow-sm" data-risklib="1">
-                              <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center gap-2 flex-wrap">
-                                <button type="button" onClick={() => setRiskLibOpen(!riskLibOpen)} className="flex items-center gap-2 flex-1 text-left">
-                                  <i className="fa-solid fa-shield-halved text-indigo-600"></i>
-                                  <h3 className="font-semibold text-indigo-900 text-sm">Risk Assessment Library</h3>
-                                  <span className="text-xs bg-indigo-200 text-indigo-800 font-bold px-2 py-0.5 rounded-full">{names.length} saved · {Object.keys(BUILTIN_RISK_TEMPLATE_NAMES).length} built-in</span>
-                                  <i className={`fa-solid ${riskLibOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-indigo-500 text-xs ml-1`}></i>
-                                </button>
-                                <label className="text-xs px-2.5 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold cursor-pointer" title="JSON (from this app or a plan file) or CSV (from Excel / Google Sheets). Several files at once is fine.">
-                                  <i className="fa-solid fa-file-import mr-1"></i>Import
-                                  <input type="file" accept=".json,.csv,application/json,text/csv" multiple className="hidden" data-risklib-import="1" onChange={onImport} />
-                                </label>
-                                <button type="button" onClick={handleSaveTemplate} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100 font-semibold" title="Save the risk register of the job that's open now">Save open job's risks</button>
-                                {names.length > 0 && <button type="button" onClick={() => wdDownload('risk-assessment-library_' + localISODate() + '.json', JSON.stringify({ _type: 'wdfpv_risk_library', version: 1, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, templates: customTemplates }, null, 1))} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100">Export all</button>}
-                              </div>
-                              {riskLibOpen && (<>
-                                <div className="px-4 py-2 text-[11px] text-slate-500 bg-white border-b border-indigo-100">Import accepts this app's risk files, "Export all" libraries, full plan files (takes the plan's risk register) and CSV from Excel / Google Sheets with columns: {RISK_CSV_COLS.map(c => c[1]).join(', ')}. Likelihood 1–5, consequence A–E (or the words, e.g. "Moderate").</div>
-                                <div className="divide-y divide-indigo-100 max-h-[32rem] overflow-y-auto bg-white">
-                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50/50">Your risk assessments</div>
-                                  {names.length === 0 && <div className="px-4 py-3 text-sm text-slate-400 italic">None yet. Import a file, or save the open job's register.</div>}
-                                  {names.map(n => <Row key={'c_' + n} keyId={'c_' + n} name={n} list={customTemplates[n] || []} />)}
-                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50">Built-in (read-only — Duplicate to change)</div>
-                                  {Object.entries(BUILTIN_RISK_TEMPLATE_NAMES).filter(([k]) => riskTemplates[k]).map(([k, n]) => <Row key={'b_' + k} keyId={'b_' + k} name={n} list={riskTemplates[k]} builtin />)}
-                                </div>
-                              </>)}
-                            </div>
-                          );
-                        })()}
-
-                        {/* ── Recovery copies (v5.45) ── */}
-                        {(() => {
-                          const [open, setOpen] = [recOpen, setRecOpen];
-                          return (
-                            <div className="border border-sky-200 rounded-xl overflow-hidden shadow-sm" data-recovery="1">
-                              <button type="button" data-allow-locked="1" onClick={() => { const n = !open; setRecOpen(n); if (n) wdStore.listRecovery().then(setRecList); }} className="w-full bg-sky-50 px-4 py-3 border-b border-sky-200 flex items-center gap-2 text-left">
-                                <i className="fa-solid fa-life-ring text-sky-600"></i>
-                                <h3 className="font-semibold text-sky-900 text-sm flex-1">Recovery copies <span className="font-normal text-sky-700 text-xs">· autosaved every few seconds while you edit, in every tab, kept 30 days</span></h3>
-                                <i className={`fa-solid ${open ? 'fa-chevron-up' : 'fa-chevron-down'} text-sky-600 text-xs`}></i>
-                              </button>
-                              {open && (
-                                <div className="max-h-80 overflow-y-auto divide-y divide-sky-100">
-                                  {!recList.length && <div className="p-4 text-sm text-slate-400 italic text-center">No recovery copies yet.</div>}
-                                  {recList.map(r => (
-                                    <div key={r.key} className="px-4 py-2.5">
-                                      <div className="text-sm font-semibold text-slate-800">{r.copies[0].title || r.copies[0].id} <span className="font-mono text-xs text-slate-400">{r.copies[0].id}</span></div>
-                                      <div className="flex flex-wrap gap-1.5 mt-1">
-                                        {r.copies.map((c, i) => (
-                                          <button key={i} type="button" data-rec-restore={r.key + '#' + i} onClick={() => { if (window.confirm(`Open the copy of "${c.title || c.id}" autosaved ${new Date(c.savedAt).toLocaleString('en-AU')}?\n\nIt replaces the form on screen (save the current job first if you need it). Nothing in the database changes until you save.`)) { handleLoadPlan(c, { silent: true }); setTimeout(() => setDirty(true), 2600); setActiveTab('preliminary'); } }}
-                                            className="text-xs px-2 py-1 rounded border border-sky-200 bg-white text-sky-800 hover:bg-sky-100">
-                                            {new Date(c.savedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{i === 0 ? ' (latest)' : ''}{c.title && c.title !== r.copies[0].title ? ' · ' + c.title : ''}
-                                          </button>
-                                        ))}
-                                        <button type="button" onClick={() => { if (window.confirm('Delete all recovery copies of this job?')) wdStore.deleteRecovery(r.key).then(() => wdStore.listRecovery().then(setRecList)); }} className="text-xs text-slate-400 hover:text-red-600 ml-auto">Delete</button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-
+                        <div data-db-group="jobs" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-folder-open text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Jobs & records</h2><span className="text-xs text-slate-500">plans, flight records, imports</span></div>
+                        {dbFold('dbsec-drafts', 'Draft flight plans', 'fa-pen-to-square', dbPlanPreview(db.draftPlans, 'Resume'), (<>
                         {/* ── Draft Flight Plans ── */}
                         <div className="border border-amber-200 rounded-xl overflow-hidden shadow-sm">
                           <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex items-center gap-2 flex-wrap">
@@ -13589,7 +13396,8 @@ View in the Database & Settings tab.`);
                             </div>
                           )}
                         </div>
-
+                        </>))}
+                        {dbFold('dbsec-approved', 'Saved approved plans', 'fa-folder-open', dbPlanPreview(db.savedPlans), (<>
                         {/* ── Saved Approved Plans ── */}
                         <div className="border border-emerald-200 rounded-xl overflow-hidden shadow-sm">
                           <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center gap-2 flex-wrap">
@@ -13634,7 +13442,8 @@ View in the Database & Settings tab.`);
                             </div>
                           )}
                         </div>
-
+                        </>))}
+                        {dbFold('dbsec-completed', 'Completed flight records', 'fa-circle-check', dbPlanPreview(db.completedFlights), (<>
                         {/* ── Completed Flight Records ── */}
                         <div className="border border-blue-200 rounded-xl overflow-hidden shadow-sm">
                           <div className="bg-blue-50 px-4 py-3 border-b border-blue-200 flex items-center gap-2 flex-wrap">
@@ -13684,7 +13493,129 @@ View in the Database & Settings tab.`);
                             </div>
                           )}
                         </div>
-
+                        </>))}
+                        {dbFold('dbsec-import', 'Import a job', 'fa-file-import', <span>Bring in a plan file (.json) exported from the planner</span>, (<>
+                        {/* Import Operation Plan */}
+                        <div className="flex justify-between items-center bg-slate-100 p-4 rounded-lg border border-slate-200 flex-wrap gap-3">
+                            <div>
+                                <h3 className="font-bold text-slate-800 text-sm">Import Operation Plan</h3>
+                                <p className="text-xs text-slate-600 mt-1">Restore a single draft, approved, or completed plan from a JSON file — e.g. one recovered from an old printed PDF, or handed over from another device. Routes automatically into the matching list below.</p>
+                            </div>
+                            <label className="bg-slate-700 border border-slate-800 text-white hover:bg-slate-800 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm cursor-pointer flex items-center gap-1 flex-shrink-0">
+                                <i className="fa-solid fa-file-import"></i> Import Plan
+                                <input type="file" accept=".json" className="hidden" onChange={handleImportPlan} />
+                            </label>
+                        </div>
+                        </>))}
+                        {dbFold('dbsec-recovery', 'Recovery copies', 'fa-clock-rotate-left', <span>Autosaved copies of jobs while you edit, to restore after a crash</span>, (<>
+                        {/* ── Recovery copies (v5.45) ── */}
+                        {(() => {
+                          const [open, setOpen] = [recOpen, setRecOpen];
+                          return (
+                            <div className="border border-sky-200 rounded-xl overflow-hidden shadow-sm" data-recovery="1">
+                              <button type="button" data-allow-locked="1" onClick={() => { const n = !open; setRecOpen(n); if (n) wdStore.listRecovery().then(setRecList); }} className="w-full bg-sky-50 px-4 py-3 border-b border-sky-200 flex items-center gap-2 text-left">
+                                <i className="fa-solid fa-life-ring text-sky-600"></i>
+                                <h3 className="font-semibold text-sky-900 text-sm flex-1">Recovery copies <span className="font-normal text-sky-700 text-xs">· autosaved every few seconds while you edit, in every tab, kept 30 days</span></h3>
+                                <i className={`fa-solid ${open ? 'fa-chevron-up' : 'fa-chevron-down'} text-sky-600 text-xs`}></i>
+                              </button>
+                              {open && (
+                                <div className="max-h-80 overflow-y-auto divide-y divide-sky-100">
+                                  {!recList.length && <div className="p-4 text-sm text-slate-400 italic text-center">No recovery copies yet.</div>}
+                                  {recList.map(r => (
+                                    <div key={r.key} className="px-4 py-2.5">
+                                      <div className="text-sm font-semibold text-slate-800">{r.copies[0].title || r.copies[0].id} <span className="font-mono text-xs text-slate-400">{r.copies[0].id}</span></div>
+                                      <div className="flex flex-wrap gap-1.5 mt-1">
+                                        {r.copies.map((c, i) => (
+                                          <button key={i} type="button" data-rec-restore={r.key + '#' + i} onClick={() => { if (window.confirm(`Open the copy of "${c.title || c.id}" autosaved ${new Date(c.savedAt).toLocaleString('en-AU')}?\n\nIt replaces the form on screen (save the current job first if you need it). Nothing in the database changes until you save.`)) { handleLoadPlan(c, { silent: true }); setTimeout(() => setDirty(true), 2600); setActiveTab('preliminary'); } }}
+                                            className="text-xs px-2 py-1 rounded border border-sky-200 bg-white text-sky-800 hover:bg-sky-100">
+                                            {new Date(c.savedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{i === 0 ? ' (latest)' : ''}{c.title && c.title !== r.copies[0].title ? ' · ' + c.title : ''}
+                                          </button>
+                                        ))}
+                                        <button type="button" onClick={() => { if (window.confirm('Delete all recovery copies of this job?')) wdStore.deleteRecovery(r.key).then(() => wdStore.listRecovery().then(setRecList)); }} className="text-xs text-slate-400 hover:text-red-600 ml-auto">Delete</button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        </>))}
+                        </div>
+                        <div data-db-group="org" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-building text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Your organisation</h2><span className="text-xs text-slate-500">company, approvals and people</span></div>
+                        {dbFold('dbsec-company', 'Company profile', 'fa-building', <span>{(db.companyProfile && db.companyProfile.name) || 'Not set up'}{db.companyProfile && db.companyProfile.reocNumber ? ' · ReOC ' + db.companyProfile.reocNumber : ''}{db.companyProfile && db.companyProfile.companyArn ? ' · ARN ' + db.companyProfile.companyArn : ''}</span>, (<>
+                        {/* Company Profile */}
+                        <div className="border border-blue-200 rounded-xl overflow-hidden shadow-sm">
+                          <div className="bg-blue-50 px-4 py-3 border-b border-blue-200 flex items-center gap-2">
+                            <i className="fa-solid fa-building text-blue-600"></i>
+                            <h3 className="font-semibold text-blue-900 text-sm">Company Profile</h3>
+                          </div>
+                          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {[
+                              { name: 'name',        label: 'Company / Trading Name',   placeholder: 'e.g. Dream Flight RPA Operations' },
+                              { name: 'reocNumber',  label: 'ReOC Number',              placeholder: 'e.g. ReOC-XXXXX' },
+                              { name: 'companyArn',  label: 'Company ARN',              placeholder: 'e.g. 1234567' },
+                              { name: 'phone',       label: 'Company Phone',            placeholder: '+61 4xx xxx xxx' },
+                              { name: 'email',       label: 'Company Email',            placeholder: 'ops@yourcompany.com.au' },
+                              { name: 'address',     label: 'Address',                  placeholder: 'Street, Suburb, State, Postcode', span2: true },
+                            ].map(field => (
+                              <div key={field.name} className={field.span2 ? 'md:col-span-2' : ''}>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">{field.label}</label>
+                                <input type="text" name={field.name} value={(db.companyProfile || {})[field.name] || ''} onChange={handleCompanyProfileChange} placeholder={field.placeholder} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white" />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        </>))}
+                        {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
+                            {/* Official authorisations (v5.30) */}
+                            {(() => {
+                              const list = officialAuthList(db);
+                              const save = (next) => updateDb('officialAuths', next);
+                              const upd = (id, k, v) => save(list.map(x => x.id === id ? { ...x, [k]: v } : x));
+                              const inp = "text-xs px-1.5 py-1 border border-slate-200 rounded bg-white focus:ring-blue-400 focus:border-blue-400";
+                              const missingDefaults = DEFAULT_OFFICIAL_AUTHS.filter(dft => !list.some(x => x.id === dft.id || (x.code || '').toLowerCase() === dft.code.toLowerCase()));
+                              return (
+                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white" data-testid="auth-list">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-stamp text-slate-400"></i> Official authorisations</h3>
+                                    <div className="flex gap-2">
+                                      {missingDefaults.length > 0 && <button onClick={() => save([...list, ...missingDefaults])} className="text-xs font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600">Restore {missingDefaults.length} default{missingDefaults.length === 1 ? '' : 's'}</button>}
+                                      <button data-auth-add="1" onClick={() => save([...list, { id: 'auth-' + Date.now(), code: '', title: '', scope: 'operator', expiry: '', excludes: [], note: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"><i className="fa-solid fa-plus mr-1"></i>Add</button>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation.</p>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
+                                      <tbody>{list.map(x => (
+                                        <tr key={x.id} className="border-t border-slate-100 align-top" data-auth-row={x.id}>
+                                          <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0079" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
+                                          <td className="px-1.5 py-1"><input value={x.title || ''} placeholder="What it covers" onChange={e => upd(x.id, 'title', e.target.value)} className={inp + ' w-full min-w-[12rem]'} /></td>
+                                          <td className="px-1.5 py-1"><select value={x.scope || 'operator'} onChange={e => upd(x.id, 'scope', e.target.value)} className={inp}><option value="operator">Your approval</option><option value="all">All operators</option></select></td>
+                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} /></td>
+                                          <td className="px-1.5 py-1 whitespace-nowrap">{['EVLOS', 'Night', 'BVLOS'].map(t => (
+                                            <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" checked={(x.excludes || []).includes(t)} onChange={e => upd(x.id, 'excludes', e.target.checked ? [...(x.excludes || []), t] : (x.excludes || []).filter(y => y !== t))} />{t}</label>
+                                          ))}
+                                            {(x.excludes || []).length > 0 && (
+                                              <select value={x.exclusionMode === 'manual' ? 'manual' : 'warn'} onChange={e => upd(x.id, 'exclusionMode', e.target.value)} className={inp + ' block mt-1'} title="How the planner treats a job that includes these">
+                                                <option value="warn">Warn on the job</option>
+                                                <option value="manual">Don't flag: covered by the ops manual</option>
+                                              </select>
+                                            )}
+                                          </td>
+                                          <td className="px-1.5 py-1"><input value={x.note || ''} onChange={e => upd(x.id, 'note', e.target.value)} className={inp + ' w-full min-w-[10rem]'} /></td>
+                                          <td className="px-1.5 py-1 text-right"><button onClick={() => { if (window.confirm(`Remove ${x.code || 'this authorisation'} from the list?\n\nPlans that already mention it keep their text.`)) save(list.filter(y => y.id !== x.id)); }} className="text-slate-400 hover:text-red-600 px-1" title="Remove"><i className="fa-solid fa-trash-can"></i></button></td>
+                                        </tr>
+                                      ))}</tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                        </>))}
+                        {dbFold('dbsec-crew-users', 'Crew & users', 'fa-users', <span>{(db.pilots || []).length} pilots · {(db.observers || []).length} observers · logins, inductions and invites</span>, (<>
                         {/* v6.1: Users & logins (cloud accounts, crew roles, invites) */}
                         <div className="border border-violet-200 rounded-xl overflow-hidden shadow-sm" data-users-section="1">
                           <div className="bg-violet-50 px-4 py-3 border-b border-violet-200 flex items-center gap-2">
@@ -13776,162 +13707,8 @@ View in the Database & Settings tab.`);
                             <p className="wd-acct-offline text-sm text-slate-500">Logins, crew roles and invites work in the online planner (planner.wakingdreamfpv.com). This offline copy keeps everything on this device only.</p>
                           </div>
                         </div>
-
-                        <div className="flex items-center justify-between gap-3 flex-wrap border border-violet-200 bg-violet-50/60 rounded-xl px-4 py-3">
-                          <div className="text-sm text-violet-900"><b>Setup wizard</b> · company, you as CRP, fleet with CASA registration, batteries{db.setupDoneAt ? <span className="text-xs text-violet-700"> · last run {new Date(db.setupDoneAt).toLocaleDateString('en-AU')}</span> : null}</div>
-                          <button type="button" data-open-setup="1" onClick={() => openSetupWizard()} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Run setup wizard</button>
-                        </div>
-
-                        {/* Company Profile */}
-                        <div className="border border-blue-200 rounded-xl overflow-hidden shadow-sm">
-                          <div className="bg-blue-50 px-4 py-3 border-b border-blue-200 flex items-center gap-2">
-                            <i className="fa-solid fa-building text-blue-600"></i>
-                            <h3 className="font-semibold text-blue-900 text-sm">Company Profile</h3>
-                          </div>
-                          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {[
-                              { name: 'name',        label: 'Company / Trading Name',   placeholder: 'e.g. Dream Flight RPA Operations' },
-                              { name: 'reocNumber',  label: 'ReOC Number',              placeholder: 'e.g. ReOC-XXXXX' },
-                              { name: 'companyArn',  label: 'Company ARN',              placeholder: 'e.g. 1234567' },
-                              { name: 'phone',       label: 'Company Phone',            placeholder: '+61 4xx xxx xxx' },
-                              { name: 'email',       label: 'Company Email',            placeholder: 'ops@yourcompany.com.au' },
-                              { name: 'address',     label: 'Address',                  placeholder: 'Street, Suburb, State, Postcode', span2: true },
-                            ].map(field => (
-                              <div key={field.name} className={field.span2 ? 'md:col-span-2' : ''}>
-                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">{field.label}</label>
-                                <input type="text" name={field.name} value={(db.companyProfile || {})[field.name] || ''} onChange={handleCompanyProfileChange} placeholder={field.placeholder} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white" />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Battery CSV Import */}
-                        <div className="border border-emerald-200 rounded-xl overflow-hidden shadow-sm">
-                          <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <i className="fa-solid fa-battery-full text-emerald-600"></i>
-                              <div>
-                                <h3 className="font-semibold text-emerald-900 text-sm">Import Batteries from CSV</h3>
-                                <p className="text-xs text-emerald-700">Format: <code className="bg-emerald-100 px-1 rounded font-mono">RPA Name, Battery Name</code> — one battery per row</p>
-                              </div>
-                            </div>
-                            <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 flex-shrink-0">
-                              <i className="fa-solid fa-file-csv"></i> Import CSV
-                              <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportBatteryCsv} />
-                            </label>
-                          </div>
-                          <div className="px-4 py-3 text-xs text-slate-500">
-                            <span className="font-medium">Example rows:</span>
-                            <div className="mt-1 font-mono bg-slate-50 border border-slate-200 rounded p-2 space-y-0.5">
-                              <div className="text-slate-400">RPA Name, Battery Name</div>
-                              <div>DJI Mavic 4 Pro, Mavic 4 Pro Battery 01</div>
-                              <div>Cinelog 35 (FPV), 4S 650mAh LiPo 01</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Storage usage */}
-                        {(() => {
-                          const mb = (x) => x ? JSON.stringify(x).length / 1048576 : 0;
-                          const parts = [
-                            ['Draft plans', mb(db.draftPlans), (db.draftPlans || []).length],
-                            ['Approved plans', mb(db.savedPlans), (db.savedPlans || []).length],
-                            ['Completed flights', mb(db.completedFlights), (db.completedFlights || []).length],
-                          ];
-                          const total = mb(db);
-                          const other = Math.max(0, total - parts.reduce((s, p) => s + p[1], 0));
-                          return (
-                            <div className="bg-white p-4 rounded-lg border border-slate-200">
-                              <div className="flex items-center justify-between mb-2">
-                                <h3 className="font-bold text-slate-800 text-sm"><i className="fa-solid fa-hard-drive text-slate-400 mr-1.5"></i>Storage</h3>
-                                <span className="text-xs font-mono text-slate-600">{total.toFixed(1)} MB · {dbReady ? 'IndexedDB (no 5 MB limit)' : 'loading…'}</span>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                                {parts.map(([l, v, n]) => (
-                                  <div key={l} className="bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
-                                    <div className="text-slate-500">{l} ({n})</div><div className="font-mono font-bold text-slate-700">{v.toFixed(2)} MB</div>
-                                  </div>
-                                ))}
-                                <div className="bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
-                                  <div className="text-slate-500">Fleet, settings, other</div><div className="font-mono font-bold text-slate-700">{other.toFixed(2)} MB</div>
-                                </div>
-                              </div>
-                              <p className="text-[11px] text-slate-400 mt-2">Site photos are stored inside each plan, so they count again for every draft, approved plan and completed record of the same job.</p>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Database Backup */}
-                        <div className="flex flex-wrap gap-3 justify-between items-center bg-indigo-100 p-4 rounded-lg border border-indigo-200">
-                            <div>
-                                <h3 className="font-bold text-indigo-900 text-sm">Database Backup & Sync</h3>
-                                <p className="text-xs text-indigo-700 mt-1">Export everything (plans, drafts, records, fleet, people, custom risk templates) to a JSON file to prevent data loss or to move to another device.</p>
-                                {(() => {
-                                  const days = lastBackupAt ? Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86400000) : null;
-                                  const stale = days === null || days > 14;
-                                  return (
-                                    <p className={`text-xs mt-1.5 font-semibold ${stale ? 'text-amber-700' : 'text-emerald-700'}`}>
-                                      <i className={`fa-solid ${stale ? 'fa-triangle-exclamation' : 'fa-circle-check'} mr-1`}></i>
-                                      {days === null ? 'No backup exported from this browser yet' : `Last backup ${days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago'} (${new Date(lastBackupAt).toLocaleDateString('en-AU')})`}
-                                    </p>
-                                  );
-                                })()}
-                                {safetyInfo && (
-                                  <p className="text-xs mt-1 text-indigo-800">
-                                    Safety copy from {new Date(safetyInfo.at).toLocaleString('en-AU')}{safetyInfo.reason ? ` · ${safetyInfo.reason}` : ''}{' '}
-                                    <button onClick={restoreSafetyCopy} className="underline font-bold hover:text-indigo-950">Restore safety copy</button>
-                                  </p>
-                                )}
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                                <button onClick={handleExportDb} className="bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1">
-                                    <i className="fa-solid fa-download"></i> Export Data
-                                </button>
-                                <label className="bg-indigo-600 border border-indigo-700 text-white hover:bg-indigo-700 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm cursor-pointer flex items-center gap-1">
-                                    <i className="fa-solid fa-upload"></i> Import Data
-                                    <input type="file" accept=".json" className="hidden" onChange={handleImportDb} />
-                                </label>
-                                <button onClick={importAmendment} title="Apply a correction file to one saved plan (keeps an amendment record)"
-                                  className="bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5">
-                                    <i className="fa-solid fa-file-pen"></i> Apply Amendment
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Reset App Data */}
-                        <div className="flex justify-between items-center bg-red-50 p-4 rounded-lg border border-red-200">
-                          <div>
-                            <h3 className="font-bold text-red-900 text-sm">Reset App Data</h3>
-                            <p className="text-xs text-red-700 mt-1">Clears all saved data and reloads to factory defaults. Use if the app is crashing or behaving incorrectly. A safety copy of the current data is kept and can be restored above.</p>
-                          </div>
-                          <button onClick={() => { const typed = window.prompt('This clears all saved data and reloads to factory defaults.\n\nThe current database is kept as a safety copy (restore it here with "Restore safety copy").\n\nType RESET to confirm.'); if ((typed || '').trim().toUpperCase() !== 'RESET') return; if (wdStore.locked) { alert('This tab is read-only. Reset from the tab that owns the planner.'); return; } wdStore.saveSafety(db, 'Clear & Reset from Database & Settings').then(() => wdStore.clear()).then(() => { try { (wdLegacyKey('rpas_database') && localStorage.removeItem('rpas_database')); localStorage.removeItem('customRiskTemplates'); } catch (e) {} window.location.reload(); }); }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 flex-shrink-0 ml-4">
-                            <i className="fa-solid fa-trash-can"></i> Clear & Reset
-                          </button>
-                        </div>
-
-                        {/* API Settings */}
-                        <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                            <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-key text-slate-400"></i> API Integration Settings</h3>
-                            <div className="space-y-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">OpenAIP Client ID <span className="text-slate-400 font-normal normal-case">(for live airspace data in JSA section)</span></label>
-                                    <div className="flex gap-2 items-center">
-                                        <input
-                                            type="password"
-                                            value={openAipKey}
-                                            onChange={handleOpenAipKeyChange}
-                                            placeholder="Paste your OpenAIP Client ID here..."
-                                            className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
-                                        />
-                                        {openAipKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
-                                    </div>
-                                    <p className="text-xs text-slate-400 mt-1">Get your free key at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">openaip.net</a>. Stored locally in your browser only.</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            
+                        </>))}
+                        {dbFold('dbsec-clients', 'Clients', 'fa-handshake', <span>{(db.clients || []).length} clients{(db.clients || []).length ? ': ' + (db.clients || []).slice(0, 3).map(c => c.name).join(', ') + ((db.clients || []).length > 3 ? '…' : '') : ''}</span>, (<>
                             {/* Clients DB */}
                             <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
                                 <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-building text-slate-400"></i> Clients</h3>
@@ -13958,7 +13735,8 @@ View in the Database & Settings tab.`);
                                     <button onClick={() => {if(dbInputClient.name) {updateDb('clients', [...db.clients, {name: dbInputClient.name, email: '', phone: ''}]); setDbInputClient({name:'', email:'', phone:''});}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
                                 </div>
                             </div>
-
+                        </>))}
+                        {dbFold('dbsec-assessors', 'Assessors & observers', 'fa-user-check', <span>{(db.assessors || []).length} assessors · {(db.observers || []).length} observers</span>, (<>
                             {/* Assessors & Observers Grid block */}
                             <div className="space-y-8">
                                 {/* Assessors DB */}
@@ -13980,10 +13758,19 @@ View in the Database & Settings tab.`);
                                 </div>
 
                             </div>
-
-
+                        </>))}
+                        <div className="pt-1">
+                        <div className="flex items-center justify-between gap-3 flex-wrap border border-violet-200 bg-violet-50/60 rounded-xl px-4 py-3">
+                          <div className="text-sm text-violet-900"><b>Setup wizard</b> · company, you as CRP, fleet with CASA registration, batteries{db.setupDoneAt ? <span className="text-xs text-violet-700"> · last run {new Date(db.setupDoneAt).toLocaleDateString('en-AU')}</span> : null}</div>
+                          <button type="button" data-open-setup="1" onClick={() => openSetupWizard()} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Run setup wizard</button>
+                        </div>
+                        </div>
+                        </div>
+                        <div data-db-group="equip" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-helicopter text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Equipment</h2><span className="text-xs text-slate-500">aircraft, batteries and logged time</span></div>
+                        {dbFold('dbsec-fleet', 'RPAS fleet', 'fa-helicopter', <span>{Object.values(db.fleet || {}).filter(f => f && !f.sample).length} aircraft · {Object.values(db.fleet || {}).filter(f => f && !f.sample && String(f.registrationNo || '').trim()).length} with CASA rego</span>, (<>
                             {/* RPAS Fleet DB */}
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
+                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
                                 <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-plane-departure text-slate-400"></i> RPAS Fleet (Aircraft Times)</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4 max-h-[400px] overflow-y-auto pr-1">
                                     {Object.keys(db.fleet).map((rpa, i) => (
@@ -14101,88 +13888,27 @@ View in the Database & Settings tab.`);
                                     <div className="col-span-2 md:col-span-4"><button onClick={() => {if(dbInputFleet.name) {updateDb('fleet', {...db.fleet, [dbInputFleet.name]: {weight: dbInputFleet.weight, batteries: dbInputFleet.batteries, area: 0.05, cd: 1.2, totalFlightTime: 0}}); setDbInputFleet({name:'', weight:'', area:'0.05', cd:'1.2', batteries:''});}}} className="bg-indigo-600 hover:bg-indigo-700 text-white w-full py-1.5 rounded text-sm font-medium transition-colors shadow-sm"><i className="fa-solid fa-plus mr-1"></i> Add to Fleet</button></div>
                                 </div>
                             </div>
-
-                            {/* Pilot, battery & aircraft time from completed records (v5.26) */}
-                            {(() => {
-                              const st = loggedTimeStats(db.completedFlights);
-                              const rows = (o) => Object.entries(o).sort((a, b) => b[1].sec - a[1].sec);
-                              const pR = rows(st.pil), bR = rows(st.bat).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })), aR = rows(st.acft);
-                              const d = (ms) => ms ? new Date(ms).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-                              const csv = () => {
-                                const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-                                const L = [['Type', 'Name', 'Aircraft', 'Flights', 'Hours', 'Lowest V/cell', 'Last used'].map(q).join(',')];
-                                pR.forEach(([n, x]) => L.push(['Pilot', n, '', x.flights, (x.sec / 3600).toFixed(2), '', d(x.last)].map(q).join(',')));
-                                aR.forEach(([n, x]) => L.push(['Aircraft', n, '', x.flights, (x.sec / 3600).toFixed(2), '', d(x.last)].map(q).join(',')));
-                                bR.forEach(([n, x]) => L.push(['Battery', n, x.rpa || '', x.flights, (x.sec / 3600).toFixed(2), x.minCell ? x.minCell.toFixed(2) : '', d(x.last)].map(q).join(',')));
-                                const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([L.join('\n')], { type: 'text/csv' }));
-                                a.download = 'Logged_time_' + localISODate(new Date()) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
-                              };
-                              const th = "text-left text-[10px] uppercase font-bold text-slate-500 px-2 py-1 border-b border-slate-200", td = "px-2 py-1 border-b border-slate-100", tn = td + " text-right font-mono whitespace-nowrap";
-                              return (
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
-                                  <div className="flex items-center justify-between gap-2 mb-1">
-                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-clock text-slate-400"></i> Logged time — pilots, aircraft &amp; batteries</h3>
-                                    {(pR.length + bR.length) > 0 && <button onClick={csv} className="text-xs font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Export CSV</button>}
-                                  </div>
-                                  <p className="text-xs text-slate-500 mb-3">Worked out from {(db.completedFlights || []).length} completed flight record{(db.completedFlights || []).length === 1 ? '' : 's'}. Telemetry flights count their exact armed time; manual flights count the minutes entered. Each flight a battery is listed on counts as one cycle. Pilot is the Primary RP (or RPIC).</p>
-                                  {!(pR.length + aR.length) ? <p className="text-sm text-slate-400 italic">No pilot or aircraft time in completed records yet.</p> : (
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                      <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><th className={th}>Pilot</th><th className={th + ' text-right'}>Flights</th><th className={th + ' text-right'}>Time</th><th className={th + ' text-right'}>Last</th></tr></thead>
-                                        <tbody>{pR.map(([n, x]) => <tr key={n}><td className={td}>{n}</td><td className={tn}>{x.flights}</td><td className={tn + ' font-bold'}>{fmtHrsMin(x.sec)}</td><td className={tn}>{d(x.last)}</td></tr>)}</tbody></table></div>
-                                      <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><th className={th}>Aircraft</th><th className={th + ' text-right'}>Flights</th><th className={th + ' text-right'}>Logged</th><th className={th + ' text-right'} title="Airframe total in the fleet database (Save … Time to Fleet DB)">Fleet DB</th></tr></thead>
-                                        <tbody>{aR.map(([n, x]) => <tr key={n}><td className={td}>{n}</td><td className={tn}>{x.flights}</td><td className={tn + ' font-bold'}>{fmtHrsMin(x.sec)}</td><td className={tn}>{db.fleet && db.fleet[n] ? (db.fleet[n].totalFlightTime || 0) + ' min' : '—'}</td></tr>)}</tbody></table></div>
-                                    </div>
-                                  )}
+                        </>))}
+                        {dbFold('dbsec-batteries', 'Batteries', 'fa-car-battery', <span>{(db.batteries || []).length} packs</span>, (<>
+                            {/* Batteries DB */}
+                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
+                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-database text-slate-400"></i> Batteries</h3>
+                                <ul className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                                    {db.batteries && db.batteries.map((c, i) => (
+                                        <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
+                                            <span className="truncate mr-2">{c}</span>
+                                            <button onClick={() => updateDb('batteries', db.batteries.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
+                                        </li>
+                                    ))}
+                                    {(!db.batteries || db.batteries.length === 0) && <li className="text-sm text-slate-400 italic col-span-2 py-2">No batteries saved.</li>}
+                                </ul>
+                                <div className="flex gap-2 w-full md:w-1/2">
+                                    <input type="text" value={dbInputBattery} onChange={e=>setDbInputBattery(e.target.value)} placeholder="New Battery Type/Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                    <button onClick={() => {if(dbInputBattery) {updateDb('batteries', [...(db.batteries||[]), dbInputBattery]); setDbInputBattery('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
                                 </div>
-                              );
-                            })()}
-
-                            {/* Official authorisations (v5.30) */}
-                            {(() => {
-                              const list = officialAuthList(db);
-                              const save = (next) => updateDb('officialAuths', next);
-                              const upd = (id, k, v) => save(list.map(x => x.id === id ? { ...x, [k]: v } : x));
-                              const inp = "text-xs px-1.5 py-1 border border-slate-200 rounded bg-white focus:ring-blue-400 focus:border-blue-400";
-                              const missingDefaults = DEFAULT_OFFICIAL_AUTHS.filter(dft => !list.some(x => x.id === dft.id || (x.code || '').toLowerCase() === dft.code.toLowerCase()));
-                              return (
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2" data-testid="auth-list">
-                                  <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
-                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-stamp text-slate-400"></i> Official authorisations</h3>
-                                    <div className="flex gap-2">
-                                      {missingDefaults.length > 0 && <button onClick={() => save([...list, ...missingDefaults])} className="text-xs font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600">Restore {missingDefaults.length} default{missingDefaults.length === 1 ? '' : 's'}</button>}
-                                      <button data-auth-add="1" onClick={() => save([...list, { id: 'auth-' + Date.now(), code: '', title: '', scope: 'operator', expiry: '', excludes: [], note: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"><i className="fa-solid fa-plus mr-1"></i>Add</button>
-                                    </div>
-                                  </div>
-                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation.</p>
-                                  <div className="overflow-x-auto">
-                                    <table className="w-full text-xs">
-                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
-                                      <tbody>{list.map(x => (
-                                        <tr key={x.id} className="border-t border-slate-100 align-top" data-auth-row={x.id}>
-                                          <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0079" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
-                                          <td className="px-1.5 py-1"><input value={x.title || ''} placeholder="What it covers" onChange={e => upd(x.id, 'title', e.target.value)} className={inp + ' w-full min-w-[12rem]'} /></td>
-                                          <td className="px-1.5 py-1"><select value={x.scope || 'operator'} onChange={e => upd(x.id, 'scope', e.target.value)} className={inp}><option value="operator">Your approval</option><option value="all">All operators</option></select></td>
-                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} /></td>
-                                          <td className="px-1.5 py-1 whitespace-nowrap">{['EVLOS', 'Night', 'BVLOS'].map(t => (
-                                            <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" checked={(x.excludes || []).includes(t)} onChange={e => upd(x.id, 'excludes', e.target.checked ? [...(x.excludes || []), t] : (x.excludes || []).filter(y => y !== t))} />{t}</label>
-                                          ))}
-                                            {(x.excludes || []).length > 0 && (
-                                              <select value={x.exclusionMode === 'manual' ? 'manual' : 'warn'} onChange={e => upd(x.id, 'exclusionMode', e.target.value)} className={inp + ' block mt-1'} title="How the planner treats a job that includes these">
-                                                <option value="warn">Warn on the job</option>
-                                                <option value="manual">Don't flag: covered by the ops manual</option>
-                                              </select>
-                                            )}
-                                          </td>
-                                          <td className="px-1.5 py-1"><input value={x.note || ''} onChange={e => upd(x.id, 'note', e.target.value)} className={inp + ' w-full min-w-[10rem]'} /></td>
-                                          <td className="px-1.5 py-1 text-right"><button onClick={() => { if (window.confirm(`Remove ${x.code || 'this authorisation'} from the list?\n\nPlans that already mention it keep their text.`)) save(list.filter(y => y.id !== x.id)); }} className="text-slate-400 hover:text-red-600 px-1" title="Remove"><i className="fa-solid fa-trash-can"></i></button></td>
-                                        </tr>
-                                      ))}</tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-
+                            </div>
+                        </>))}
+                        {dbFold('dbsec-battery-register', 'Battery register', 'fa-list-ol', <span>Cycles, limits, voltage sag and retirement per pack</span>, (<>
                             {/* Battery register: cycles, limits, sag, retire (v5.28) */}
                             {(() => {
                               const st = loggedTimeStats(db.completedFlights).bat, info = db.batteryInfo || {};
@@ -14204,7 +13930,7 @@ View in the Database & Settings tab.`);
                                 a.download = 'Battery_register_' + localISODate() + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
                               };
                               return (
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2" data-testid="battery-register">
+                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white" data-testid="battery-register">
                                   <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
                                     <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-car-battery text-slate-400"></i> Battery register
                                       {nAtt > 0 && <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{nAtt} need attention</span>}</h3>
@@ -14248,26 +13974,284 @@ View in the Database & Settings tab.`);
                                 </div>
                               );
                             })()}
-
-                            {/* Batteries DB */}
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white md:col-span-2">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-database text-slate-400"></i> Batteries</h3>
-                                <ul className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
-                                    {db.batteries && db.batteries.map((c, i) => (
-                                        <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                            <span className="truncate mr-2">{c}</span>
-                                            <button onClick={() => updateDb('batteries', db.batteries.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                        </li>
-                                    ))}
-                                    {(!db.batteries || db.batteries.length === 0) && <li className="text-sm text-slate-400 italic col-span-2 py-2">No batteries saved.</li>}
-                                </ul>
-                                <div className="flex gap-2 w-full md:w-1/2">
-                                    <input type="text" value={dbInputBattery} onChange={e=>setDbInputBattery(e.target.value)} placeholder="New Battery Type/Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <button onClick={() => {if(dbInputBattery) {updateDb('batteries', [...(db.batteries||[]), dbInputBattery]); setDbInputBattery('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
+                        </>))}
+                        {dbFold('dbsec-battery-csv', 'Import batteries from CSV', 'fa-file-csv', <span>Add many packs at once from a spreadsheet</span>, (<>
+                        {/* Battery CSV Import */}
+                        <div className="border border-emerald-200 rounded-xl overflow-hidden shadow-sm">
+                          <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <i className="fa-solid fa-battery-full text-emerald-600"></i>
+                              <div>
+                                <h3 className="font-semibold text-emerald-900 text-sm">Import Batteries from CSV</h3>
+                                <p className="text-xs text-emerald-700">Format: <code className="bg-emerald-100 px-1 rounded font-mono">RPA Name, Battery Name</code> — one battery per row</p>
+                              </div>
+                            </div>
+                            <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 flex-shrink-0">
+                              <i className="fa-solid fa-file-csv"></i> Import CSV
+                              <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportBatteryCsv} />
+                            </label>
+                          </div>
+                          <div className="px-4 py-3 text-xs text-slate-500">
+                            <span className="font-medium">Example rows:</span>
+                            <div className="mt-1 font-mono bg-slate-50 border border-slate-200 rounded p-2 space-y-0.5">
+                              <div className="text-slate-400">RPA Name, Battery Name</div>
+                              <div>DJI Mavic 4 Pro, Mavic 4 Pro Battery 01</div>
+                              <div>Cinelog 35 (FPV), 4S 650mAh LiPo 01</div>
+                            </div>
+                          </div>
+                        </div>
+                        </>))}
+                        {dbFold('dbsec-logged', 'Logged time', 'fa-stopwatch', <span>{(() => { const st = loggedTimeStats(db.completedFlights); const sec = Object.values(st.acft).reduce((t, x) => t + x.sec, 0); return fmtHrsMin(sec) + ' flown · ' + Object.keys(st.pil).length + ' pilots · ' + Object.keys(st.bat).length + ' packs'; })()}</span>, (<>
+                            {/* Pilot, battery & aircraft time from completed records (v5.26) */}
+                            {(() => {
+                              const st = loggedTimeStats(db.completedFlights);
+                              const rows = (o) => Object.entries(o).sort((a, b) => b[1].sec - a[1].sec);
+                              const pR = rows(st.pil), bR = rows(st.bat).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })), aR = rows(st.acft);
+                              const d = (ms) => ms ? new Date(ms).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                              const csv = () => {
+                                const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+                                const L = [['Type', 'Name', 'Aircraft', 'Flights', 'Hours', 'Lowest V/cell', 'Last used'].map(q).join(',')];
+                                pR.forEach(([n, x]) => L.push(['Pilot', n, '', x.flights, (x.sec / 3600).toFixed(2), '', d(x.last)].map(q).join(',')));
+                                aR.forEach(([n, x]) => L.push(['Aircraft', n, '', x.flights, (x.sec / 3600).toFixed(2), '', d(x.last)].map(q).join(',')));
+                                bR.forEach(([n, x]) => L.push(['Battery', n, x.rpa || '', x.flights, (x.sec / 3600).toFixed(2), x.minCell ? x.minCell.toFixed(2) : '', d(x.last)].map(q).join(',')));
+                                const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([L.join('\n')], { type: 'text/csv' }));
+                                a.download = 'Logged_time_' + localISODate(new Date()) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+                              };
+                              const th = "text-left text-[10px] uppercase font-bold text-slate-500 px-2 py-1 border-b border-slate-200", td = "px-2 py-1 border-b border-slate-100", tn = td + " text-right font-mono whitespace-nowrap";
+                              return (
+                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-clock text-slate-400"></i> Logged time — pilots, aircraft &amp; batteries</h3>
+                                    {(pR.length + bR.length) > 0 && <button onClick={csv} className="text-xs font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Export CSV</button>}
+                                  </div>
+                                  <p className="text-xs text-slate-500 mb-3">Worked out from {(db.completedFlights || []).length} completed flight record{(db.completedFlights || []).length === 1 ? '' : 's'}. Telemetry flights count their exact armed time; manual flights count the minutes entered. Each flight a battery is listed on counts as one cycle. Pilot is the Primary RP (or RPIC).</p>
+                                  {!(pR.length + aR.length) ? <p className="text-sm text-slate-400 italic">No pilot or aircraft time in completed records yet.</p> : (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                      <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><th className={th}>Pilot</th><th className={th + ' text-right'}>Flights</th><th className={th + ' text-right'}>Time</th><th className={th + ' text-right'}>Last</th></tr></thead>
+                                        <tbody>{pR.map(([n, x]) => <tr key={n}><td className={td}>{n}</td><td className={tn}>{x.flights}</td><td className={tn + ' font-bold'}>{fmtHrsMin(x.sec)}</td><td className={tn}>{d(x.last)}</td></tr>)}</tbody></table></div>
+                                      <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><th className={th}>Aircraft</th><th className={th + ' text-right'}>Flights</th><th className={th + ' text-right'}>Logged</th><th className={th + ' text-right'} title="Airframe total in the fleet database (Save … Time to Fleet DB)">Fleet DB</th></tr></thead>
+                                        <tbody>{aR.map(([n, x]) => <tr key={n}><td className={td}>{n}</td><td className={tn}>{x.flights}</td><td className={tn + ' font-bold'}>{fmtHrsMin(x.sec)}</td><td className={tn}>{db.fleet && db.fleet[n] ? (db.fleet[n].totalFlightTime || 0) + ' min' : '—'}</td></tr>)}</tbody></table></div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                        </>))}
+                        </div>
+                        <div data-db-group="lib" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-book text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Libraries</h2><span className="text-xs text-slate-500">templates you reuse</span></div>
+                        {dbFold('dbsec-risk-library', 'Risk assessment library', 'fa-triangle-exclamation', <span>{Object.keys(db.customRiskTemplates || {}).length} saved risk templates · import and export</span>, (<>
+                        {/* ── Risk Assessment Library (v5.50) ── */}
+                        {(() => {
+                          const names = Object.keys(customTemplates).sort((a, b) => a.localeCompare(b));
+                          const uniq = (n) => { let x = n, k = 2; while (customTemplates[x] || BUILTIN_RISK_TEMPLATE_NAMES[x]) x = n + ' (' + (k++) + ')'; return x; };
+                          const saveAll = (next) => { setCustomTemplates(next); try { localStorage.setItem('customRiskTemplates', JSON.stringify(next)); } catch (e) {} };
+                          const exportJson = (name, list) => wdDownload(fileSafe(name) + '.risk.json', JSON.stringify({ _type: 'wdfpv_risk_template', version: 1, name, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, risks: list }, null, 1));
+                          const exportCsv = (name, list) => wdDownload(fileSafe(name) + '.csv', '﻿' + risksToCsv(list), 'text/csv');
+                          const useInJob = (name, list) => {
+                            if (approval.flightAuthApproved) { alert('This job is approved and locked. Amend the plan first (Authorisation tab) to change its risk register.'); return; }
+                            const empty = risks.every(r => !String(r.hazard || '').trim());
+                            const replace = empty || window.confirm(`Use "${name}" in the open job (${getOpTitle(overview)})?\n\nOK: REPLACE the job's current ${risks.length} risk(s)\nCancel: ADD these ${list.length} risks to the end`);
+                            const fresh = list.map((r, i) => ({ ...r, id: Date.now() + Math.random() + i }));
+                            setRisks(replace ? fresh : [...risks, ...fresh.map((r, i) => ({ ...r, refNo: String(risks.length + i + 1).padStart(3, '0') }))]);
+                            setActiveTab('jsa');
+                          };
+                          const onImport = async (e) => {
+                            const files = Array.from(e.target.files || []); e.target.value = ''; if (!files.length) return;
+                            const raw = await wdReadFiles(files, 'text', 'Importing risk assessment' + (files.length > 1 ? 's' : ''));
+                            const next = { ...customTemplates }, done = [], bad = [];
+                            raw.forEach(x => {
+                              if (x.error) { bad.push(x.name + ': ' + x.error); return; }
+                              try {
+                                parseRiskImport(x.result, x.name).forEach(t => {
+                                  if (!t.risks.length) { bad.push(x.name + ': no hazards found'); return; }
+                                  let n = t.name; if (next[n] || BUILTIN_RISK_TEMPLATE_NAMES[n]) { n = (() => { let y = n, k = 2; while (next[y] || BUILTIN_RISK_TEMPLATE_NAMES[y]) y = t.name + ' (' + (k++) + ')'; return y; })(); }
+                                  next[n] = t.risks; done.push(`${n} — ${t.risks.length} risk${t.risks.length === 1 ? '' : 's'}`);
+                                });
+                              } catch (err) { bad.push(x.name + ': ' + err.message); }
+                            });
+                            if (done.length) saveAll(next);
+                            if (bad.length) wdProgress.fail(bad.length + ' file(s) not imported'); else wdProgress.finish(done.length + ' imported');
+                            alert((done.length ? '✅ Imported into the Risk Assessment Library:\n' + done.map(d => '• ' + d).join('\n') : 'Nothing imported.') + (bad.length ? '\n\n⚠ Not imported:\n' + bad.map(b => '• ' + b).join('\n') : ''));
+                            setRiskLibOpen(true);
+                          };
+                          const Row = ({ name, list, builtin, keyId }) => {
+                            const open = riskLibView === keyId;
+                            return (
+                              <div className="px-4 py-2.5" data-risklib-row={builtin ? 'builtin' : 'custom'} data-risklib-name={name}>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <button type="button" onClick={() => setRiskLibView(open ? null : keyId)} className="flex-1 min-w-[12rem] text-left text-sm font-semibold text-slate-800 hover:text-indigo-700">
+                                    <i className={`fa-solid ${open ? 'fa-chevron-down' : 'fa-chevron-right'} text-[10px] mr-1.5 text-slate-400`}></i>{name}
+                                    <span className="ml-2 text-xs font-normal text-slate-500">{list.length} risk{list.length === 1 ? '' : 's'}</span>
+                                    {builtin && <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">built-in</span>}
+                                  </button>
+                                  <button type="button" data-risklib-use="1" onClick={() => useInJob(name, list)} className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold">Use in open job</button>
+                                  <button type="button" onClick={() => exportJson(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Download as a file you can import again or share">JSON</button>
+                                  <button type="button" onClick={() => exportCsv(name, list)} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Open in Excel / Google Sheets">CSV</button>
+                                  <button type="button" data-risklib-dup="1" onClick={() => { const n = window.prompt('Name for the copy:', uniq(name + ' (copy)')); if (n && n.trim()) saveAll({ ...customTemplates, [uniq(n.trim())]: list.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Duplicate</button>
+                                  {!builtin && <>
+                                    <button type="button" data-risklib-rename="1" onClick={() => { const n = window.prompt('Rename to:', name); if (!n || !n.trim() || n.trim() === name) return; const nn = uniq(n.trim()); const next = {}; Object.keys(customTemplates).forEach(k => { next[k === name ? nn : k] = customTemplates[k]; }); saveAll(next); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Rename</button>
+                                    <button type="button" onClick={() => { if (!risks.some(r => String(r.hazard || '').trim())) { alert('The open job has no risks to save.'); return; } if (window.confirm(`Replace "${name}" with the open job's ${risks.length} risk(s)?`)) saveAll({ ...customTemplates, [name]: risks.map(r => ({ ...r })) }); }} className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" title="Overwrite this template with the risk register of the job that's open now">Update from job</button>
+                                    <button type="button" data-risklib-del="1" onClick={() => { if (!window.confirm(`Delete the risk assessment "${name}"? Jobs that already use it keep their copy.`)) return; const next = { ...customTemplates }; delete next[name]; saveAll(next); }} className="text-xs text-slate-400 hover:text-red-600 px-1"><i className="fa-solid fa-trash-can"></i></button>
+                                  </>}
+                                </div>
+                                {open && (
+                                  <div className="mt-2 overflow-x-auto">
+                                    <table className="w-full text-[11px] border border-slate-200">
+                                      <thead className="bg-slate-50 text-slate-500 uppercase text-[9px]"><tr><th className="px-1.5 py-1 text-left">Ref</th><th className="px-1.5 py-1 text-left">Hazard</th><th className="px-1.5 py-1">Initial</th><th className="px-1.5 py-1">Residual</th><th className="px-1.5 py-1 text-left">Owner</th></tr></thead>
+                                      <tbody>{list.map((r, i) => (
+                                        <tr key={i} className="border-t border-slate-100 align-top">
+                                          <td className="px-1.5 py-1 font-mono text-slate-400">{r.refNo || String(i + 1).padStart(3, '0')}</td>
+                                          <td className="px-1.5 py-1"><div className="font-semibold text-slate-800">{r.hazard}</div>{r.existingControls && <div className="text-slate-500 line-clamp-2">{r.existingControls}</div>}</td>
+                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.initL, r.initC)}>{r.initL}{r.initC}</span></td>
+                                          <td className="px-1.5 py-1 text-center"><span className="inline-block px-1.5 rounded font-bold" style={getRiskStyle(r.resL, r.resC)}>{r.resL}{r.resC}</span></td>
+                                          <td className="px-1.5 py-1 text-slate-600">{r.riskOwner}</td>
+                                        </tr>))}</tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          };
+                          return (
+                            <div className="border border-indigo-200 rounded-xl overflow-hidden shadow-sm" data-risklib="1">
+                              <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center gap-2 flex-wrap">
+                                <button type="button" onClick={() => setRiskLibOpen(!riskLibOpen)} className="flex items-center gap-2 flex-1 text-left">
+                                  <i className="fa-solid fa-shield-halved text-indigo-600"></i>
+                                  <h3 className="font-semibold text-indigo-900 text-sm">Risk Assessment Library</h3>
+                                  <span className="text-xs bg-indigo-200 text-indigo-800 font-bold px-2 py-0.5 rounded-full">{names.length} saved · {Object.keys(BUILTIN_RISK_TEMPLATE_NAMES).length} built-in</span>
+                                  <i className={`fa-solid ${riskLibOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-indigo-500 text-xs ml-1`}></i>
+                                </button>
+                                <label className="text-xs px-2.5 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 font-semibold cursor-pointer" title="JSON (from this app or a plan file) or CSV (from Excel / Google Sheets). Several files at once is fine.">
+                                  <i className="fa-solid fa-file-import mr-1"></i>Import
+                                  <input type="file" accept=".json,.csv,application/json,text/csv" multiple className="hidden" data-risklib-import="1" onChange={onImport} />
+                                </label>
+                                <button type="button" onClick={handleSaveTemplate} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100 font-semibold" title="Save the risk register of the job that's open now">Save open job's risks</button>
+                                {names.length > 0 && <button type="button" onClick={() => wdDownload('risk-assessment-library_' + localISODate() + '.json', JSON.stringify({ _type: 'wdfpv_risk_library', version: 1, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, templates: customTemplates }, null, 1))} className="text-xs px-2.5 py-1 rounded border border-indigo-300 bg-white text-indigo-800 hover:bg-indigo-100">Export all</button>}
+                              </div>
+                              {riskLibOpen && (<>
+                                <div className="px-4 py-2 text-[11px] text-slate-500 bg-white border-b border-indigo-100">Import accepts this app's risk files, "Export all" libraries, full plan files (takes the plan's risk register) and CSV from Excel / Google Sheets with columns: {RISK_CSV_COLS.map(c => c[1]).join(', ')}. Likelihood 1–5, consequence A–E (or the words, e.g. "Moderate").</div>
+                                <div className="divide-y divide-indigo-100 max-h-[32rem] overflow-y-auto bg-white">
+                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50/50">Your risk assessments</div>
+                                  {names.length === 0 && <div className="px-4 py-3 text-sm text-slate-400 italic">None yet. Import a file, or save the open job's register.</div>}
+                                  {names.map(n => <Row key={'c_' + n} keyId={'c_' + n} name={n} list={customTemplates[n] || []} />)}
+                                  <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50">Built-in (read-only — Duplicate to change)</div>
+                                  {Object.entries(BUILTIN_RISK_TEMPLATE_NAMES).filter(([k]) => riskTemplates[k]).map(([k, n]) => <Row key={'b_' + k} keyId={'b_' + k} name={n} list={riskTemplates[k]} builtin />)}
+                                </div>
+                              </>)}
+                            </div>
+                          );
+                        })()}
+                        </>))}
+                        </div>
+                        <div data-db-group="data" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-server text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Data & system</h2><span className="text-xs text-slate-500">backup, storage, integrations</span></div>
+                        {dbFold('dbsec-backup', 'Backup & sync', 'fa-floppy-disk', <span>{lastBackupAt ? 'Last backup ' + new Date(lastBackupAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : 'No backup exported yet'}</span>, (<>
+                        {/* Database Backup */}
+                        <div className="flex flex-wrap gap-3 justify-between items-center bg-indigo-100 p-4 rounded-lg border border-indigo-200">
+                            <div>
+                                <h3 className="font-bold text-indigo-900 text-sm">Database Backup & Sync</h3>
+                                <p className="text-xs text-indigo-700 mt-1">Export everything (plans, drafts, records, fleet, people, custom risk templates) to a JSON file to prevent data loss or to move to another device.</p>
+                                {(() => {
+                                  const days = lastBackupAt ? Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86400000) : null;
+                                  const stale = days === null || days > 14;
+                                  return (
+                                    <p className={`text-xs mt-1.5 font-semibold ${stale ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                      <i className={`fa-solid ${stale ? 'fa-triangle-exclamation' : 'fa-circle-check'} mr-1`}></i>
+                                      {days === null ? 'No backup exported from this browser yet' : `Last backup ${days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago'} (${new Date(lastBackupAt).toLocaleDateString('en-AU')})`}
+                                    </p>
+                                  );
+                                })()}
+                                {safetyInfo && (
+                                  <p className="text-xs mt-1 text-indigo-800">
+                                    Safety copy from {new Date(safetyInfo.at).toLocaleString('en-AU')}{safetyInfo.reason ? ` · ${safetyInfo.reason}` : ''}{' '}
+                                    <button onClick={restoreSafetyCopy} className="underline font-bold hover:text-indigo-950">Restore safety copy</button>
+                                  </p>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <button onClick={handleExportDb} className="bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1">
+                                    <i className="fa-solid fa-download"></i> Export Data
+                                </button>
+                                <label className="bg-indigo-600 border border-indigo-700 text-white hover:bg-indigo-700 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm cursor-pointer flex items-center gap-1">
+                                    <i className="fa-solid fa-upload"></i> Import Data
+                                    <input type="file" accept=".json" className="hidden" onChange={handleImportDb} />
+                                </label>
+                                <button onClick={importAmendment} title="Apply a correction file to one saved plan (keeps an amendment record)"
+                                  className="bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5">
+                                    <i className="fa-solid fa-file-pen"></i> Apply Amendment
+                                </button>
+                            </div>
+                        </div>
+                        </>))}
+                        {dbFold('dbsec-storage', 'Storage', 'fa-hard-drive', <span>How much space the planner uses in this browser</span>, (<>
+                        {/* Storage usage */}
+                        {(() => {
+                          const mb = (x) => x ? JSON.stringify(x).length / 1048576 : 0;
+                          const parts = [
+                            ['Draft plans', mb(db.draftPlans), (db.draftPlans || []).length],
+                            ['Approved plans', mb(db.savedPlans), (db.savedPlans || []).length],
+                            ['Completed flights', mb(db.completedFlights), (db.completedFlights || []).length],
+                          ];
+                          const total = mb(db);
+                          const other = Math.max(0, total - parts.reduce((s, p) => s + p[1], 0));
+                          return (
+                            <div className="bg-white p-4 rounded-lg border border-slate-200">
+                              <div className="flex items-center justify-between mb-2">
+                                <h3 className="font-bold text-slate-800 text-sm"><i className="fa-solid fa-hard-drive text-slate-400 mr-1.5"></i>Storage</h3>
+                                <span className="text-xs font-mono text-slate-600">{total.toFixed(1)} MB · {dbReady ? 'IndexedDB (no 5 MB limit)' : 'loading…'}</span>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                {parts.map(([l, v, n]) => (
+                                  <div key={l} className="bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
+                                    <div className="text-slate-500">{l} ({n})</div><div className="font-mono font-bold text-slate-700">{v.toFixed(2)} MB</div>
+                                  </div>
+                                ))}
+                                <div className="bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
+                                  <div className="text-slate-500">Fleet, settings, other</div><div className="font-mono font-bold text-slate-700">{other.toFixed(2)} MB</div>
+                                </div>
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-2">Site photos are stored inside each plan, so they count again for every draft, approved plan and completed record of the same job.</p>
+                            </div>
+                          );
+                        })()}
+                        </>))}
+                        {dbFold('dbsec-api', 'API integrations', 'fa-plug', <span>Keys for map, airspace and weather services</span>, (<>
+                        {/* API Settings */}
+                        <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
+                            <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-key text-slate-400"></i> API Integration Settings</h3>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">OpenAIP Client ID <span className="text-slate-400 font-normal normal-case">(for live airspace data in JSA section)</span></label>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                            type="password"
+                                            value={openAipKey}
+                                            onChange={handleOpenAipKeyChange}
+                                            placeholder="Paste your OpenAIP Client ID here..."
+                                            className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
+                                        />
+                                        {openAipKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-1">Get your free key at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">openaip.net</a>. Stored locally in your browser only.</p>
                                 </div>
                             </div>
-
                         </div>
+                        </>))}
+                        {dbFold('dbsec-reset', 'Reset app data', 'fa-trash-can', <span className="text-rose-700">Danger zone: clear everything on this device</span>, (<>
+                        {/* Reset App Data */}
+                        <div className="flex justify-between items-center bg-red-50 p-4 rounded-lg border border-red-200">
+                          <div>
+                            <h3 className="font-bold text-red-900 text-sm">Reset App Data</h3>
+                            <p className="text-xs text-red-700 mt-1">Clears all saved data and reloads to factory defaults. Use if the app is crashing or behaving incorrectly. A safety copy of the current data is kept and can be restored above.</p>
+                          </div>
+                          <button onClick={() => { const typed = window.prompt('This clears all saved data and reloads to factory defaults.\n\nThe current database is kept as a safety copy (restore it here with "Restore safety copy").\n\nType RESET to confirm.'); if ((typed || '').trim().toUpperCase() !== 'RESET') return; if (wdStore.locked) { alert('This tab is read-only. Reset from the tab that owns the planner.'); return; } wdStore.saveSafety(db, 'Clear & Reset from Database & Settings').then(() => wdStore.clear()).then(() => { try { (wdLegacyKey('rpas_database') && localStorage.removeItem('rpas_database')); localStorage.removeItem('customRiskTemplates'); } catch (e) {} window.location.reload(); }); }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 flex-shrink-0 ml-4">
+                            <i className="fa-solid fa-trash-can"></i> Clear & Reset
+                          </button>
+                        </div>
+                        </>))}
+                        </div>
+
                       </div>
                     </div>
                   </div>
