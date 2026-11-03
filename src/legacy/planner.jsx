@@ -5,7 +5,7 @@ import Dashboard from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
         // Extract React Hooks
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
 
         // --- SHARED KE PHYSICS (single source of truth for chart, OONP table and PDF) ---
         // Basic (aero off): vacuum freefall  KE = ½m(v² + 2gh)
@@ -2311,6 +2311,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           });
           return flights;
         };
+        if (typeof window !== "undefined") window.__wdParseTlm = parseTelemetryCsv; // exposed for tests
         // v5.42: telemetry imported earlier was zeroed at the first armed sample (≤ v5.40) or the lowest point (v5.41).
         // Re-zero it at the take-off ground level using the stored trace [t, altM, kmh, ...].
         const rebaseTelemetry = (t) => {
@@ -2422,6 +2423,94 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         const smoothAltTelemetry = (t, level) => applyTlmSmoothing(t, level, t && t.spdSmooth ? t.spdSmooth.level : 'off');
         const smoothSpdTelemetry = (t, level) => applyTlmSmoothing(t, t && t.altSmooth ? t.altSmooth.level : 'off', level);
         if (typeof window !== 'undefined') { window.__wdSmoothAlt = smoothAltTelemetry; window.__wdSmoothSpd = smoothSpdTelemetry; } // exposed for tests
+
+        // v7.5: telemetry anomaly flags. Works on the raw columns (before smoothing), so smoothing never hides what happened.
+        // sev 'warn' = worth checking the aircraft or the log; 'info' = a sensor glitch the numbers were affected by.
+        const tlmAnomalies = (t) => {
+          if (!t || !Array.isArray(t.trace)) return [];
+          const tr = t.trace.map((p, i) => (p && p[0] != null ? { s: p[0], alt: t.altRaw ? t.altRaw[i] : p[1], kmh: t.spdRaw ? t.spdRaw[i] : p[2], lat: p[3], lng: p[4], v: p[5], a: p[6], sats: p[8] } : null)).filter(Boolean);
+          const n = tr.length; if (n < 8) return [];
+          const ok = (x) => x != null && isFinite(x);
+          const med = (arr) => { const v = arr.filter(ok).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
+          const fmt = (x, d = 0) => (Math.round(x * 10 ** d) / 10 ** d), out = [];
+          // Radios often send a sensor only every few seconds and the log repeats the last value in between,
+          // so every check works on the moments a reading actually changed, and time windows follow each sensor's update rate.
+          const changes = (key) => { const c = []; tr.forEach(p => { const v = p[key]; if (!ok(v)) return; if (!c.length || c[c.length - 1].v !== v) c.push({ s: p.s, v }); }); return c; };
+          const rate = (c) => Math.max(1, med(c.slice(1).map((x, k) => x.s - c[k].s)) || 1);
+          const inWin = (key, s0, s1) => tr.filter(p => p.s >= s0 && p.s <= s1 && ok(p[key])).map(p => p[key]);
+          const cA = changes('a'), aMed = med(cA.map(x => x.v)), aSorted = cA.map(x => x.v).sort((x, y) => x - y);
+          const hiA = aMed != null && aSorted.length ? Math.max(aMed * 1.5, aSorted[Math.floor(aSorted.length * 0.85)]) : Infinity;
+          const uA = cA.length > 2 ? rate(cA) : 1;
+          const punchAt = (s0, s1) => aMed != null && inWin('a', s0 - uA * 1.2, s1 + uA * 1.2).some(v => v >= hiA);
+          // a spike: one or two readings well away from their neighbours that then come back (a step is a real climb)
+          // how often a sensor really updates: the shorter gaps between changes (a held sensor changes every few seconds)
+          const upd = (c) => { const g = c.slice(1).map((x, k) => x.s - c[k].s).sort((x, y) => x - y); return g.length ? Math.max(0.1, g[Math.floor(g.length * 0.25)]) : 1; };
+          const spikes = (key, minDev, minRate = 0) => {
+            const c = changes(key), res = [], U = Math.min(8, upd(c)), Wt = Math.max(4, 3 * U);
+            for (let k = 1; k < c.length - 1; k++) {
+              // the spike may span up to three changed readings before it comes back
+              let j = -1; const s0 = c[k].s;
+              const pre = tr.filter(p => ok(p[key]) && p.s >= s0 - Wt && p.s < s0).map(p => p[key]), m0 = med(pre); if (m0 == null || pre.length < 2) continue;
+              const d = c[k].v - m0;
+              for (let q = k + 1; q < Math.min(c.length, k + 4); q++) if (Math.abs(c[q].v - m0) < Math.abs(d) / 2) { j = q; break; }
+              if (j < 0) continue;
+              const s1 = c[j].s;
+              const w = pre.concat(tr.filter(p => ok(p[key]) && p.s >= s1 && p.s <= s1 + Wt).map(p => p[key])), m = med(w);
+              const mad = med(w.map(x => Math.abs(x - m))) || 0, dd = c[k].v - m;
+              if (Math.abs(dd) <= Math.max(minDev, 3.5 * 1.4826 * mad) || Math.abs(c[k - 1].v - m) >= Math.abs(dd) / 2) continue;
+              // fast in and fast out: real flight changes height or speed gradually, a glitch jumps between readings.
+              // A reading can't be timed better than how often that sensor updates (U).
+              const prevS = Math.max(...tr.filter(p => p.s < s0 && ok(p[key])).map(p => p.s), -Infinity);
+              const rin = Math.abs(dd) / Math.max(U, s0 - prevS), rout = Math.abs(dd) / Math.max(U, s1 - c[j - 1].s);
+              if (rin < minRate || rout < minRate || s1 - s0 > Math.max(4, 2 * U)) continue;
+              const top = c.slice(k, j).reduce((a2, x) => (Math.abs(x.v - m) > Math.abs(a2 - m) ? x.v : a2), c[k].v);
+              if (!punchAt(s0, s1)) res.push({ s: s0, s2: s1, d: top - m, v: top });
+              k = j - 1;
+            }
+            return res;
+          };
+          // 1. height jump with no throttle behind it
+          spikes('alt', 3, 6).forEach(x => out.push({ t: x.s, t2: x.s2, kind: 'alt-jump', sev: 'info', text: `Height jumped ${x.d > 0 ? '+' : ''}${fmt(x.d, 1)} m and back with no throttle increase (barometer or GPS glitch; height smoothing removes it)` }));
+          // 2. speed spike with no throttle behind it
+          spikes('kmh', 20, 25).filter(x => x.d > 0).forEach(x => out.push({ t: x.s, t2: x.s2, kind: 'spd-jump', sev: 'info', text: `Speed spiked to ${fmt(x.v)} km/h with no throttle increase (GPS glitch; speed smoothing removes it)` }));
+          // 3. GPS position jump: further between fixes than the aircraft could have flown
+          const hav = (la1, lo1, la2, lo2) => { const R = 6371000, r = Math.PI / 180, x = Math.sin((la2 - la1) * r / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+          let lastG = null;
+          tr.forEach(p => { if (!ok(p.lat) || !ok(p.lng) || (p.lat === 0 && p.lng === 0)) return;
+            if (lastG && lastG.lat === p.lat && lastG.lng === p.lng) return;
+            if (lastG) { const d = hav(lastG.lat, lastG.lng, p.lat, p.lng), dt = Math.max(0.5, p.s - lastG.s), vmax = Math.max(0, ...inWin('kmh', lastG.s - 1, p.s + 1)) / 3.6;
+              if (d > 40 && d > (vmax * 1.5 + 15) * dt) { const prev = out.find(e => e.kind === 'gps-jump' && p.s - e.t2 <= 5);
+                if (prev) { prev.t2 = p.s; prev.n = (prev.n || 1) + 1; prev.text = `GPS position jumped ${prev.d} m and back within ${fmt(p.s - prev.t, 1)} s (faster than the aircraft can fly; a GPS glitch)`; }
+                else out.push({ t: lastG.s, t2: p.s, d: Math.round(d), kind: 'gps-jump', sev: 'info', text: `GPS position jumped ${Math.round(d)} m in ${fmt(dt, 1)} s (faster than the aircraft was flying)` }); } }
+            lastG = p; });
+          // 4. satellites dropped
+          const sat = tr.map(p => p.sats), satTop = Math.max(0, ...sat.filter(ok));
+          const runs = (flag) => { const r = []; let cur = null; flag.forEach((f, k) => { if (f) { if (cur && k - cur.k2 <= 2) cur.k2 = k; else { cur = { k1: k, k2: k }; r.push(cur); } } }); return r; };
+          if (satTop >= 8) runs(sat.map(v => ok(v) && v < 6)).forEach(({ k1, k2 }) => {
+            out.push({ t: tr[k1].s, t2: tr[k2].s, kind: 'sats', sev: 'warn', text: `GPS satellites dropped to ${Math.min(...sat.slice(k1, k2 + 1).filter(ok))} (from ${satTop}): position hold and return-to-home are unreliable` }); });
+          // 5. voltage: low per-cell under load, and dips the current doesn't explain
+          const v0 = tr.find(p => ok(p.v)), cells = t.cells || (v0 ? Math.max(1, Math.ceil(v0.v / 4.25)) : null);
+          if (cells) {
+            runs(tr.map(p => ok(p.v) && p.v / cells < 3.3)).forEach(({ k1, k2 }) => { const lo = Math.min(...tr.slice(k1, k2 + 1).map(p => p.v).filter(ok));
+              out.push({ t: tr[k1].s, t2: tr[k2].s, kind: 'volt-low', sev: 'warn', text: `Battery down to ${fmt(lo / cells, 2)} V per cell (${fmt(lo, 2)} V, ${cells}S) under load` }); });
+            spikes('v', 0.25 * cells).filter(x => x.d < 0 && !out.some(e => e.kind === 'volt-low' && x.s >= e.t - 2 && x.s <= e.t2 + 2) && !(aMed != null && inWin('a', x.s - uA * 1.2, x.s2 + uA * 1.2).some(a => a > aMed * 1.3))).forEach(x =>
+              out.push({ t: x.s, t2: x.s2, kind: 'volt-dip', sev: 'warn', text: `Voltage dipped ${fmt(-x.d, 2)} V with no current rise to explain it (check the battery connector, leads and pack)` }));
+          }
+          // 6. big current spike while the aircraft was sitting still (not climbing, not moving): prop strike, crash or a motor/ESC fault
+          const uAlt = rate(changes('alt')), uSpd = rate(changes('kmh')), win = Math.min(8, Math.max(3, 1.5 * Math.max(uAlt, uSpd, uA)));
+          cA.filter(x => aMed != null && x.v >= Math.max(hiA, aMed * 2.2)).forEach(x => {
+            const alts = inWin('alt', x.s - win, x.s + win), spds = inWin('kmh', x.s - win, x.s + win);
+            if (alts.length < 2 || spds.length < 2) return;
+            const climb = Math.max(...alts) - Math.min(...alts), vtop = Math.max(...spds);
+            if (climb < 1.5 && vtop < 12 && !out.some(e => e.kind === 'amp-no-motion' && x.s - e.t2 < win)) out.push({ t: x.s, t2: x.s, kind: 'amp-no-motion', sev: 'warn', text: `Current spiked to ${fmt(x.v)} A while the aircraft wasn't climbing or moving (prop strike, crash, stuck motor or ESC issue? Check the aircraft)` });
+          });
+          // 7. log ends in the air
+          const last = tr[n - 1];
+          if ((ok(last.alt) && last.alt > 10) || (ok(last.kmh) && last.kmh > 20)) out.push({ t: last.s, t2: last.s, kind: 'end-air', sev: 'warn', text: `Log ends in the air (${ok(last.alt) ? fmt(last.alt) + ' m' : '—'}, ${ok(last.kmh) ? fmt(last.kmh) + ' km/h' : '—'}): disarmed in flight, power loss, crash or a cut log?` });
+          return out.sort((x, y) => x.t - y.t);
+        };
+        const ANOM_LABEL = { 'alt-jump': 'Height glitch', 'spd-jump': 'Speed glitch', 'gps-jump': 'GPS jump', sats: 'Satellites', 'volt-low': 'Low voltage', 'volt-dip': 'Voltage dip', 'amp-no-motion': 'Current spike', 'end-air': 'Log ends airborne' };
+        if (typeof window !== 'undefined') window.__wdAnomalies = tlmAnomalies;
         // Updates a flight's telemetry smoothing (kind 'alt' or 'spd'); auto-filled height segments follow the new values
         const smoothFlight = (f, level, kind = 'alt') => {
           if (!f || !f.telemetry) return f;
@@ -2750,6 +2839,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             track = { d: gp.map((_, i) => px(i).toFixed(1) + ',' + py(i).toFixed(1)).join(' '), hm, end: [px(gp.length - 1), py(gp.length - 1)] };
           }
           const ke = telemetryKe(t, kg);
+          const anom = useMemo(() => tlmAnomalies(t), [t]);
           const keLim = oonp === true ? 34 : null;
           const st = (label, value, sub, warn) => (
             <div className="bg-white border border-slate-200 rounded px-2 py-1 min-w-0">
@@ -2792,6 +2882,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                     {altPts.length > 1 && <polyline points={altPts.join(' ')} fill="none" stroke="#1d76d2" strokeWidth="1.3" strokeLinejoin="round" />}
                     {spdPts.length > 1 && <polyline points={spdPts.join(' ')} fill="none" stroke="#f59e0b" strokeWidth="0.9" strokeLinejoin="round" opacity="0.9" />}
                     {(t.events || []).map((e, i) => <line key={i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke="#dc2626" strokeWidth="0.8" />)}
+                    {anom.map((e, i) => <line key={'a' + i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke={e.sev === 'warn' ? '#ea580c' : '#a855f7'} strokeWidth="0.7" strokeDasharray="1.5,1.2" />)}
                     <text x={L - 3} y={YA(topA) + 3} fontSize="7" textAnchor="end" fill="#1d76d2">{topA}m</text>
                     <text x={L - 3} y={YA(0) + 3} fontSize="7" textAnchor="end" fill="#64748b">0</text>
                     <text x={L + cw + 3} y={YS(topS) + 3} fontSize="7" fill="#b45309">{topS}</text>
@@ -2827,6 +2918,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 ))}
                 {t.minSats != null && <div>GPS sats {t.minSats}–{t.maxSats}{t.home ? ` · home ${t.home[0].toFixed(5)}, ${t.home[1].toFixed(5)}` : ''}</div>}
                 {(t.events || []).map((e, i) => <div key={i} className="text-red-700 font-semibold">⚠ {fmtMmSs(e.t)}: {e.text}</div>)}
+                {anom.length > 0 && <div data-anom-list="1" className="pt-0.5"><button type="button" onClick={() => setDetail(true)} className="font-semibold text-violet-800 hover:underline" data-anom-count={anom.length}><i className="fa-solid fa-flag text-[9px] mr-1"></i>{anom.length} telemetry flag{anom.length === 1 ? '' : 's'}</button>
+                  {anom.slice(0, 4).map((e, i) => <div key={'an' + i} data-anom={e.kind} className={e.sev === 'warn' ? 'text-orange-700 font-semibold' : 'text-violet-700'}>{e.sev === 'warn' ? '⚑' : '◇'} {fmtMmSs(e.t)}: {e.text}</div>)}
+                  {anom.length > 4 && <div className="text-slate-500">+ {anom.length - 4} more in Details</div>}</div>}
                 {(t.notes || []).map((n, i) => <div key={'n' + i} className="text-amber-700">ⓘ {n}</div>)}
               </div>
               {detail && <TlmDetail t={t} kg={kg} oonp={oonp} limitCtx={limitCtx} title={title} onClose={() => setDetail(false)} onSmooth={onSmooth} onSmoothAll={onSmoothAll} />}
@@ -2870,6 +2964,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [smoothDef, setSmoothDef] = useState(() => { const g = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }; return { alt: g('wd_tlm_smooth_default'), spd: g('wd_tlm_smooth_spd_default') }; });
           const tr = (t.trace || []).filter(p => p && p[0] != null);
           const [hi, setHi] = useState(null);
+          const anom = useMemo(() => tlmAnomalies(t), [t]);
           const mapRef = useRef(null), mapObj = useRef(null), hover = useRef(null);
           useEffect(() => {
             const L = window.L, el = mapRef.current; if (!L || !el) return;
@@ -2920,6 +3015,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                   if (pts.length < 2) return null;
                   return <g key={s.label}>{s.fill && <polygon points={`${X(tr[0][0])},${Y(r[0], r)} ${pts.join(' ')} ${X(tr[tr.length - 1][0])},${Y(r[0], r)}`} fill={s.color} fillOpacity="0.15" />}<polyline points={pts.join(' ')} fill="none" stroke={s.color} strokeWidth="1.6" strokeLinejoin="round" /></g>; })}
                 {(t.events || []).map((e, i) => <line key={i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke="#dc2626" strokeWidth="1" strokeDasharray="3,2" />)}
+                {anom.map((e, i) => <g key={'a' + i} data-anom-mark={e.kind}><rect x={X(e.t) - 1} width={Math.max(2, X(e.t2) - X(e.t) + 2)} y={T} height={ch} fill={e.sev === 'warn' ? '#ea580c' : '#a855f7'} fillOpacity="0.12" /><line x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke={e.sev === 'warn' ? '#ea580c' : '#a855f7'} strokeWidth="0.8" strokeDasharray="2,2" /></g>)}
                 {hi != null && tr[hi] && <line x1={X(tr[hi][0])} x2={X(tr[hi][0])} y1={T} y2={T + ch} stroke="#0f172a" strokeWidth="0.8" />}
                 <text x={L0} y={H - 4} fontSize="9" fill="#64748b">0:00</text>
                 <text x={L0 + cw} y={H - 4} fontSize="9" textAnchor="end" fill="#64748b">{fmtMmSs(dur)}</text>
@@ -2929,6 +3025,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           };
           const has = (i) => tr.some(p => p[i] != null);
           const p = hi != null ? tr[hi] : null;
+          const goTo = (sec) => { let best = null, bd = 1e9; tr.forEach((q, i) => { const d = Math.abs(q[0] - sec); if (d < bd) { bd = d; best = i; } }); setHi(best); };
           const ke = telemetryKe(t, kg);
           const box = (label, value, sub, warn) => (
             <div className="bg-white border border-slate-200 rounded-lg px-3 py-2"><div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</div><div className={`text-base font-bold font-mono ${warn ? 'text-red-600' : 'text-slate-800'}`}>{value}</div>{sub && <div className="text-[10px] text-slate-500">{sub}</div>}</div>
@@ -2974,6 +3071,17 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       </div>
                     );
                   })()}
+                  {anom.length > 0 && (
+                    <div data-tlm-flags="1" className="bg-white border border-violet-200 rounded-lg px-3 py-2 text-xs">
+                      <div className="font-semibold text-slate-700 mb-1"><i className="fa-solid fa-flag text-violet-600 mr-1.5"></i>Telemetry flags ({anom.length}) <span className="font-normal text-slate-400">· checked on the raw readings · <span className="text-orange-600">⚑ check the aircraft or log</span> · <span className="text-violet-600">◇ sensor glitch</span> · tap one to find it on the charts and map</span></div>
+                      <div className="divide-y divide-slate-100">{anom.map((e, i) => (
+                        <button type="button" key={i} data-anom-row={e.kind} onClick={() => goTo((e.t + e.t2) / 2)} className="w-full text-left flex gap-2 py-1 hover:bg-slate-50">
+                          <span className="font-mono text-slate-500 w-14 shrink-0">{fmtMmSs(e.t)}</span>
+                          <span className={`w-28 shrink-0 font-semibold ${e.sev === 'warn' ? 'text-orange-700' : 'text-violet-700'}`}>{e.sev === 'warn' ? '⚑' : '◇'} {ANOM_LABEL[e.kind] || e.kind}</span>
+                          <span className="text-slate-700">{e.text}</span>
+                        </button>))}</div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
                     {box(t.altSmooth ? 'Max height (smoothed)' : 'Max height', t.maxAltM != null ? t.maxAltM + ' m' : '—', t.maxAltM != null ? (t.altSmooth && t.rawStats ? 'raw ' + t.rawStats.maxAltM + ' m · ' : '') + ft(t.maxAltM) + ' ft above ' + (t.altRef === 'landing' ? 'landing' : t.altRef === 'lowest' ? 'lowest point' : 'take-off') : '', t.maxAltM > 120)}
                     {box(t.spdSmooth ? 'Max speed (smoothed)' : 'Max speed', t.maxSpeedKmh != null ? t.maxSpeedKmh + ' km/h' : '—', (t.spdSmooth && t.rawStats ? 'raw ' + t.rawStats.maxSpeedKmh + ' km/h · ' : '') + 'GPS ground speed')}
@@ -5215,6 +5323,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 +c('PEAK KE (EST.)',ke!=null?ke.toFixed(0)+' J':'—',ke!=null&&fl.oonp===true&&ke>34)
                 +'</div>'
                 +((t.events||[]).length?'<div style="padding:1pt 5pt;font-size:5.3pt;color:#dc2626;font-weight:700;">'+t.events.map(e=>esc(fmtMmSs(e.t)+' '+e.text)).join(' · ')+'</div>':'')
+                +(()=>{const an=tlmAnomalies(t);return an.length?'<div data-pdf-anom="1" style="padding:1pt 5pt;font-size:5.3pt;color:#7c2d12;">'+'<b>Telemetry flags:</b> '+an.map(e=>esc(fmtMmSs(e.t)+' '+(ANOM_LABEL[e.kind]||e.kind)+': '+e.text)).join(' · ')+'</div>':'';})()
                 +(()=>{const iss=flightLimitIssues(t,{...flightLimitCtx(fl.__rpa),kg,oonp:fl.oonp});return iss.length?'<div style="padding:1.5pt 5pt;font-size:5.6pt;font-weight:700;background:#fef2f2;">'+iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';">&#9888; '+esc(x.text)+'</span>').join('<br/>')+'</div>':'';})();
             };
             const profileSvg=(fl,peak)=>{
@@ -5290,7 +5399,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                   +flts.map((fl,i)=>{
                     const pk=peakOf(fl), t=fl.telemetry, kg=parseFloat(((db.fleet||{})[rpa]||{}).weight)||0;
                     const iss=t?flightLimitIssues(t,{...flightLimitCtx(rpa),kg,oonp:fl.oonp}):[];
-                    const notes=[...iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';font-weight:700;">&#9888; '+esc(x.text)+'</span>'),String(fl.notes||'').trim()?esc(String(fl.notes).trim()):'',fl.amendNote?'<span style="color:#b45309;">AMENDED — '+esc(fl.amendNote)+'</span>':''].filter(Boolean).join('<br>');
+                    const notes=[...iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';font-weight:700;">&#9888; '+esc(x.text)+'</span>'),...(t?tlmAnomalies(t).map(e=>'<span data-pdf-anom="1" style="color:'+(e.sev==='warn'?'#c2410c':'#7e22ce')+';">&#9873; '+esc(fmtMmSs(e.t)+' '+(ANOM_LABEL[e.kind]||e.kind))+'</span>'):[]),String(fl.notes||'').trim()?esc(String(fl.notes).trim()):'',fl.amendNote?'<span style="color:#b45309;">AMENDED — '+esc(fl.amendNote)+'</span>':''].filter(Boolean).join('<br>');
                     return '<tr style="break-inside:avoid;">'+td(i+1,'left','color:#94a3b8;')+td(esc(fl.label||'')+(t?' <span style="background:#0e7490;color:white;padding:0 2pt;border-radius:2pt;font-size:5pt;">AUTO</span>':''))
                       +td(fl.oonp===true?'<b style="color:#b45309;">OONP</b>':fl.oonp===false?'Non-OONP':'<span style="color:#94a3b8;">—</span>')
                       +td(parseInt(fl.duration)>0?fl.duration+' min':'—','right')+td(pk?pk+' ft'+(t&&t.altSmooth?'<span style="color:#0e7490;font-size:5.5pt;"> sm</span>':''):'—','right',pk>400?'color:#dc2626;font-weight:700;':'')
