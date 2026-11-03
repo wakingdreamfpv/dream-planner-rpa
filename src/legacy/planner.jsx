@@ -1,7 +1,7 @@
 /* Waking Dream FPV — Dream Planner RPA. Original single-file app, moved into Vite unchanged (Chunk 0).
    React, ReactDOM and Leaflet (L) are globals set up in src/globals.js / index.html. */
 
-import Dashboard from '../dashboard/Dashboard.jsx';
+import Dashboard, { Access as CrewAccess, Shared as CrewShared } from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
         // Extract React Hooks
@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5.3';
+        const APP_VERSION = '7.5.4';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4849,7 +4849,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [opOpen, setOpOpen] = useState(false);
           const [gsHidden, setGsHidden] = useState(() => !!lsGet('wd_gs_hidden'));
           // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
-          const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...(db.companyProfile || {}) };
+          const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...((isCrewRole && typeof window !== 'undefined' && window.wdCrew && window.wdCrew.company) || db.companyProfile || {}) }; delete out.at;
             Object.keys(op).forEach(k => { if (String(op[k] || '').trim()) out[k] = op[k]; }); return out; };
           // v7.2.1: the company name goes into crew invite emails
           useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
@@ -9076,7 +9076,23 @@ View in the Database & Settings tab.`);
           const [dbOpen, setDbOpen] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_db_open') || '{}') || {}; } catch (e) { return {}; } });
           const setAllFolds = (v) => setDbOpen(() => { const next = { '*': v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           const setFold = (id, v) => setDbOpen(prev => { const next = { ...prev, [id]: v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
+          // v7.5.4: a pilot or observer sees their own jobs, drafts and records, their account and hours; the company's settings stay with the CRP
+          const CREW_DB_OK = ['dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
           const dbFold = (id, title, icon, preview, body) => {
+            if (isCrewRole && !CREW_DB_OK.includes(id)) return null;
+            if (isCrewRole && id === 'dbsec-company') {
+              const co = (crewCloud && crewCloud.company) || {};
+              const rows = [['Company', co.name], ['Trading as', co.tradingName], ['ABN', co.abn], ['ReOC', co.reocNumber], ['Operator ARN', co.arn || co.operatorArn], ['Chief Remote Pilot', co.crpName], ['Phone', co.phone], ['Email', co.email]].filter(r => r[1]);
+              title = 'Company'; preview = <span>{co.name || 'Loading…'} · managed by the CRP</span>;
+              body = <div data-crew-company="1" className="text-sm">{rows.length ? <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1">{rows.map(([k, v]) => <React.Fragment key={k}><dt className="text-slate-500">{k}</dt><dd className="text-slate-800 font-medium">{v}</dd></React.Fragment>)}</dl> : <p className="text-slate-500">The CRP hasn't shared the company details yet.</p>}
+                <p className="text-xs text-slate-500 mt-2"><i className="fa-solid fa-lock mr-1"></i>Company details, fleet, batteries, crew lists, libraries and data settings are managed by the Chief Remote Pilot.</p></div>;
+            }
+            if (isCrewRole && id === 'dbsec-logged') {
+              const hrs = ((crewCloud && crewCloud.hours) || []).filter(h => h.seconds > 0), tot = hrs.reduce((t, h) => t + h.seconds, 0);
+              title = 'My flight time'; preview = <span>{fmtHrsMin(tot)} logged · {hrs.reduce((t, h) => t + h.flights, 0)} flights</span>;
+              body = <div data-crew-hours-db="1" className="text-sm">{hrs.length ? <table className="w-full text-sm"><tbody>{hrs.map(h => <tr key={h.rpa_type} className="border-t border-slate-100"><td className="py-1.5">{h.rpa_type}</td><td className="text-slate-500 text-right">{h.flights} flights</td><td className="font-semibold text-right w-24">{fmtHrsMin(h.seconds)}</td></tr>)}</tbody></table>
+                : <p className="text-slate-500">Your time shows here once the CRP completes a job you flew.</p>}</div>;
+            }
             const open = dbOpen[id] !== undefined ? !!dbOpen[id] : !!dbOpen['*'];
             return (
               <section id={id} data-dbfold={id} data-fold-title={title} data-open={open ? '1' : '0'} className={`rounded-xl border ${open ? 'border-indigo-200 bg-white' : 'border-slate-200 bg-white hover:border-indigo-200'} scroll-mt-16`}>
@@ -13688,6 +13704,13 @@ View in the Database & Settings tab.`);
                       </div>{/* end print:hidden screen log wrapper */}
                     </div>
                   </div>
+                  {activeTab === 'compliance' && isCrewRole && !isFree && (
+                    <div data-crew-compliance="1" className="print:hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-sm text-slate-700 space-y-2">
+                      <h2 className="text-lg font-semibold text-slate-800"><i className="fa-solid fa-calendar-check text-teal-600 mr-2"></i>Compliance calendar</h2>
+                      <p><i className="fa-solid fa-lock text-slate-400 mr-1"></i>The company's compliance calendar is managed by the Chief Remote Pilot{crewCloud && crewCloud.company && crewCloud.company.name ? ' at ' + crewCloud.company.name : ''}.</p>
+                      <p className="text-slate-500">Your own induction and certifications are under My induction on Home.</p>
+                    </div>
+                  )}
                   {activeTab === 'compliance' && isFree && (
                     <div data-free-compliance="1" className="print:hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-sm text-slate-700 space-y-2">
                       <h2 className="text-lg font-semibold text-slate-800"><i className="fa-solid fa-calendar-check text-teal-600 mr-2"></i>Compliance calendar</h2>
@@ -13696,7 +13719,7 @@ View in the Database & Settings tab.`);
                       {IS_HOSTED && <button type="button" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="mt-1 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold">Sign in</button>}
                     </div>
                   )}
-                  <div className={`${activeTab === 'compliance' && !isFree ? 'block' : 'hidden'} print:hidden`}>
+                  <div className={`${activeTab === 'compliance' && !isFree && !isCrewRole ? 'block' : 'hidden'} print:hidden`}>
                     <ComplianceCalendar
                       data={db.compliance}
                       onChange={(v) => updateDb('compliance', v)}
@@ -13770,7 +13793,7 @@ View in the Database & Settings tab.`);
                         <div className="flex items-center gap-3 text-xs -mb-4" data-fold-all="1"><span className="flex-1 text-slate-500">Tap a heading to open it. The preview line has quick actions.</span>
                           <button type="button" onClick={() => setAllFolds(true)} className="text-indigo-700 font-semibold">Expand all</button><button type="button" onClick={() => setAllFolds(false)} className="text-indigo-700 font-semibold">Collapse all</button></div>
                         {/* Compliance & Expiry Alerts */}
-                        {complianceAlerts.length > 0 && (
+                        {complianceAlerts.length > 0 && !isCrewRole && (
                           <div className={`border rounded-xl overflow-hidden shadow-sm ${complianceAlerts.some(a => a.severity === 'expired') ? 'border-red-300' : 'border-amber-300'}`}>
                             <div className={`px-4 py-3 border-b flex items-center gap-2 ${complianceAlerts.some(a => a.severity === 'expired') ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
                               <i className={`fa-solid fa-triangle-exclamation ${complianceAlerts.some(a => a.severity === 'expired') ? 'text-red-600' : 'text-amber-600'}`}></i>
@@ -14223,7 +14246,15 @@ View in the Database & Settings tab.`);
                         </div>
                         </div>
                         </div>
-                        <div data-db-group="equip" className="space-y-2.5">
+                        {isCrewRole && <div data-db-group="crew-areas" className="space-y-2.5">
+                          <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-key text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Company areas</h2><span className="text-xs text-slate-500">read-only, when the CRP gives you access</span></div>
+                          {dbFold('dbsec-crew-areas', 'Fleet, batteries, job records and planning', 'fa-key', <span>{((crewCloud && crewCloud.grants) || []).filter(g => g.status === 'granted').map(g => g.area).join(', ') || 'No access yet'} · request access</span>, (<div className="space-y-3">
+                            <CrewAccess c={crewCloud} a={{ requestAccess }} />
+                            {['fleet', 'batteries', 'records'].filter(ar => ((crewCloud && crewCloud.grants) || []).some(g => g.area === ar && g.status === 'granted')).map(ar => (
+                              <div key={ar} className="border border-slate-200 rounded-lg p-3" data-crew-area-view={ar}><div className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">{{ fleet: 'Company fleet', batteries: 'Company batteries', records: 'Job records' }[ar]}</div><CrewShared c={crewCloud} area={ar} /></div>))}
+                          </div>))}
+                        </div>}
+                        <div data-db-group="equip" className="space-y-2.5" hidden={isCrewRole || undefined}>
                           <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-helicopter text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Equipment</h2><span className="text-xs text-slate-500">aircraft, batteries and logged time</span></div>
                         {dbFold('dbsec-fleet', 'RPAS fleet', 'fa-helicopter', <span>{Object.values(db.fleet || {}).filter(f => f && !f.sample).length} aircraft · {Object.values(db.fleet || {}).filter(f => f && !f.sample && String(f.registrationNo || '').trim()).length} with CASA rego</span>, (<>
                             {/* RPAS Fleet DB */}
@@ -14495,7 +14526,7 @@ View in the Database & Settings tab.`);
                             })()}
                         </>))}
                         </div>
-                        <div data-db-group="lib" className="space-y-2.5">
+                        <div data-db-group="lib" className="space-y-2.5" hidden={isCrewRole || undefined}>
                           <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-book text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Libraries</h2><span className="text-xs text-slate-500">templates you reuse</span></div>
                         {dbFold('dbsec-risk-library', 'Risk assessment library', 'fa-triangle-exclamation', <span>{Object.keys(db.customRiskTemplates || {}).length} saved risk templates · import and export</span>, (<>
                         {/* ── Risk Assessment Library (v5.50) ── */}
@@ -14601,7 +14632,7 @@ View in the Database & Settings tab.`);
                         })()}
                         </>))}
                         </div>
-                        <div data-db-group="data" className="space-y-2.5">
+                        <div data-db-group="data" className="space-y-2.5" hidden={isCrewRole || undefined}>
                           <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-server text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Data & system</h2><span className="text-xs text-slate-500">backup, storage, integrations</span></div>
                         {dbFold('dbsec-backup', 'Backup & sync', 'fa-floppy-disk', <span>{lastBackupAt ? 'Last backup ' + new Date(lastBackupAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : 'No backup exported yet'}</span>, (<>
                         {/* Database Backup */}
