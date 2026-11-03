@@ -48,6 +48,28 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const event = String(body.event || '');
+
+    // v7.5.2: a crew member signed as RPIC on a company job → email the CRP(s)
+    if (event === 'rpic_signed') {
+      const { data: row } = await admin.from('job_flights')
+        .select('id, flight, job_id, jobs:job_id (title, op_id, start_date), people:person_id (full_name, email, user_id)').eq('id', String(body.flight_id || '')).single();
+      const sig = (row?.flight || {}) as any, who2 = (row as any)?.people || {}, job = (row as any)?.jobs || {};
+      if (!row || sig.kind !== 'rpic_signature' || who2.user_id !== who.user.id) return json({ error: 'Signature not found' }, 404);
+      const { data: crps } = await admin.from('profiles').select('email').eq('role', 'crp').eq('active', true);
+      const to2 = (crps || []).map((c: any) => c.email).filter(Boolean);
+      const subject2 = `${who2.full_name || 'Your RPIC'} has signed ${job.title || 'a job'} as RPIC`;
+      const html2 = page(subject2,
+        P(`<b>${esc(who2.full_name)}</b> (${esc(who2.email)}) has reviewed and signed the flight plan as Remote Pilot in Command.`) +
+        P(`Job: <b>${esc(job.title || '')}</b>${job.op_id ? ' (' + esc(job.op_id) + ')' : ''}${job.start_date ? ' · ' + esc(job.start_date) : ''}`) +
+        P('Open the planner: the signature is waiting in Awaiting action on Home. Add it to the job, then sign as CRP and approve the flight.'),
+        'Review and sign', appUrl + '#awaiting');
+      if (!to2.length) return json({ ok: true, sent: 0, message: 'No CRP to email' });
+      if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing); shown in the planner only' });
+      const r2 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: to2, subject: subject2, html: html2 }) });
+      if (!r2.ok) return json({ ok: false, error: 'Email failed: ' + (await r2.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: to2.length });
+    }
     const { data: rec } = await admin.from('signoff_records')
       .select('id, type, status, answers, person_id, people:person_id (full_name, email, user_id)').eq('id', String(body.signoff_id || '')).single();
     if (!rec || rec.type !== 'pilot_induction') return json({ error: 'Induction not found' }, 404);

@@ -64,6 +64,7 @@ export function PilotInduction({ sb, me }) {
       sb.from('certifications').select('competency, check_date, next_due').eq('person_id', person.id).order('next_due'),
     ]);
     setState({ loading: false, person, rec: (recs || [])[0] || null, certs: certs || [] });
+    window.dispatchEvent(new Event('wd-induction-changed'));
   }, [sb, me.id]);
   useEffect(() => { load(); }, [load]);
   if (state.loading) return <p className="text-sm text-slate-500">Loading your induction…</p>;

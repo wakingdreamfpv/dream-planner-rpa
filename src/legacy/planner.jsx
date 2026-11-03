@@ -173,7 +173,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5';
+        const APP_VERSION = '7.5.2';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4888,6 +4888,11 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [roleWelcomed, setRoleWelcomed] = useState(() => !!lsGet(roleKey));
           useEffect(() => { setRoleWelcomed(!!lsGet(roleKey)); }, [roleKey]); // eslint-disable-line
           const isCrewRole = signedIn && auth.ready && auth.role && auth.role !== 'crp';
+          // v7.5.2: the pilot's induction status from the cloud (undefined = not known yet)
+          const [myInd, setMyInd] = useState(() => window.wdMyInduction);
+          useEffect(() => { const h = () => setMyInd(window.wdMyInduction); h(); window.addEventListener('wd-my-induction', h); return () => window.removeEventListener('wd-my-induction', h); }, []);
+          const indDone = !!(myInd && ['awaiting_crp', 'certified', 'not_yet_competent'].includes(myInd.status));
+          useEffect(() => { if (isCrewRole && indDone && !roleWelcomed) { lsSet(roleKey, new Date().toISOString()); setRoleWelcomed(true); } }, [isCrewRole, indDone, roleWelcomed]); // eslint-disable-line
           const [opOpen, setOpOpen] = useState(false);
           const [gsHidden, setGsHidden] = useState(() => !!lsGet('wd_gs_hidden'));
           // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
@@ -4896,6 +4901,14 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // v7.2.1: the company name goes into crew invite emails
           useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
           const [cloudCrew, setCloudCrew] = useState(0);
+          // v7.5.1: crew with logins appear in every pilot / observer picker (the CRP sees them from the cloud)
+          const [cloudPeople, setCloudPeople] = useState([]);
+          useEffect(() => { const h = () => { const c = window.wdCloud; setCloudPeople(c ? (c.people || []).filter(x => x.active && String(x.full_name || '').trim()).map(x => ({ name: String(x.full_name).trim(), role: x.role })) : []); };
+            h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
+          const uniqNames = (list) => { const seen = new Set(); return list.map(x => String(x || '').trim()).filter(x => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase())); };
+          const myName = (auth && auth.state === 'in' && auth.name) ? [auth.name] : [];
+          const pilotOpts = uniqNames([...(db.pilots || []).map(p => p.name), ...cloudPeople.filter(x => x.role === 'crp' || x.role === 'pilot').map(x => x.name), ...(auth && auth.role && auth.role !== 'observer' ? myName : [])]);
+          const obsOpts = uniqNames([...(db.observers || []), ...cloudPeople.map(x => x.name), ...myName]);
           useEffect(() => { const h = () => { const c = window.wdCloud; setCloudCrew(c ? ((c.people || []).length - 1) + (c.invites || []).filter(i => !i.accepted_user_id).length : 0); };
             h(); window.addEventListener('wd-cloud', h); return () => window.removeEventListener('wd-cloud', h); }, []);
           useEffect(() => {
@@ -8131,8 +8144,10 @@ View in the Database & Settings tab.`);
             } else {
               if (rpSignBlocked) { alert(rpSignBlocked); return; }
               // a crew member with no RPIC named yet signs as themselves
-              if (signedIn && auth.role !== 'crp' && !String(approval.rpName || '').trim()) { setApproval(prev => ({ ...prev, rpName: signName || auth.email, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by })); return; }
+              if (signedIn && auth.role !== 'crp' && !String(approval.rpName || '').trim()) { setApproval(prev => ({ ...prev, rpName: signName || auth.email, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by }));
+                pushRpicSignature({ name: signName || auth.email, arn: approval.rpArn || '', date: today, by }); return; }
               setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by }));
+              pushRpicSignature({ name: approval.rpName, arn: approval.rpArn || '', date: today, by });
             }
           };
 
@@ -9264,6 +9279,8 @@ View in the Database & Settings tab.`);
             window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
           }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
+          useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
+            h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
           const [crewFlights, setCrewFlights] = useState(() => window.wdCrewFlights || null);
           const [accessReqs, setAccessReqs] = useState(() => window.wdAccessRequests || null);
           const [importedFl, setImportedFl] = useState(() => lsJson('wd_cloud_imported', []));
@@ -9283,7 +9300,9 @@ View in the Database & Settings tab.`);
           };
           const cloudAwaiting = () => {
             const aw = [];
-            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id)).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
+            (crewFlights || []).filter(f => !importedFl.includes(f.id) && f.flight && f.flight.kind === 'rpic_signature').forEach(f => aw.push({ kind: 'rpic-signed', icon: 'fa-signature', color: 'text-emerald-600',
+              label: `${f.who} signed as RPIC: ${(f.job && f.job.title) || 'a job'}`, sub: 'Add their signature, then sign as CRP and approve', cta: 'Review & sign', act: () => applyCloudSignature(f) }));
+            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id) && !(f.flight && f.flight.kind)).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
             Object.values(byJob).forEach(g => aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: `${g.flights.length} flight${g.flights.length === 1 ? '' : 's'} logged by ${g.who}`, sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
             const AREA = { fleet: 'fleet management', batteries: 'battery management', records: 'job records', planning: 'flight planning' };
             (accessReqs || []).filter(r => r.status === 'requested').forEach(r => aw.push({ kind: 'access', icon: 'fa-key', color: 'text-amber-600', label: `${r.who} asks for ${AREA[r.area] || r.area}`, sub: r.note || 'Access request',
@@ -9330,6 +9349,43 @@ View in the Database & Settings tab.`);
               alert(`${d.sent} flight${d.sent === 1 ? '' : 's'} sent to the CRP. They'll add them to the job record.`); };
             window.addEventListener('wd-push-result', h); return () => window.removeEventListener('wd-push-result', h);
           }); // eslint-disable-line
+          // v7.5.2: a crew member's RPIC signature on a company job goes to the CRP (in the cloud, with an email)
+          // latest plan state, for code that runs after a job has just been opened (a closure would still hold the old job)
+          const fpStateRef = useRef(null); fpStateRef.current = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic };
+          if (typeof window !== 'undefined') window.__wdSignable = () => rpicSignable(fpStateRef.current); // for tests
+          const pushRpicSignature = async (sig) => {
+            if (!(isCrewRole && cloudJob && overview.uid && cloudJob.uid === overview.uid)) return;
+            let fp = ''; try { fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }); } catch (e) {}
+            window.dispatchEvent(new CustomEvent('wd-push-signature', { detail: { jobId: cloudJob.id, sig: { kind: 'rpic_signature', ...sig, fingerprint: fp, title: getOpTitle(overview), opId: overview.identifier } } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {};
+              if (!d.ok) { alert('Signed here, but the signature couldn\'t be sent to the CRP: ' + (d.error || 'unknown error') + '\n\nSign again when you have signal.'); return; }
+              alert('✅ Signed as RPIC. Your signature has been sent to the CRP' + (d.emailed ? ', who has been emailed' : '') + ' to review and sign.'); };
+            window.addEventListener('wd-signature-result', h); return () => window.removeEventListener('wd-signature-result', h);
+          }, []);
+          const applyCloudSignature = (row) => {
+            const sig = row.flight || {}, uid = row.job && row.job.plan_uid, local = cloudJobsList().find(j => j.uid === uid);
+            const done = () => { const ids = [...new Set([...importedFl, row.id])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); };
+            const finish = async () => {
+              const cur = fpStateRef.current;
+              if (!cur.overview || cur.overview.uid !== uid) { alert('Couldn\'t open the job to add the signature. Open it from Database & Settings and try again.'); return; }
+              const fp = await planFingerprint(cur);
+              const fpOld = await planFingerprint(cur, true);
+              if (sig.fingerprint && sig.fingerprint !== fp && sig.fingerprint !== fpOld) {
+                if (!window.confirm(`⚠ ${row.who} signed an earlier version of this plan (${fpShort(sig.fingerprint)}); the plan is now ${fpShort(fp)}.\n\nOK: dismiss this signature (ask them to open the job and sign again)\nCancel: keep it in Awaiting action`)) return;
+                done(); return;
+              }
+              setApproval(prev => ({ ...prev, rpSigned: true, rpName: sig.name || prev.rpName, rpArn: sig.arn || prev.rpArn, rpDate: sig.date || prev.rpDate, rpRemote: null,
+                rpSignedBy: sig.by || { name: sig.name, role: 'pilot', at: row.created_at } }));
+              done(); setActiveTab('approval');
+              setTimeout(() => alert(`✅ ${sig.name}'s RPIC signature (signed ${sig.date ? fmtDate(sig.date) : ''} in the planner) is now on “${row.job.title || 'the job'}”.\n\nCheck the plan, then sign as CRP and approve. Save the job when you're done.`), 250);
+            };
+            if (overview.uid && overview.uid === uid) { finish(); return; }
+            if (!local) { alert(`“${(row.job && row.job.title) || 'This job'}” isn't saved on this device.`); return; }
+            if (dirty && !window.confirm(`Open “${row.job.title}” to add ${row.who}'s signature? The job that's open now has unsaved changes, which will be lost.`)) return;
+            handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 500);
+          };
           const requestAccess = (area) => { const note = window.prompt('Ask the CRP for access. Add a note if you like (optional):', ''); if (note === null) return; window.dispatchEvent(new CustomEvent('wd-request-access', { detail: { area, note } })); };
 
           const buildDashData = () => {
@@ -9387,7 +9443,7 @@ View in the Database & Settings tab.`);
             const jl = siteOf(overview, mapData);
             const hr = new Date().getHours(), first = String(auth.name || (db.companyProfile || {}).crpName || '').split(' ')[0];
             return {
-              crewMode: !!isCrewRole, crew: isCrewRole ? crewCloud : null,
+              crewMode: !!isCrewRole, crew: isCrewRole ? (crewCloud ? { ...crewCloud, induction: myInd } : null) : null,
               free: isFree, greeting: (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (first ? ', ' + first : ''),
               company: isFree ? ((overview.operatorProfile || {}).name || '') : isCrewRole ? (((crewCloud || {}).company || {}).name || '') : ((db.companyProfile || {}).name || ''),
               current: { started: curStarted, name: String(overview.operationName || '').trim() },
@@ -9711,7 +9767,7 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
-              {isCrewRole && !roleWelcomed && (() => {
+              {isCrewRole && !roleWelcomed && myInd !== undefined && !indDone && (() => {
                 const done = () => { lsSet(roleKey, new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setRoleWelcomed(true); setShowWelcome(false); };
                 const first = String(auth.name || '').split(' ')[0];
                 return (
@@ -10337,7 +10393,7 @@ View in the Database & Settings tab.`);
                           
                           <div>
                             <label data-req-anchor="rpic" className="block text-sm font-medium text-gray-700 mb-1">Remote Pilot in Command (RPIC)<ReqMark why={reqWhy('rpic')} /></label>
-                            <ComboBox name="rpic" value={overview.rpic} onChange={handleOverviewChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select or type RPIC..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                            <ComboBox name="rpic" value={overview.rpic} onChange={handleOverviewChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select or type RPIC..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             {(() => {
                               const p = db.pilots.find(px => px.name === overview.rpic);
                               if (!p) return null;
@@ -10352,7 +10408,7 @@ View in the Database & Settings tab.`);
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Visual Observer / Support</label>
                             <div className="flex gap-2">
-                              <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                              <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             </div>
                           </div>
                           <div className="md:col-span-2" data-req-box="1">
@@ -11492,7 +11548,7 @@ View in the Database & Settings tab.`);
                                 <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg animate-in fade-in slide-in-from-top-2">
                                   <label className="block text-sm font-medium text-blue-900 mb-2">Visual Observer (VO)</label>
                                   <div className="flex gap-2">
-                                    <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                    <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                   </div>
                                 </div>
                               )}
@@ -11622,7 +11678,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Remote Observers (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <ComboBox name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -11637,7 +11693,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Night Visual Observer (NVO) (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <ComboBox name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -13055,7 +13111,7 @@ View in the Database & Settings tab.`);
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
                                 <div className="flex gap-2">
-                                  <ComboBox name="crpName" value={approval.crpName} onChange={(e) => handlePersonnelSelect('crp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select CRP..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
+                                  <ComboBox name="crpName" value={approval.crpName} onChange={(e) => handlePersonnelSelect('crp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select CRP..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
                                   <input type="text" placeholder="ARN" name="crpArn" value={approval.crpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
@@ -13084,7 +13140,7 @@ View in the Database & Settings tab.`);
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
                                 <div className="flex gap-2">
-                                  <ComboBox name="rpName" value={approval.rpName} onChange={(e) => handlePersonnelSelect('rp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Select RPIC..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
+                                  <ComboBox name="rpName" value={approval.rpName} onChange={(e) => handlePersonnelSelect('rp', e.target.value)} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Select RPIC..." className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white" />
                                   <input type="text" placeholder="ARN" name="rpArn" value={approval.rpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
@@ -13484,15 +13540,15 @@ View in the Database & Settings tab.`);
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label data-req-anchor="crewRP" className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Primary RP<ReqMark why={reqWhy('crewRP')} /></label>
-                              <ComboBox name="crewRP" value={log.crewRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewRP" value={log.crewRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Second RP</label>
-                              <ComboBox name="crewSecondRP" value={log.crewSecondRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={db.pilots.map(p => p.name)} placeholder="Name / Initials (If applicable)" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewSecondRP" value={log.crewSecondRP} onChange={handleLogChange} onBlur={e => handleAutoSave('pilots', e.target.value, true)} onAdd={makeAddHandler('pilots')} options={pilotOpts} placeholder="Name / Initials (If applicable)" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Observer/Crew</label>
-                              <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={db.observers} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                             </div>
                           </div>
                           
