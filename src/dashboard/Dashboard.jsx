@@ -330,7 +330,7 @@ function MyHours({ c, a }) {
       <Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn></div>
   </div>;
 }
-function Access({ c, a }) {
+export function Access({ c, a }) {
   if (!c) return <Empty>Loading…</Empty>;
   const g = {}; (c.grants || []).forEach(x => { g[x.area] = x; });
   return <div className="divide-y divide-slate-100" data-crew-access="1">{AREAS.map(ar => { const x = g[ar.id], st = x && x.status;
@@ -342,7 +342,7 @@ function Access({ c, a }) {
     </div>; })}
     <p className="text-xs text-slate-500 pt-2">The CRP sees your request in their Awaiting action list.</p></div>;
 }
-function Shared({ c, area }) {
+export function Shared({ c, area }) {
   const v = c && c.shared && c.shared[area];
   if (!v) return <Empty>The CRP hasn't shared this yet.</Empty>;
   const rows = Array.isArray(v.rows) ? v.rows : [];
