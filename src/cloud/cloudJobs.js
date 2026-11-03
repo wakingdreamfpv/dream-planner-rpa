@@ -50,7 +50,8 @@ export function useCloudJobs(sb, me) {
         ]);
         if (dead) return;
         const ppl = peopleRef.current.length ? peopleRef.current : await loadPeople();
-        const { data: jobs } = await sb.from('jobs').select('id,plan_uid,op_id,title');
+        const { data: jobs } = await sb.from('jobs').select('id,plan_uid,op_id,title,status,start_date,updated_at');
+        publish('wdCloudJobs', jobs || [], 'wd-cloud-jobs');
         const jById = {}; (jobs || []).forEach(j => { jById[j.id] = j; });
         const name = (pid) => ((ppl.find(p => p.id === pid) || {}).full_name) || 'Crew member';
         publish('wdCrewFlights', (fl || []).map(f => ({ ...f, who: name(f.person_id), job: jById[f.job_id] || null })), 'wd-crew-flights');
@@ -92,13 +93,24 @@ export function useCloudJobs(sb, me) {
         } catch (err) { lastPub.current = ''; }
       }, 2500);
     };
+    // v7.5.6: open a job from the cloud on a device that doesn't have it saved
+    const onFetch = async (e) => {
+      const d = e.detail || {};
+      try {
+        const q = sb.from('jobs').select('id,plan_uid,op_id,title,status,plan');
+        const { data, error } = await (d.id ? q.eq('id', d.id) : q.eq('plan_uid', d.uid)).single();
+        if (error || !data) throw error || new Error('Job not found in the cloud');
+        emit('wd-cloud-job-fetched', { req: d.req, job: { id: data.id, uid: data.plan_uid, opId: data.op_id, title: data.title, status: data.status }, plan: data.plan });
+      } catch (err) { emit('wd-cloud-job-fetched', { req: d.req, error: String((err && err.message) || err) }); }
+    };
+    window.addEventListener('wd-fetch-cloud-job', onFetch);
     const onDecide = async (e) => { const d = e.detail || {}; try { await sb.rpc('decide_access', { p_id: d.id, p_status: d.status }); } catch (err) {} refreshInbox(); };
     window.addEventListener('wd-job-saved', onSaved); window.addEventListener('wd-cloud-publish', onPublish); window.addEventListener('wd-decide-access', onDecide);
     window.addEventListener('wd-cloud-refresh', refreshInbox);
     loadPeople().then(refreshInbox); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
     return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish);
-      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
+      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
 
   // ── Crew ─────────────────────────────────────────────────────────────────────────────────────
