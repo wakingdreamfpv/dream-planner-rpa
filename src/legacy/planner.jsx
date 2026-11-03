@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.3';
+        const APP_VERSION = '7.4';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -3238,11 +3238,11 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         // scope 'operator' = issued to this ReOC; 'all' = general instruments that apply to every operator.
         // excludes = operation types the instrument does not cover (warned about when the job includes them).
         const DEFAULT_OFFICIAL_AUTHS = [
-          { id: 'auth-oonp0079', code: 'CASA.OONP.0079', title: 'Over or near people (OONP)', scope: 'operator', expiry: '', excludes: ['EVLOS', 'Night', 'Swarm'], exclusionMode: 'manual', note: 'Schedule 1.3 lists EVLOS, night and swarm. Read with the CASA delegate as applying only where these are not already approved in the operations manual (ours approves EVLOS and night). Written CASA confirmation pending.' },
-          { id: 'auth-evlos0346', code: 'CASA.EVLOS.0346', title: 'Extended visual line of sight (EVLOS)', scope: 'operator', expiry: '', excludes: [], note: '' },
-          { id: 'auth-casa2025', code: 'CASA 20/25', title: 'Operation of Certain Unmanned Aircraft and Rockets – Directions Instrument 2025', scope: 'all', expiry: '2028-03-31', excludes: [], note: 'Height, 30 m people safety zone, public safety areas, one RPA at a time.' },
-          { id: 'auth-ex8725', code: 'CASA EX87/25', title: 'Obtaining Experience (medium RPA / RePL category upgrade) Exemption 2025', scope: 'all', expiry: '2028-09-30', excludes: [], note: '' },
-          { id: 'auth-night', code: 'Night VLOS', title: 'Night operations under the ReOC (Part 101 MOS and the operations manual night procedures)', scope: 'all', expiry: '', excludes: [], note: '' },
+          { id: 'auth-oonp0079', code: 'CASA.OONP.0079', title: 'Over or near people (OONP)', scope: 'operator', expiry: '', needFor: ['OONP'], excludes: ['EVLOS', 'Night', 'Swarm'], exclusionMode: 'manual', note: 'Schedule 1.3 lists EVLOS, night and swarm. Read with the CASA delegate as applying only where these are not already approved in the operations manual (ours approves EVLOS and night). Written CASA confirmation pending.' },
+          { id: 'auth-evlos0346', code: 'CASA.EVLOS.0346', title: 'Extended visual line of sight (EVLOS)', scope: 'operator', expiry: '', needFor: ['EVLOS'], excludes: [], note: '' },
+          { id: 'auth-casa2025', code: 'CASA 20/25', title: 'Operation of Certain Unmanned Aircraft and Rockets – Directions Instrument 2025', scope: 'all', expiry: '2028-03-31', needFor: [], excludes: [], note: 'Height, 30 m people safety zone, public safety areas, one RPA at a time.' },
+          { id: 'auth-ex8725', code: 'CASA EX87/25', title: 'Obtaining Experience (medium RPA / RePL category upgrade) Exemption 2025', scope: 'all', expiry: '2028-09-30', needFor: [], excludes: [], note: '' },
+          { id: 'auth-night', code: 'Night VLOS', title: 'Night operations under the ReOC (Part 101 MOS and the operations manual night procedures)', scope: 'all', expiry: '', needFor: ['Night'], excludes: [], note: '' },
         ];
         const officialAuthList = (dbObj) => (dbObj && Array.isArray(dbObj.officialAuths)) ? dbObj.officialAuths : DEFAULT_OFFICIAL_AUTHS;
         const authSelected = (text, a) => !!a.code && String(text || '').toLowerCase().includes(a.code.toLowerCase());
@@ -3257,6 +3257,42 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const j = jsaObj || {}, ops = j.operationTypes || [], night = ops.includes('NVLOS') || /night/i.test(j.timeOfDay || '');
           return (a.excludes || []).filter(x => x === 'Night' ? night : x === 'Swarm' ? false : ops.includes(x));
         };
+        // v7.4: instrument copies (a scan or PDF of the CASA instrument) and which kinds of job need them
+        const AUTH_NEED_KINDS = ['OONP', 'EVLOS', 'Night', 'BVLOS'];
+        const authNeedFor = (a) => Array.isArray(a.needFor) ? a.needFor
+          : /oonp/i.test(a.code || '') ? ['OONP'] : /\bbvlos/i.test(a.code || '') ? ['BVLOS'] : /evlos/i.test(a.code || '') ? ['EVLOS'] : /night/i.test((a.code || '') + ' ' + (a.id || '')) ? ['Night'] : [];
+        const jobNeedKinds = (jsaObj, oonpOn) => { const j = jsaObj || {}, ops = j.operationTypes || [];
+          return AUTH_NEED_KINDS.filter(k => k === 'Night' ? (ops.includes('NVLOS') || /night/i.test(j.timeOfDay || '')) : k === 'OONP' ? (ops.includes('OONP') || !!oonpOn) : ops.includes(k)); };
+        const authAttached = (a, appr, required, chosen) => { const m = (appr && appr.authAttach) || {}; return a.file ? (m[a.id] !== undefined ? !!m[a.id] : (required || chosen)) : false; };
+        const authExpiryState = (a, onDate) => { if (!a.expiry) return null; const fmtDate = (iso) => { const [y, m, d] = String(iso).split('-'); return d ? `${d}/${m}/${y}` : iso; }; const d = Math.round((Date.parse(a.expiry) - Date.parse(onDate || localISODate())) / 864e5);
+          return d < 0 ? { bad: true, label: 'Expired ' + fmtDate(a.expiry) } : d <= 30 ? { soon: true, label: 'Expires ' + fmtDate(a.expiry) + ' (' + d + ' d)' } : { label: 'Valid to ' + fmtDate(a.expiry) }; };
+        let pdfjsP = null;
+        const loadPdfJs = () => pdfjsP || (pdfjsP = new Promise((res, rej) => {
+          if (window.pdfjsLib) return res(window.pdfjsLib);
+          const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          sc.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); } catch (e) { rej(e); } };
+          sc.onerror = () => { pdfjsP = null; rej(new Error('PDF reader unavailable offline')); }; document.head.appendChild(sc);
+        }));
+        // read an uploaded instrument; PDFs are also turned into page images (up to 8) so they print inside the plan PDF
+        const readInstrumentFile = (file) => new Promise((res, rej) => {
+          if (!file) return rej(new Error('No file'));
+          if (file.size > 15 * 1048576) return rej(new Error('That file is over 15 MB. Save a smaller scan or PDF and try again.'));
+          const fr = new FileReader();
+          fr.onerror = () => rej(new Error('Couldn\'t read the file'));
+          fr.onload = async () => {
+            const out = { name: file.name, type: file.type || '', size: file.size, data: fr.result, at: new Date().toISOString() };
+            if (out.type === 'application/pdf') {
+              try {
+                const lib = await loadPdfJs(); const bin = atob(String(fr.result).split(',')[1] || ''); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const doc = await lib.getDocument({ data: bytes }).promise; out.pageCount = doc.numPages; out.pages = [];
+                for (let n = 1; n <= Math.min(8, doc.numPages); n++) { const pg = await doc.getPage(n); const vp = pg.getViewport({ scale: 1.6 }); const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+                  await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise; out.pages.push(c.toDataURL('image/jpeg', 0.82)); }
+              } catch (e) { out.pages = null; out.pageNote = String(e.message || e); }
+            }
+            res(out);
+          };
+          fr.readAsDataURL(file);
+        });
 
         // Checks every expiry that matters for one job against the job's own dates (not today's date):
         // company items from the Compliance Calendar, the pilots named on the job, and the aircraft selected.
@@ -4779,6 +4815,20 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             });
           };
 
+          // v7.4: instrument copies
+          const [authBusy, setAuthBusy] = useState(null);
+          const uploadAuthFile = async (id, file) => {
+            if (!file) return; setAuthBusy(id);
+            try {
+              const f = await readInstrumentFile(file);
+              setDb(prev => { const list = officialAuthList(prev).map(x => x.id === id ? { ...x, file: f } : x); const newDb = { ...prev, officialAuths: list };
+                if (dbSaveTimer.current) clearTimeout(dbSaveTimer.current); dbSaveTimer.current = setTimeout(() => { if (dbReadyRef.current) wdStore.save(newDb); }, 400); return newDb; });
+            } catch (e) { alert(e.message || String(e)); }
+            setAuthBusy(null);
+          };
+          const openAuthFile = (x) => { const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); try { const w = window.open(); if (!w) return; if (x.file.type === 'application/pdf') w.document.write('<title>' + esc(x.code || 'Instrument') + '</title><iframe src="' + x.file.data + '" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>');
+            else w.document.write('<title>' + esc(x.code || 'Instrument') + '</title><img src="' + x.file.data + '" style="max-width:100%">'); w.document.close(); } catch (e) {} };
+
           const [dbInputAssessor, setDbInputAssessor] = useState('');
           const [batteryFilter, setBatteryFilter] = useState('active');
 
@@ -5659,6 +5709,23 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (siteAttachments.length > 0) {
               P.push('<div style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin:0 0 8pt;break-before:page;"><span style="opacity:0.7;font-size:8pt;">Appendix A</span><span style="font-size:13pt;font-weight:800;margin-left:8pt;">Site Attachments</span></div>');
               P.push(attHtml);
+            }
+            // v7.4: copies of the instruments attached to this job
+            {
+              const need = jobNeedKinds(jsa, oonpMode);
+              const inst = officialAuthList(db).filter(x => authAttached(x, approval, authNeedFor(x).some(k => need.includes(k)), authSelected(approval.officialAuth, x)));
+              if (inst.length) {
+                const ex = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+                P.push('<div data-pdf-instruments="1" style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin:0 0 8pt;break-before:page;"><span style="opacity:0.7;font-size:8pt;">Appendix ' + (siteAttachments.length > 0 ? 'B' : 'A') + '</span><span style="font-size:13pt;font-weight:800;margin-left:8pt;">Authorisation Instruments</span></div>');
+                inst.forEach((x, i) => {
+                  const f = x.file, es = authExpiryState(x, ov.operationDate);
+                  P.push('<div style="' + (i ? 'break-before:page;' : '') + 'border:1px solid '+S2+';border-radius:4pt;padding:6pt 8pt;margin-bottom:6pt;background:#f8fafc;"><div style="font-size:10pt;font-weight:800;color:'+NV+';">' + ex(x.code) + '</div><div style="font-size:8pt;color:'+S6+';">' + ex(x.title) + (es ? ' · ' + ex(es.bad ? 'EXPIRED ' + x.expiry : es.label) : '') + ' · copy: ' + ex(f.name) + '</div></div>');
+                  const imgs = f.type && f.type.startsWith('image/') ? [f.data] : (f.pages || []);
+                  imgs.forEach((src, k) => P.push('<div data-pdf-instrument-page="1" style="' + (k ? 'break-before:page;' : '') + 'text-align:center;"><img src="' + src + '" style="max-width:100%;max-height:245mm;object-fit:contain;border:1px solid '+S2+';"/></div>'));
+                  if (!imgs.length) P.push('<div style="font-size:8pt;color:'+S6+';font-style:italic;">The PDF copy of this instrument (' + ex(f.name) + ') is held in the planner and should be appended when distributing.</div>');
+                  else if (f.pageCount > imgs.length) P.push('<div style="font-size:7pt;color:'+S6+';font-style:italic;">First ' + imgs.length + ' of ' + f.pageCount + ' pages shown.</div>');
+                });
+              }
             }
             // Heatmap page — only if canvas has content or there are heatmap exclusion zones
             if (hasHeatContent) {
@@ -8967,6 +9034,133 @@ View in the Database & Settings tab.`);
           const [awaitingInd, setAwaitingInd] = useState(0);
           useEffect(() => { const h = () => setAwaitingInd(window.wdAwaitingCount || 0); h(); window.addEventListener('wd-awaiting', h); return () => window.removeEventListener('wd-awaiting', h); }, []);
           const planFileRef = useRef(null);
+          // ── v7.4 Chunk 2b: cloud jobs ──────────────────────────────────────────────────────────
+          // The account panel does the cloud calls (src/cloud/cloudJobs.js); the planner talks to it with window events.
+          const isCrpCloud = IS_HOSTED && signedIn && auth.role === 'crp' && WD_NS === '';
+          const [cloudReady, setCloudReady] = useState(() => !!window.__wdCloudReady);
+          useEffect(() => { const h = () => setCloudReady(!!window.__wdCloudReady); h(); window.addEventListener('wd-cloud-ready', h); return () => window.removeEventListener('wd-cloud-ready', h); }, []);
+          const lsJson = (k, dflt) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } };
+          const lsJsonSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+          const planCrew = (p) => { const ov = p.overview || {}, ap = p.approval || {}, lg = p.log || {}, out = [];
+            const add = (n, role) => String(n || '').split(/[,;/&]|\band\b/).map(x => x.trim()).filter(Boolean).forEach(name => out.push({ name, role }));
+            add(ov.rpic, 'rpic'); add(ap.rpName, 'rpic'); add(lg.crewRP, 'pilot'); add(lg.crewSecondRP, 'pilot'); add(ov.supportPersonnel, 'observer'); add(lg.crewObserver, 'observer');
+            return out; };
+          const isoDay = (x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x || '')) ? x : null;
+          const cloudJobsList = () => {
+            const rank = { draft: 1, approved: 2, completed: 3 }, best = {};
+            const put = (p, status, when) => { const ov = p.overview || {}; const uid = ov.uid || ('op:' + (p.id || ov.identifier || '')); if (uid === 'op:') return;
+              const cur = best[uid]; if (!cur || rank[status] > rank[cur.status] || (rank[status] === rank[cur.status] && Date.parse(when || 0) > Date.parse(cur.when || 0))) best[uid] = { uid, p, status, when }; };
+            (db.draftPlans || []).forEach(p => put(p, 'draft', p.savedAt));
+            (db.savedPlans || []).forEach(p => put(p, p.status === 'completed' ? 'completed' : 'approved', p.savedAt));
+            (db.completedFlights || []).forEach(p => put(p, 'completed', p.completedAt || p.savedAt));
+            return Object.values(best);
+          };
+          // CRP: every saved draft, approved plan and completed record goes to the cloud, with who is on it
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady) return;
+            const t = setTimeout(() => {
+              const synced = lsJson('wd_cloud_synced', {});
+              cloudJobsList().forEach(({ uid, p, status, when }) => {
+                const sig = status + '|' + (when || '') + '|' + JSON.stringify(planCrew(p));
+                if (synced[uid] === sig) return;
+                const ov = p.overview || {};
+                window.dispatchEvent(new CustomEvent('wd-job-saved', { detail: { uid, sig, opId: ov.identifier || p.id || null, title: getOpTitle(ov) || p.title || '', status,
+                  startDate: isoDay(ov.operationDate), endDate: isoDay(ov.operationEndDate) || isoDay(ov.operationDate), plan: p, crew: planCrew(p) } }));
+              });
+            }, 1200);
+            return () => clearTimeout(t);
+          }, [isCrpCloud, cloudReady, dbReady, db.draftPlans, db.savedPlans, db.completedFlights]); // eslint-disable-line
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const job = cloudJobsList().find(j => j.uid === d.uid); if (!job) return;
+              const synced = lsJson('wd_cloud_synced', {}); synced[d.uid] = job.status + '|' + (job.when || '') + '|' + JSON.stringify(planCrew(job.p)); lsJsonSet('wd_cloud_synced', synced); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h);
+          }); // eslint-disable-line
+          // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady) return;
+            const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
+            const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
+            const all = loggedTimeStats(db.completedFlights);
+            const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
+              return { name, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', flights: x.flights, sec: x.sec + (Number(f.priorMinutes) || 0) * 60 }; });
+            const bnames = [...new Set([...(db.batteries || []), ...Object.values(db.rpaBatteries || {}).flat(), ...Object.keys(all.bat)])];
+            const batteries = bnames.map(name => ({ name, flights: (all.bat[name] || {}).flights || 0, minCell: (all.bat[name] || {}).minCell || null, rpa: (all.bat[name] || {}).rpa || '' }));
+            const records = [...(db.completedFlights || [])].sort((x, y) => Date.parse(y.completedAt || 0) - Date.parse(x.completedAt || 0)).slice(0, 60).map(r => { const st = loggedTimeStats([r]).acft;
+              return { name: getOpTitle(r.overview || {}) || r.title || '', date: (r.overview || {}).operationDate || (r.completedAt || '').slice(0, 10), rpic: (r.overview || {}).rpic || '',
+                flights: Object.values(st).reduce((t, x) => t + x.flights, 0), sec: Object.values(st).reduce((t, x) => t + x.sec, 0) }; });
+            const per = {}; (db.completedFlights || []).forEach(r => { const st = loggedTimeStats([r]); Object.keys(st.pil).forEach(pn => Object.entries(st.acft).forEach(([rpa, x]) => {
+              const k = pn + '\u0000' + rpa, o = per[k] = per[k] || { name: pn, rpa, flights: 0, seconds: 0, last: 0 }; o.flights += x.flights; o.seconds += x.sec; o.last = Math.max(o.last, x.last || 0); })); });
+            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights]); // eslint-disable-line
+          // CRP: flights crew logged in the cloud, and access requests
+          const [crewFlights, setCrewFlights] = useState(() => window.wdCrewFlights || null);
+          const [accessReqs, setAccessReqs] = useState(() => window.wdAccessRequests || null);
+          const [importedFl, setImportedFl] = useState(() => lsJson('wd_cloud_imported', []));
+          useEffect(() => { const h1 = () => setCrewFlights(window.wdCrewFlights || null), h2 = () => setAccessReqs(window.wdAccessRequests || null);
+            window.addEventListener('wd-crew-flights', h1); window.addEventListener('wd-access-requests', h2); h1(); h2();
+            return () => { window.removeEventListener('wd-crew-flights', h1); window.removeEventListener('wd-access-requests', h2); }; }, []);
+          const importCloudFlights = (grp) => {
+            const uid = grp.job && grp.job.plan_uid; const local = cloudJobsList().find(j => j.uid === uid);
+            const inc = { rpaLogs: {} }; grp.flights.forEach(f => { const r = f.rpa || 'RPA'; (inc.rpaLogs[r] = inc.rpaLogs[r] || { flights: [] }).flights.push({ ...(f.flight || {}), crewBy: f.who }); });
+            const finish = () => { let changes = []; setLog(prev => { const m = mergeCrewLog(prev, inc); changes = m.changes; return m.log; });
+              const ids = [...new Set([...importedFl, ...grp.flights.map(f => f.id)])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); setActiveTab('log');
+              setTimeout(() => alert(`Flights from ${grp.who} added to “${grp.name}”.\n\n${changes.join('\n') || 'They were already in the log.'}\n\nCheck them in Section 4, then save the job.`), 200); };
+            if (overview.uid && overview.uid === uid) { finish(); return; }
+            if (!local) { alert(`“${grp.name}” isn't saved on this device, so its flights can't be added here.`); return; }
+            if (dirty && !window.confirm(`Open “${grp.name}” to add the crew's flights? The job that's open now has unsaved changes, which will be lost.`)) return;
+            handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 450);
+          };
+          const cloudAwaiting = () => {
+            const aw = [];
+            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id)).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
+            Object.values(byJob).forEach(g => aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: `${g.flights.length} flight${g.flights.length === 1 ? '' : 's'} logged by ${g.who}`, sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
+            const AREA = { fleet: 'fleet management', batteries: 'battery management', records: 'job records', planning: 'flight planning' };
+            (accessReqs || []).filter(r => r.status === 'requested').forEach(r => aw.push({ kind: 'access', icon: 'fa-key', color: 'text-amber-600', label: `${r.who} asks for ${AREA[r.area] || r.area}`, sub: r.note || 'Access request',
+              cta: 'Grant', act: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'granted' } })),
+              cta2: 'Decline', act2: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'declined' } })) }));
+            return aw;
+          };
+          // Crew: their jobs, hours, company and access, from the cloud
+          const [crewCloud, setCrewCloud] = useState(() => window.wdCrew || null);
+          useEffect(() => { const h = () => setCrewCloud(window.wdCrew || null); h(); window.addEventListener('wd-crew', h); return () => window.removeEventListener('wd-crew', h); }, []);
+          const cjKey = 'wd_cloud_job:' + String(auth.email || '').toLowerCase();
+          const [cloudJob, setCloudJobState] = useState(() => lsJson(cjKey, null));
+          useEffect(() => { setCloudJobState(lsJson(cjKey, null)); }, [cjKey]); // eslint-disable-line
+          const setCloudJob = (v) => { setCloudJobState(v); lsJsonSet(cjKey, v); };
+          const flightKey = (rpa, f) => rpa + '|' + (f.id != null ? f.id : [String(f.label || ''), String(f.duration == null ? '' : f.duration), String(f.batteries || ''), (f.telemetry && f.telemetry.startMs) || ''].join('|'));
+          const cloudLogFlights = (lg) => { const out = []; Object.entries((lg && lg.rpaLogs) || {}).forEach(([rpa, rl]) => ((rl && rl.flights) || []).forEach(f => { if (!crewBlankFlight(f)) out.push({ key: flightKey(rpa, f), rpa, f }); })); return out; };
+          const openCloudJob = (j) => {
+            if (dirty && !window.confirm(`Open “${j.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
+            window.dispatchEvent(new CustomEvent('wd-open-cloud-job', { detail: { id: j.id } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {};
+              if (d.error || !d.plan) { alert('Couldn\'t open the job: ' + (d.error || 'no plan saved yet')); return; }
+              const plan = { ...d.plan, title: d.job.title, status: 'draft' };
+              handleLoadPlan(plan, { silent: true });
+              const base = cloudLogFlights(d.plan.log).map(x => x.key);
+              const prev = lsJson(cjKey, null);
+              setCloudJob({ ...d.job, base, sent: prev && prev.id === d.job.id ? (prev.sent || []) : [] });
+              setTimeout(() => setActiveTab(d.job.status === 'completed' ? 'preliminary' : 'log'), 120);
+            };
+            window.addEventListener('wd-load-cloud-job', h); return () => window.removeEventListener('wd-load-cloud-job', h);
+          }); // eslint-disable-line
+          const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
+          const unsentFlights = onCloudJob ? cloudLogFlights(log).filter(x => !(cloudJob.base || []).includes(x.key) && !(cloudJob.sent || []).includes(x.key)) : [];
+          const [pushing, setPushing] = useState(false);
+          const pushCloudFlights = () => {
+            if (!unsentFlights.length) return; setPushing(true);
+            window.dispatchEvent(new CustomEvent('wd-push-flights', { detail: { jobId: cloudJob.id, flights: unsentFlights.map(x => ({ key: x.key, rpa: x.rpa, flight: (() => { const c = JSON.parse(JSON.stringify(x.f)); if (c.telemetry) { delete c.telemetry.altRaw; delete c.telemetry.spdRaw; } return c; })() })) } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {}; setPushing(false);
+              if (!d.ok) { alert('Couldn\'t send your flights: ' + (d.error || 'unknown error') + '\n\nThey are still in your log. Try again when you have signal.'); return; }
+              const cj = lsJson(cjKey, null); if (cj) setCloudJob({ ...cj, sent: [...new Set([...(cj.sent || []), ...(d.keys || [])])] });
+              alert(`${d.sent} flight${d.sent === 1 ? '' : 's'} sent to the CRP. They'll add them to the job record.`); };
+            window.addEventListener('wd-push-result', h); return () => window.removeEventListener('wd-push-result', h);
+          }); // eslint-disable-line
+          const requestAccess = (area) => { const note = window.prompt('Ask the CRP for access. Add a note if you like (optional):', ''); if (note === null) return; window.dispatchEvent(new CustomEvent('wd-request-access', { detail: { area, note } })); };
+
           const buildDashData = () => {
             const today = cToday(), todayIso = cYmd(today);
             const parseLL = (txt) => { const m = String(txt || '').match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/); return m ? { lat: +m[1], lng: +m[2] } : null; };
@@ -9008,6 +9202,7 @@ View in the Database & Settings tab.`);
             comp.sort((x, y) => x.days - y.days);
             // awaiting action
             const aw = [];
+            if (isCrpCloud) aw.push(...cloudAwaiting());
             if (awaitingInd > 0) aw.push({ icon: 'fa-id-card', color: 'text-violet-600', label: `${awaitingInd} pilot induction${awaitingInd === 1 ? '' : 's'} to review`, sub: 'Check, sign and certify', cta: 'Review', act: () => window.dispatchEvent(new Event('wd-open-account')) });
             if (curStarted && curMissing > 0) aw.push({ icon: 'fa-asterisk', color: 'text-rose-500', label: `${curMissing} mandatory item${curMissing === 1 ? '' : 's'} left on “${cur.name}”`, cta: 'Fix', act: () => setActiveTab('preliminary') });
             drafts.forEach(x => { if (x.approved && x.rpName && !x.rpSigned) aw.push({ icon: 'fa-signature', color: 'text-sky-600', label: `RPIC signature pending: ${x.name}`, sub: x.rpName, act: () => openDashJob(x) }); });
@@ -9021,8 +9216,9 @@ View in the Database & Settings tab.`);
             const jl = siteOf(overview, mapData);
             const hr = new Date().getHours(), first = String(auth.name || (db.companyProfile || {}).crpName || '').split(' ')[0];
             return {
+              crewMode: !!isCrewRole, crew: isCrewRole ? crewCloud : null,
               free: isFree, greeting: (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (first ? ', ' + first : ''),
-              company: isFree ? ((overview.operatorProfile || {}).name || '') : ((db.companyProfile || {}).name || ''),
+              company: isFree ? ((overview.operatorProfile || {}).name || '') : isCrewRole ? (((crewCloud || {}).company || {}).name || '') : ((db.companyProfile || {}).name || ''),
               current: { started: curStarted, name: String(overview.operationName || '').trim() },
               jobLoc: jl ? { ...jl, label: (String(overview.operationName || '').trim() || 'Current job') + ' site' } : null,
               nextJob: upcoming[0] || null, drafts, completed, pilots, fleet: fleetRows, compliance: comp, awaiting: aw, batteries, monthly,
@@ -9042,6 +9238,7 @@ View in the Database & Settings tab.`);
             exportBackup: () => handleExportDb(),
             openPlanFile: () => planFileRef.current && planFileRef.current.click(),
             openJob: openDashJob,
+            openCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
           };
           const jumpToDbSection = (id) => {
             const fe = document.querySelector(`[data-dbfold="${id}"]`);
@@ -12475,6 +12672,32 @@ View in the Database & Settings tab.`);
                               );
                             })()}
                             <textarea name="officialAuth" value={approval.officialAuth} onChange={handleApprovalChange} onInput={handleAutoResize} rows={Math.max(2, String(approval.officialAuth || '').split('\n').length + 1)} className="auto-resize w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
+                            {(() => {
+                              // v7.4: copies of the instruments this job relies on, attached to the plan PDF
+                              const need = jobNeedKinds(jsa, oonpMode), list = officialAuthList(db);
+                              const rows = list.filter(x => authSelected(approval.officialAuth, x) || authNeedFor(x).some(k => need.includes(k)));
+                              if (!rows.length) return null;
+                              const setAtt = (id, v) => setApproval(prev => ({ ...prev, authAttach: { ...(prev.authAttach || {}), [id]: v } }));
+                              return (
+                                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 print:hidden" data-auth-attach="1">
+                                  <div className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1"><i className="fa-solid fa-paperclip mr-1"></i>Instrument copies for this job</div>
+                                  {need.length > 0 && <div className="text-xs text-slate-500 mb-2">This job includes {need.join(', ')}. Attach a copy of each instrument it relies on to the plan PDF.</div>}
+                                  <div className="divide-y divide-slate-200">{rows.map(x => {
+                                    const req = authNeedFor(x).filter(k => need.includes(k)), chosen = authSelected(approval.officialAuth, x), att = authAttached(x, approval, req.length > 0, chosen), es = authExpiryState(x, overview.operationDate);
+                                    return (
+                                      <div key={x.id} className="flex items-center gap-2 py-1.5 flex-wrap" data-auth-attach-row={x.id}>
+                                        <div className="flex-1 min-w-[12rem]">
+                                          <div className="text-sm font-semibold text-slate-800">{x.code}{req.length > 0 && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">needed: {req.join(', ')}</span>}</div>
+                                          <div className="text-xs text-slate-500">{x.title}{es && <span data-auth-attach-exp={es.bad ? 'expired' : es.soon ? 'soon' : 'ok'} className={`ml-1.5 font-semibold ${es.bad ? 'text-rose-600' : es.soon ? 'text-amber-600' : 'text-emerald-700'}`}>{es.bad ? 'Expired by the job date (' + fmtDate(x.expiry) + ')' : es.label}</span>}</div>
+                                          {req.length > 0 && !chosen && <button type="button" data-auth-add-chip={x.id} onClick={() => setApproval(prev => ({ ...prev, officialAuth: authToggle(prev.officialAuth, x) }))} className="text-xs text-violet-700 underline mt-0.5">Add {x.code} to the authorisation reference</button>}
+                                        </div>
+                                        {x.file
+                                          ? <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer"><input type="checkbox" data-auth-attach-toggle={x.id} checked={att} onChange={e => setAtt(x.id, e.target.checked)} />Attach to PDF <span className="font-normal text-slate-400 max-w-[8rem] truncate">({x.file.name})</span></label>
+                                          : <label className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded border border-dashed border-slate-300 text-slate-600 hover:bg-white cursor-pointer" data-auth-attach-upload={x.id}><i className="fa-solid fa-upload"></i>{authBusy === x.id ? 'Reading…' : 'Upload a copy'}<input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>}
+                                      </div>);
+                                  })}</div>
+                                </div>);
+                            })()}
                           </div>
                           <div className="md:col-span-2">
                             <div className="flex justify-between items-center mb-1">
@@ -12818,6 +13041,11 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log</h2>
                       </div>
                       <ReqStrip tab="log" title="to complete the record" />
+                      {onCloudJob && <div data-cloud-push="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-center gap-3 flex-wrap">
+                        <i className="fa-solid fa-cloud-arrow-up text-sky-600 text-lg"></i>
+                        <div className="flex-1 min-w-[12rem] text-sm text-sky-900"><b>Company job.</b> Log your flights below, then send them to the CRP. {unsentFlights.length ? <span data-cloud-unsent={unsentFlights.length}>{unsentFlights.length} flight{unsentFlights.length === 1 ? '' : 's'} not sent yet.</span> : <span data-cloud-unsent="0">Nothing new to send.</span>}</div>
+                        <button type="button" data-cloud-send="1" disabled={!unsentFlights.length || pushing} onClick={pushCloudFlights} className="px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-sm font-semibold"><i className="fa-solid fa-paper-plane mr-1"></i>{pushing ? 'Sending…' : 'Send my flights to the CRP'}</button>
+                      </div>}
 
                       {/* PRINT: Log page title */}
                       <div className="hidden print:flex print-page-title">
@@ -13585,16 +13813,30 @@ View in the Database & Settings tab.`);
                                       <button data-auth-add="1" onClick={() => save([...list, { id: 'auth-' + Date.now(), code: '', title: '', scope: 'operator', expiry: '', excludes: [], note: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"><i className="fa-solid fa-plus mr-1"></i>Add</button>
                                     </div>
                                   </div>
-                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation.</p>
+                                  <p className="text-xs text-slate-500 mb-3">These appear as click-to-add chips on the Authorisation tab. "Your approvals" are instruments issued to your ReOC; "All operators" are general instruments. Expiry dates feed the job expiry check; "Doesn't cover" warns when a job includes that type of operation. Upload a copy of each instrument and tick what it's <b>needed for</b>: a job that includes OONP, EVLOS, night or BVLOS offers that copy as an attachment to its plan PDF.</p>
                                   <div className="overflow-x-auto">
                                     <table className="w-full text-xs">
-                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
+                                      <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1" title="Jobs of these kinds need this instrument; its copy is offered as a PDF attachment">Needed for</th><th className="px-1.5 py-1">Copy of instrument</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
                                       <tbody>{list.map(x => (
                                         <tr key={x.id} className="border-t border-slate-100 align-top" data-auth-row={x.id}>
                                           <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0079" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
                                           <td className="px-1.5 py-1"><input value={x.title || ''} placeholder="What it covers" onChange={e => upd(x.id, 'title', e.target.value)} className={inp + ' w-full min-w-[12rem]'} /></td>
                                           <td className="px-1.5 py-1"><select value={x.scope || 'operator'} onChange={e => upd(x.id, 'scope', e.target.value)} className={inp}><option value="operator">Your approval</option><option value="all">All operators</option></select></td>
-                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} /></td>
+                                          <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} />
+                                            {(() => { const es = authExpiryState(x); return es && (es.bad || es.soon) ? <div data-auth-exp={es.bad ? 'expired' : 'soon'} className={`text-[10px] font-semibold mt-0.5 ${es.bad ? 'text-rose-600' : 'text-amber-600'}`}>{es.bad ? 'Expired' : 'Expires soon'}</div> : null; })()}</td>
+                                          <td className="px-1.5 py-1 whitespace-nowrap" data-auth-needfor={x.id}>{AUTH_NEED_KINDS.map(t => (
+                                            <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" data-needfor={t} checked={authNeedFor(x).includes(t)} onChange={e => upd(x.id, 'needFor', e.target.checked ? [...authNeedFor(x), t] : authNeedFor(x).filter(y => y !== t))} />{t}</label>
+                                          ))}</td>
+                                          <td className="px-1.5 py-1 whitespace-nowrap" data-auth-file={x.id}>
+                                            {x.file ? <div className="flex items-center gap-1.5">
+                                                <button type="button" onClick={() => openAuthFile(x)} data-auth-view={x.id} className="text-blue-700 hover:underline max-w-[9rem] truncate" title={x.file.name}><i className={`fa-solid ${x.file.type === 'application/pdf' ? 'fa-file-pdf text-rose-600' : 'fa-file-image text-sky-600'} mr-1`}></i>{x.file.name}</button>
+                                                <label className="text-slate-500 hover:text-blue-700 cursor-pointer" title="Replace"><i className="fa-solid fa-arrows-rotate"></i><input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>
+                                                <button type="button" title="Remove the copy" onClick={() => { if (window.confirm('Remove the uploaded copy of ' + (x.code || 'this instrument') + '?')) upd(x.id, 'file', null); }} className="text-slate-400 hover:text-red-600"><i className="fa-solid fa-xmark"></i></button>
+                                              </div>
+                                              : <label className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 cursor-pointer" data-auth-upload={x.id}><i className="fa-solid fa-upload"></i>Upload PDF / scan<input type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { uploadAuthFile(x.id, e.target.files[0]); e.target.value = ''; }} /></label>}
+                                            {authBusy === x.id && <div className="text-[10px] text-slate-500 mt-0.5"><i className="fa-solid fa-spinner fa-spin mr-1"></i>Reading…</div>}
+                                            {x.file && x.file.type === 'application/pdf' && !x.file.pages && authBusy !== x.id && <div className="text-[10px] text-amber-700 mt-0.5" title={x.file.pageNote || ''}>Listed in the PDF only (pages couldn't be read offline). Replace it online to print the pages.</div>}
+                                          </td>
                                           <td className="px-1.5 py-1 whitespace-nowrap">{['EVLOS', 'Night', 'BVLOS'].map(t => (
                                             <label key={t} className="inline-flex items-center gap-1 mr-2"><input type="checkbox" checked={(x.excludes || []).includes(t)} onChange={e => upd(x.id, 'excludes', e.target.checked ? [...(x.excludes || []), t] : (x.excludes || []).filter(y => y !== t))} />{t}</label>
                                           ))}

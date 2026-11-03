@@ -23,8 +23,22 @@ export const WIDGETS = {
   battery:    { title: 'Battery health',           icon: 'fa-car-battery',         size: 'm', off: true },
   monthly:    { title: 'Monthly activity',         icon: 'fa-chart-column',        size: 'm', off: true },
   notes:      { title: 'Notes',                    icon: 'fa-note-sticky',         size: 's', off: true, free: true },
+  // v7.4: crew home (signed in as a pilot or observer)
+  myjobs:     { title: 'My jobs',                  icon: 'fa-briefcase',           size: 'm', crewOnly: true },
+  myhours:    { title: 'My flight time',           icon: 'fa-user-astronaut',      size: 'm', crewOnly: true },
+  access:     { title: 'Access to company areas',  icon: 'fa-key',                 size: 'm', crewOnly: true },
+  shfleet:    { title: 'Company fleet',            icon: 'fa-helicopter',          size: 'm', crewOnly: true, area: 'fleet' },
+  shbatt:     { title: 'Company batteries',        icon: 'fa-car-battery',         size: 'm', crewOnly: true, area: 'batteries' },
+  shrecords:  { title: 'Job records',              icon: 'fa-folder-open',         size: 'm', crewOnly: true, area: 'records' },
 };
-const ORDER = ['actions', 'nextjob', 'weather', 'gonogo', 'daylight', 'sunpath', 'kp', 'awaiting', 'drafts', 'completed', 'compliance', 'pilots', 'fleet', 'setup', 'links', 'battery', 'monthly', 'notes'];
+const CREW_OK = ['weather', 'gonogo', 'daylight', 'sunpath', 'kp', 'links', 'notes'];
+export const AREAS = [
+  { id: 'fleet', label: 'Fleet management', sub: 'Aircraft, registrations and hours' },
+  { id: 'batteries', label: 'Battery management', sub: 'Packs, cycles and lowest cell voltage' },
+  { id: 'records', label: 'Job records', sub: 'Completed jobs and flight totals' },
+  { id: 'planning', label: 'Flight planning', sub: 'Draft plans for the CRP to review' },
+];
+const ORDER = ['myjobs', 'myhours', 'access', 'shfleet', 'shbatt', 'shrecords', 'actions', 'nextjob', 'weather', 'gonogo', 'daylight', 'sunpath', 'kp', 'awaiting', 'drafts', 'completed', 'compliance', 'pilots', 'fleet', 'setup', 'links', 'battery', 'monthly', 'notes'];
 const DEFAULT_LINKS = [
   { label: 'OK2FLY', url: 'https://www.ok2fly.com.au/' },
   { label: 'NAIPS', url: 'https://www.airservicesaustralia.com/naips/' },
@@ -282,8 +296,58 @@ function Awaiting({ d, a }) {
   const items = d.awaiting || [];
   if (!items.length) return <Empty><i className="fa-solid fa-check text-emerald-500 mr-1"></i>Nothing waiting on you.</Empty>;
   return <div className="divide-y divide-slate-100">{items.map((it, i) => (
-    <div key={i} className="flex items-center gap-3 py-2"><i className={`fa-solid ${it.icon || 'fa-circle-exclamation'} ${it.color || 'text-amber-500'}`}></i><div className="flex-1 min-w-0"><div className="text-sm text-slate-800 truncate">{it.label}</div>{it.sub && <div className="text-xs text-slate-500 truncate">{it.sub}</div>}</div>{it.act && <Btn onClick={it.act}>{it.cta || 'Open'}</Btn>}</div>
+    <div key={i} className="flex items-center gap-3 py-2" data-await={it.kind || ''}><i className={`fa-solid ${it.icon || 'fa-circle-exclamation'} ${it.color || 'text-amber-500'}`}></i><div className="flex-1 min-w-0"><div className="text-sm text-slate-800 truncate">{it.label}</div>{it.sub && <div className="text-xs text-slate-500 truncate">{it.sub}</div>}</div>
+      {it.act2 && <Btn onClick={it.act2} data-await-act2="1">{it.cta2 || 'No'}</Btn>}{it.act && <Btn onClick={it.act} kind={it.act2 ? 'primary' : 'ghost'} data-await-act="1">{it.cta || 'Open'}</Btn>}</div>
   ))}</div>;
+}
+
+// ── v7.4 crew home widgets ──────────────────────────────────────────────────
+const ROLE = { rpic: 'RPIC', pilot: 'Pilot', observer: 'Observer' };
+const STATUS = { draft: ['Draft', 'bg-amber-100 text-amber-900'], approved: ['Approved', 'bg-emerald-100 text-emerald-800'], completed: ['Completed', 'bg-slate-100 text-slate-700'], cancelled: ['Cancelled', 'bg-rose-100 text-rose-800'] };
+function MyJobs({ c, a }) {
+  const jobs = (c && c.jobs) || [];
+  if (!c) return <Empty>Loading your jobs…</Empty>;
+  if (!jobs.length) return <Empty>You're not on any jobs yet. The CRP adds you by naming you as RPIC, pilot or observer on a plan; it shows up here when they save it.</Empty>;
+  return <div className="divide-y divide-slate-100">{jobs.slice(0, 12).map(j => { const st = STATUS[j.status] || STATUS.draft; return (
+    <div key={j.id} className="flex items-center gap-3 py-2" data-crew-job={j.id}>
+      <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800 truncate">{j.title || j.op_id || 'Untitled job'}</div>
+        <div className="text-xs text-slate-500 truncate">{[fmtD(j.start_date), j.op_id, j.myRole ? 'You: ' + ROLE[j.myRole] : ''].filter(Boolean).join(' · ')}</div></div>
+      <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${st[1]}`}>{st[0]}</span>
+      <Btn onClick={() => a.openCloudJob(j)} data-crew-open={j.id}>{j.status === 'completed' ? 'View' : 'Open'}</Btn>
+    </div>); })}</div>;
+}
+function MyHours({ c, a }) {
+  if (!c) return <Empty>Loading…</Empty>;
+  const rows = (c.hours || []).filter(h => h.seconds > 0).sort((x, y) => y.seconds - x.seconds);
+  const tot = rows.reduce((t, h) => t + h.seconds, 0), fl = rows.reduce((t, h) => t + h.flights, 0);
+  return <div data-crew-hours="1">
+    <div className="flex items-baseline gap-2"><span className="text-2xl font-bold text-slate-800" data-crew-total>{fmtHM(tot)}</span><span className="text-sm text-slate-500">{fl} flight{fl === 1 ? '' : 's'} logged{c.company && c.company.name ? ' with ' + c.company.name : ''}</span></div>
+    {rows.length > 0 ? <div className="mt-2 divide-y divide-slate-100">{rows.map(h => <div key={h.rpa_type} className="flex items-center gap-3 py-1.5 text-sm"><span className="flex-1 min-w-0 truncate text-slate-700">{h.rpa_type}</span><span className="text-slate-500 text-xs">{h.flights} fl</span><span className="font-semibold text-slate-800 w-20 text-right">{fmtHM(h.seconds)}</span></div>)}</div>
+      : <p className="text-xs text-slate-500 mt-1">Time shows here once the CRP completes a job you flew.</p>}
+    {c.inductionHours != null && <p className="text-xs text-slate-500 mt-2">Total hours declared at induction: {c.inductionHours}</p>}
+    <div className="mt-2"><Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn></div>
+  </div>;
+}
+function Access({ c, a }) {
+  if (!c) return <Empty>Loading…</Empty>;
+  const g = {}; (c.grants || []).forEach(x => { g[x.area] = x; });
+  return <div className="divide-y divide-slate-100" data-crew-access="1">{AREAS.map(ar => { const x = g[ar.id], st = x && x.status;
+    return <div key={ar.id} className="flex items-center gap-3 py-2" data-area={ar.id} data-area-status={st || 'none'}>
+      <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800">{ar.label}</div><div className="text-xs text-slate-500 truncate">{ar.sub}</div></div>
+      {st === 'granted' ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Granted</span>
+        : st === 'requested' ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800">Asked</span>
+        : <Btn onClick={() => a.requestAccess(ar.id)} data-area-request={ar.id}>{st === 'declined' || st === 'revoked' ? 'Ask again' : 'Request'}</Btn>}
+    </div>; })}
+    <p className="text-xs text-slate-500 pt-2">The CRP sees your request in their Awaiting action list.</p></div>;
+}
+function Shared({ c, area }) {
+  const v = c && c.shared && c.shared[area];
+  if (!v) return <Empty>The CRP hasn't shared this yet.</Empty>;
+  const rows = Array.isArray(v.rows) ? v.rows : [];
+  const when = v.at ? <p className="text-[11px] text-slate-400 mt-2">Updated {fmtD(v.at)}</p> : null;
+  if (area === 'fleet') return <div>{rows.length ? <div className="divide-y divide-slate-100">{rows.map(f => <div key={f.name} className="flex items-center gap-3 py-1.5 text-sm"><span className="flex-1 min-w-0 truncate text-slate-700">{f.name}{f.rego ? <span className="text-xs text-slate-400"> · {f.rego}</span> : null}</span><span className="text-xs text-slate-500">{f.flights} fl</span><span className="font-semibold w-20 text-right">{fmtHM(f.sec)}</span></div>)}</div> : <Empty>No aircraft.</Empty>}{when}</div>;
+  if (area === 'batteries') return <div>{rows.length ? <div className="divide-y divide-slate-100">{rows.map(b => <div key={b.name} className="flex items-center gap-3 py-1.5 text-sm"><span className="flex-1 min-w-0 truncate text-slate-700">{b.name}</span><span className="text-xs text-slate-500">{b.flights || 0} cycles</span><span className="text-xs w-20 text-right text-slate-600">{b.minCell ? b.minCell.toFixed(2) + ' V/cell' : ''}</span></div>)}</div> : <Empty>No batteries.</Empty>}{when}</div>;
+  return <div>{rows.length ? <div className="divide-y divide-slate-100">{rows.slice(0, 15).map((r, i) => <div key={i} className="flex items-center gap-3 py-1.5 text-sm"><span className="flex-1 min-w-0 truncate text-slate-700">{r.name}<span className="text-xs text-slate-400"> · {fmtD(r.date)}{r.rpic ? ' · ' + r.rpic : ''}</span></span><span className="text-xs text-slate-500">{r.flights} fl</span><span className="font-semibold w-16 text-right">{fmtHM(r.sec)}</span></div>)}</div> : <Empty>No completed jobs.</Empty>}{when}</div>;
 }
 
 function JobList({ list, n, a, kind }) {
@@ -413,8 +477,9 @@ export default function Dashboard({ d, a }) {
   const [cfg, setCfgState] = useState(load);
   const setCfg = (patch) => setCfgState(prev => { const next = { ...prev, ...patch }; try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch (e) {} return next; });
   const [edit, setEdit] = useState(false), [gear, setGear] = useState(null), [drag, setDrag] = useState(null);
-  const allowed = (k) => !d.free || WIDGETS[k].free;
-  const order = cfg.order.filter(allowed);
+  const granted = (ar) => !!(d.crew && (d.crew.grants || []).some(x => x.area === ar && x.status === 'granted'));
+  const allowed = (k) => d.crewMode ? (CREW_OK.includes(k) || (WIDGETS[k].crewOnly && (!WIDGETS[k].area || granted(WIDGETS[k].area)))) : !WIDGETS[k].crewOnly && (!d.free || WIDGETS[k].free);
+  const order = (d.crewMode ? [...cfg.order.filter(k => WIDGETS[k].crewOnly), ...cfg.order.filter(k => !WIDGETS[k].crewOnly)] : cfg.order).filter(allowed);
   const shown = order.filter(k => !cfg.hidden[k]);
   const hidden = order.filter(k => cfg.hidden[k]);
   const manual = cfg.loc.lat != null ? cfg.loc : null;
@@ -445,6 +510,12 @@ export default function Dashboard({ d, a }) {
       case 'battery': return <Battery d={d} />;
       case 'monthly': return <Monthly d={d} />;
       case 'notes': return <Notes cfg={cfg} setCfg={setCfg} />;
+      case 'myjobs': return <MyJobs c={d.crew} a={a} />;
+      case 'myhours': return <MyHours c={d.crew} a={a} />;
+      case 'access': return <Access c={d.crew} a={a} />;
+      case 'shfleet': return <Shared c={d.crew} area="fleet" />;
+      case 'shbatt': return <Shared c={d.crew} area="batteries" />;
+      case 'shrecords': return <Shared c={d.crew} area="records" />;
       default: return null;
     }
   };
@@ -493,7 +564,7 @@ export default function Dashboard({ d, a }) {
           );
         })}
       </div>
-      {d.free && <p className="text-xs text-slate-500 text-center">Saved drafts, flight records, pilot and fleet hours, compliance and setup widgets come with an account.</p>}
+      {d.free && !d.crewMode && <p className="text-xs text-slate-500 text-center">Saved drafts, flight records, pilot and fleet hours, compliance and setup widgets come with an account.</p>}
     </div>
   );
 }
