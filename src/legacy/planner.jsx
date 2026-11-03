@@ -4,6 +4,7 @@
 import Dashboard, { Access as CrewAccess, Shared as CrewShared } from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
+import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
 
@@ -172,7 +173,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5.7';
+        const APP_VERSION = '7.6';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -3948,6 +3949,30 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               : [mkFlight()]);
           }, [initFlights]); // eslint-disable-line
           const [bulkMins, setBulkMins] = React.useState('');
+          // v7.6: flight videos (DJI .LRF / .MP4) linked by file, never copied into the plan
+          const [replay, setReplay] = React.useState(null); // { fl, file, idx }
+          const [vidBusy, setVidBusy] = React.useState(false);
+          const linkVideosAuto = async () => {
+            const got = await pickVideos(true); if (!got.length) return; setVidBusy(true);
+            try {
+              const items = await Promise.all(got.map(async g => ({ ...g, info: await videoInfo(g.file) })));
+              const pairs = matchVideos(flights, items);
+              for (const pr of pairs) await rememberVideo(linkKey(pr.flightId), pr.file, pr.handle);
+              const byF = {}; pairs.forEach(pr => { byF[pr.flightId] = pr; });
+              if (pairs.length) commit(flights.map(f => byF[f.id] ? { ...f, video: { ...byF[f.id].info, offsetSec: byF[f.id].offsetSec, linkedAt: new Date().toISOString() } } : f));
+              const missed = items.filter(it => !pairs.some(pr => pr.file === it.file));
+              alert(`${pairs.length} of ${items.length} video${items.length === 1 ? '' : 's'} linked to flights by start time.`
+                + (missed.length ? `\n\nNot matched (no flight with telemetry started within 2 minutes of it):\n${missed.map(m => '• ' + m.file.name).join('\n')}\n\nUse "Link video" on a flight to attach one by hand.` : ''));
+            } catch (e) { alert('Couldn\'t read the videos: ' + (e.message || e)); }
+            setVidBusy(false);
+          };
+          const linkVideoTo = async (fl) => {
+            const got = await pickVideos(false); if (!got.length) return;
+            const info = await videoInfo(got[0].file);
+            await rememberVideo(linkKey(fl.id), got[0].file, got[0].handle);
+            commit(flights.map(f => f.id === fl.id ? { ...f, video: { ...info, offsetSec: offsetFor(info, f.telemetry), linkedAt: new Date().toISOString() } } : f));
+          };
+          const openReplay = async (fl, idx) => { const file = await openLinkedVideo(linkKey(fl.id), fl.video); if (file) setReplay({ fl, file, idx }); };
           const [autoBatt, setAutoBatt] = React.useState(null); // { packs:[], onlyBlank, start, capacityCheck }
           const openAutoBatt = () => {
             const cells = parseInt(rpaCells) || 0;
@@ -3970,7 +3995,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             const copy = {
               ...JSON.parse(JSON.stringify(src)),
               id: Date.now() + Math.random(),
-              label: src.label ? `${src.label} (copy)` : '',
+              label: src.label ? `${src.label} (copy)` : '', video: undefined,
               segments: (src.segments && src.segments.length ? src.segments : DEFAULT_FLIGHT_SEGS())
                 .map(sg => ({ ...sg, id: Date.now() + Math.random() })),
             };
@@ -4092,6 +4117,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       <i className="fa-solid fa-satellite-dish text-[10px]"></i> Import telemetry
                     </button>
                   </div>
+                  <button onClick={linkVideosAuto} disabled={vidBusy} data-link-videos="1" className="flex items-center gap-1.5 text-xs bg-violet-50 hover:bg-violet-100 text-violet-800 font-semibold px-3 py-1.5 rounded-lg border border-violet-200 transition-colors disabled:opacity-50" title="Pick the DJI goggle / air unit videos (.LRF or .MP4) from this job; each is matched to its flight by start time">
+                    <i className="fa-solid fa-film text-[10px]"></i> {vidBusy ? 'Reading videos…' : 'Link videos'}
+                  </button>
                   {flights.length > 1 && <button onClick={openAutoBatt} data-auto-batt="1" className="flex items-center gap-1.5 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold px-3 py-1.5 rounded-lg border border-amber-200 transition-colors" title="Pick the packs you cycled through and fill them in across the flights">
                     <i className="fa-solid fa-car-battery text-[10px]"></i> Auto-assign batteries
                   </button>}
@@ -4101,6 +4129,12 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 </div>
               </div>
 
+              {replay && <FlightReplay file={replay.file} video={replay.fl.video} flight={flights.find(f => f.id === replay.fl.id) || replay.fl} kg={fleetKg} flags={replay.fl.telemetry ? tlmAnomalies(replay.fl.telemetry) : []} flagLabel={ANOM_LABEL}
+                  title={rpa + ' · Flight ' + (replay.idx + 1) + (replay.fl.label ? ' · ' + replay.fl.label : '')}
+                  sub={replay.fl.telemetry ? fmtTlmDate(replay.fl.telemetry.startMs) + ' ' + fmtTlmTime(replay.fl.telemetry.startMs) : 'No telemetry on this flight'}
+                  company={(typeof window !== 'undefined' && window.wdCompany) || ''}
+                  onClose={() => setReplay(null)}
+                  onSaveOffset={(o) => { commit(flights.map(f => f.id === replay.fl.id ? { ...f, video: { ...f.video, offsetSec: o } } : f)); setReplay(r => r && { ...r, fl: { ...r.fl, video: { ...r.fl.video, offsetSec: o } } }); }} />}
               {autoBatt && (() => {
                 const all = [...new Set([...(rpaBattOpts || []), ...(allBatts || []).map(b => (b && typeof b === 'object') ? b.name : b)].map(x => String(x || '').trim()))].filter(Boolean).sort(battSort);
                 const groups = {}; all.forEach(b => { const g = battSpec(b).group; (groups[g] = groups[g] || []).push(b); });
@@ -4222,6 +4256,19 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                           </button>
                         </div>
                       )}
+                    <div className="px-3 py-1.5 border-b border-slate-100 flex items-center gap-2 flex-wrap text-[11px]" data-flight-video={idx}>
+                      {fl.video ? <>
+                        <i className="fa-solid fa-film text-violet-600"></i>
+                        <span className="text-slate-700 font-semibold truncate max-w-[16rem]" title={fl.video.name}>{fl.video.name}</span>
+                        <span className="text-slate-400">{fl.video.durationSec ? fmtMmSs(fl.video.durationSec) : ''}{fl.telemetry ? ' · sync ' + ((fl.video.offsetSec || 0) >= 0 ? '+' : '') + (fl.video.offsetSec || 0).toFixed(1) + ' s' : ' · no telemetry'}</span>
+                        <span className="flex-1"></span>
+                        <button type="button" data-video-replay={idx} onClick={() => openReplay(fl, idx)} className="font-semibold px-2 py-0.5 rounded bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-play text-[9px] mr-1"></i>Replay</button>
+                        <button type="button" data-video-unlink={idx} onClick={() => { if (window.confirm('Unlink ' + fl.video.name + ' from this flight? The video file itself is not touched.')) updFlight(fl.id, 'video', undefined); }} className="text-slate-400 hover:text-red-500">Unlink</button>
+                      </> : <>
+                        <span className="flex-1"></span>
+                        <button type="button" data-video-link={idx} onClick={() => linkVideoTo(fl)} className="font-semibold text-violet-700 hover:text-violet-900 flex items-center gap-1" title="Link the goggle / air unit recording (DJI .LRF or .MP4) to replay it with the telemetry"><i className="fa-solid fa-film text-[10px]"></i> Link video</button>
+                      </>}
+                    </div>
                     {(() => {
                       const iss = fl.telemetry ? flightLimitIssues(fl.telemetry, { ...(limitCtx || {}), kg: fleetKg, oonp: fl.oonp }) : [];
                       const need = iss.length > 0 && !String(fl.notes || '').trim();
