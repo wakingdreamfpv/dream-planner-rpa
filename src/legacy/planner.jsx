@@ -5,7 +5,7 @@ import Dashboard from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
         // Extract React Hooks
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
 
         // --- SHARED KE PHYSICS (single source of truth for chart, OONP table and PDF) ---
         // Basic (aero off): vacuum freefall  KE = ½m(v² + 2gh)
@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.4';
+        const APP_VERSION = '7.5';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -2311,6 +2311,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           });
           return flights;
         };
+        if (typeof window !== "undefined") window.__wdParseTlm = parseTelemetryCsv; // exposed for tests
         // v5.42: telemetry imported earlier was zeroed at the first armed sample (≤ v5.40) or the lowest point (v5.41).
         // Re-zero it at the take-off ground level using the stored trace [t, altM, kmh, ...].
         const rebaseTelemetry = (t) => {
@@ -2368,60 +2369,152 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           let best = null, sc = -1; alts.forEach(p => { const v = (p[2] || 0) / 3.6, h = Math.max(0, p[1]); const x = v * v + 2 * 9.81 * h; if (x > sc) { sc = x; best = { v: Math.round(v * 100) / 100, h: r1(h) }; } });
           return { maxAltM: r1(Math.max(0, ...alts.map(p => p[1]))), takeoffMaxM: r1(ph(0, 15)), landingMaxM: r1(ph(dur - 15, dur)), belowM: minRel < -3 ? r1(-minRel) : 0, keAtTrace: best };
         };
-        const smoothAltTelemetry = (t, level) => {
-          if (!t || !Array.isArray(t.trace)) return t;
-          const raw = t.altRaw || t.trace.map(p => (p ? p[1] : null));
-          const base = { ...t }; delete base.altRaw; delete base.altSmooth; delete base.rawStats;
-          if (!level || level === 'off' || !ALT_SMOOTH[level]) {
-            if (!t.altRaw) return t;
-            const trace = t.trace.map((p, i) => (p ? [p[0], raw[i], ...p.slice(2)] : p));
-            const rs = t.rawStats || {};
-            return { ...base, trace, maxAltM: rs.maxAltM ?? tlmStatsFromTrace(t, trace).maxAltM, takeoffMaxM: rs.takeoffMaxM ?? base.takeoffMaxM, landingMaxM: rs.landingMaxM ?? base.landingMaxM, belowM: rs.belowM ?? base.belowM, keAt: rs.keAt || base.keAt };
-          }
-          const P = ALT_SMOOTH[level], tr = t.trace, n = tr.length;
-          const ts = tr.map(p => (p ? p[0] : 0)), a = raw.map(v => (v == null || !isFinite(v) ? null : v));
-          const med = (arr) => { const s2 = arr.filter(v => v != null && isFinite(v)).sort((x, y) => x - y); return s2.length ? s2[Math.floor(s2.length / 2)] : null; };
-          // throttle punches: current well above this flight's typical draw
+        // v7.3: the same spike filter runs on GPS ground speed (dropouts and multipath jumps the quad never flew)
+        const tlmPunch = (tr) => {
+          const n = tr.length, ts = tr.map(p => (p ? p[0] : 0));
           const amps = tr.map(p => (p && p[6] != null && isFinite(p[6]) ? p[6] : null)), aSorted = amps.filter(v => v != null).sort((x, y) => x - y);
           const aMed = aSorted.length ? aSorted[Math.floor(aSorted.length / 2)] : null, aP85 = aSorted.length ? aSorted[Math.floor(aSorted.length * 0.85)] : null;
           const hiA = aMed != null ? Math.max(aMed * 1.5, aP85) : Infinity;
-          const punch = ts.map((ti, i) => { if (aMed == null) return false; for (let j = i; j >= 0 && ti - ts[j] <= 1; j--) if (amps[j] != null && amps[j] >= hiA) return true; for (let j = i + 1; j < n && ts[j] - ti <= 1; j++) if (amps[j] != null && amps[j] >= hiA) return true; return false; });
-          // 1. Hampel spike removal
-          const b = a.map((v, i) => {
+          return ts.map((ti, i) => { if (aMed == null) return false; for (let j = i; j >= 0 && ti - ts[j] <= 1; j--) if (amps[j] != null && amps[j] >= hiA) return true; for (let j = i + 1; j < n && ts[j] - ti <= 1; j++) if (amps[j] != null && amps[j] >= hiA) return true; return false; });
+        };
+        // Hampel (two passes) + Gaussian on one column of the trace. minDev: the smallest change that can count as a spike.
+        const smoothSeries = (tr, raw, P, minDev, punch, floor) => {
+          const n = tr.length, ts = tr.map(p => (p ? p[0] : 0)), a = raw.map(v => (v == null || !isFinite(v) ? null : v));
+          const med = (arr) => { const s2 = arr.filter(v => v != null && isFinite(v)).sort((x, y) => x - y); return s2.length ? s2[Math.floor(s2.length / 2)] : null; };
+          const pass = (src) => src.map((v, i) => {
             if (v == null) return null;
-            const w = []; for (let j = i; j >= 0 && ts[i] - ts[j] <= P.win; j--) w.push(a[j]); for (let j = i + 1; j < n && ts[j] - ts[i] <= P.win; j++) w.push(a[j]);
+            const w = []; for (let j = i; j >= 0 && ts[i] - ts[j] <= P.win; j--) w.push(src[j]); for (let j = i + 1; j < n && ts[j] - ts[i] <= P.win; j++) w.push(src[j]);
             const m = med(w); if (m == null) return v; const mad = med(w.map(x => (x == null ? null : Math.abs(x - m)))) || 0;
-            return Math.abs(v - m) > Math.max(P.k * 1.4826 * mad, 0.6) && !punch[i] ? m : v;
+            return Math.abs(v - m) > Math.max(P.k * 1.4826 * mad, minDev) && !punch[i] ? m : v;
           });
-          // 2. second pass catches the shoulders of wider spikes (two samples either side)
-          const c = b.map((v, i) => {
-            if (v == null) return null;
-            const w = []; for (let j = i; j >= 0 && ts[i] - ts[j] <= P.win; j--) w.push(b[j]); for (let j = i + 1; j < n && ts[j] - ts[i] <= P.win; j++) w.push(b[j]);
-            const m = med(w); if (m == null) return v; const mad = med(w.map(x => (x == null ? null : Math.abs(x - m)))) || 0;
-            return Math.abs(v - m) > Math.max(P.k * 1.4826 * mad, 0.6) && !punch[i] ? m : v;
-          });
-          // 3. Gaussian smooth (narrower during punches)
-          const lo = Math.min(0, ...a.filter(v => v != null));
+          const c = pass(pass(a));
           const out = c.map((v, i) => {
             if (v == null) return null; const sg = punch[i] ? P.sigma * 0.35 : P.sigma; let sw = 0, sv = 0;
             for (let j = i; j >= 0 && ts[i] - ts[j] <= 3 * sg; j--) if (c[j] != null) { const w = Math.exp(-((ts[i] - ts[j]) ** 2) / (2 * sg * sg)); sw += w; sv += w * c[j]; }
             for (let j = i + 1; j < n && ts[j] - ts[i] <= 3 * sg; j++) if (c[j] != null) { const w = Math.exp(-((ts[j] - ts[i]) ** 2) / (2 * sg * sg)); sw += w; sv += w * c[j]; }
-            return Math.max(lo, Math.round((sv / sw) * 10) / 10);
+            return Math.max(floor, Math.round((sv / sw) * 10) / 10);
           });
-          const trace = tr.map((p, i) => (p ? [p[0], out[i], ...p.slice(2)] : p));
-          const st = tlmStatsFromTrace(t, trace);
-          const rawStats = t.rawStats || { maxAltM: t.maxAltM, takeoffMaxM: t.takeoffMaxM, landingMaxM: t.landingMaxM, belowM: t.belowM, keAt: t.keAt };
-          // KE: keep the measured speed at the original peak point, with the smoothed height at that moment where possible
-          const keAt = st.keAtTrace || t.keAt;
-          const spikes = a.filter((v, i) => v != null && c[i] !== v).length;
-          return { ...base, trace, altRaw: raw, rawStats, altSmooth: { level, spikes },
-            maxAltM: st.maxAltM, takeoffMaxM: st.takeoffMaxM, landingMaxM: st.landingMaxM, belowM: st.belowM, keAt };
+          return { out, spikes: a.filter((v, i) => v != null && c[i] !== v).length };
         };
-        if (typeof window !== 'undefined') window.__wdSmoothAlt = smoothAltTelemetry; // exposed for tests
-        // Updates a flight's telemetry smoothing; auto-filled height segments follow the new values
-        const smoothFlight = (f, level) => {
+        // Applies height and speed smoothing together from the raw columns, so either can be changed or switched off on its own
+        const applyTlmSmoothing = (t, altLv, spdLv) => {
+          if (!t || !Array.isArray(t.trace)) return t;
+          const A = ALT_SMOOTH[altLv], S = ALT_SMOOTH[spdLv];
+          const rawAlt = t.altRaw || t.trace.map(p => (p ? p[1] : null)), rawSpd = t.spdRaw || t.trace.map(p => (p ? p[2] : null));
+          const rawStats = { maxAltM: t.maxAltM, takeoffMaxM: t.takeoffMaxM, landingMaxM: t.landingMaxM, belowM: t.belowM, keAt: t.keAt, maxSpeedKmh: t.maxSpeedKmh, ...(t.rawStats || {}) };
+          const base = { ...t }; ['altRaw', 'spdRaw', 'altSmooth', 'spdSmooth', 'rawStats'].forEach(k => delete base[k]);
+          const rawTrace = () => t.trace.map((p, i) => (p ? [p[0], rawAlt[i], rawSpd[i], ...p.slice(3)] : p));
+          if (!A && !S) {
+            if (!t.altRaw && !t.spdRaw) return t;
+            return { ...base, trace: rawTrace(), maxAltM: rawStats.maxAltM, takeoffMaxM: rawStats.takeoffMaxM, landingMaxM: rawStats.landingMaxM, belowM: rawStats.belowM, keAt: rawStats.keAt, maxSpeedKmh: rawStats.maxSpeedKmh };
+          }
+          const punch = tlmPunch(t.trace);
+          const al = A ? smoothSeries(t.trace, rawAlt, A, 0.6, punch, Math.min(0, ...rawAlt.filter(v => v != null && isFinite(v)))) : { out: rawAlt, spikes: 0 };
+          const sp = S ? smoothSeries(t.trace, rawSpd, S, 3, punch, 0) : { out: rawSpd, spikes: 0 };
+          const trace = t.trace.map((p, i) => (p ? [p[0], al.out[i], sp.out[i], ...p.slice(3)] : p));
+          const st = tlmStatsFromTrace(t, trace), r1 = (x) => Math.round(x * 10) / 10;
+          const out = { ...base, trace, rawStats, keAt: st.keAtTrace || rawStats.keAt };
+          if (A) Object.assign(out, { altRaw: rawAlt, altSmooth: { level: altLv, spikes: al.spikes }, maxAltM: st.maxAltM, takeoffMaxM: st.takeoffMaxM, landingMaxM: st.landingMaxM, belowM: st.belowM });
+          else Object.assign(out, { maxAltM: rawStats.maxAltM, takeoffMaxM: rawStats.takeoffMaxM, landingMaxM: rawStats.landingMaxM, belowM: rawStats.belowM });
+          if (S) Object.assign(out, { spdRaw: rawSpd, spdSmooth: { level: spdLv, spikes: sp.spikes }, maxSpeedKmh: r1(Math.max(0, ...sp.out.filter(v => v != null && isFinite(v)))) });
+          else out.maxSpeedKmh = rawStats.maxSpeedKmh;
+          return out;
+        };
+        const smoothAltTelemetry = (t, level) => applyTlmSmoothing(t, level, t && t.spdSmooth ? t.spdSmooth.level : 'off');
+        const smoothSpdTelemetry = (t, level) => applyTlmSmoothing(t, t && t.altSmooth ? t.altSmooth.level : 'off', level);
+        if (typeof window !== 'undefined') { window.__wdSmoothAlt = smoothAltTelemetry; window.__wdSmoothSpd = smoothSpdTelemetry; } // exposed for tests
+
+        // v7.5: telemetry anomaly flags. Works on the raw columns (before smoothing), so smoothing never hides what happened.
+        // sev 'warn' = worth checking the aircraft or the log; 'info' = a sensor glitch the numbers were affected by.
+        const tlmAnomalies = (t) => {
+          if (!t || !Array.isArray(t.trace)) return [];
+          const tr = t.trace.map((p, i) => (p && p[0] != null ? { s: p[0], alt: t.altRaw ? t.altRaw[i] : p[1], kmh: t.spdRaw ? t.spdRaw[i] : p[2], lat: p[3], lng: p[4], v: p[5], a: p[6], sats: p[8] } : null)).filter(Boolean);
+          const n = tr.length; if (n < 8) return [];
+          const ok = (x) => x != null && isFinite(x);
+          const med = (arr) => { const v = arr.filter(ok).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
+          const fmt = (x, d = 0) => (Math.round(x * 10 ** d) / 10 ** d), out = [];
+          // Radios often send a sensor only every few seconds and the log repeats the last value in between,
+          // so every check works on the moments a reading actually changed, and time windows follow each sensor's update rate.
+          const changes = (key) => { const c = []; tr.forEach(p => { const v = p[key]; if (!ok(v)) return; if (!c.length || c[c.length - 1].v !== v) c.push({ s: p.s, v }); }); return c; };
+          const rate = (c) => Math.max(1, med(c.slice(1).map((x, k) => x.s - c[k].s)) || 1);
+          const inWin = (key, s0, s1) => tr.filter(p => p.s >= s0 && p.s <= s1 && ok(p[key])).map(p => p[key]);
+          const cA = changes('a'), aMed = med(cA.map(x => x.v)), aSorted = cA.map(x => x.v).sort((x, y) => x - y);
+          const hiA = aMed != null && aSorted.length ? Math.max(aMed * 1.5, aSorted[Math.floor(aSorted.length * 0.85)]) : Infinity;
+          const uA = cA.length > 2 ? rate(cA) : 1;
+          const punchAt = (s0, s1) => aMed != null && inWin('a', s0 - uA * 1.2, s1 + uA * 1.2).some(v => v >= hiA);
+          // a spike: one or two readings well away from their neighbours that then come back (a step is a real climb)
+          // how often a sensor really updates: the shorter gaps between changes (a held sensor changes every few seconds)
+          const upd = (c) => { const g = c.slice(1).map((x, k) => x.s - c[k].s).sort((x, y) => x - y); return g.length ? Math.max(0.1, g[Math.floor(g.length * 0.25)]) : 1; };
+          const spikes = (key, minDev, minRate = 0) => {
+            const c = changes(key), res = [], U = Math.min(8, upd(c)), Wt = Math.max(4, 3 * U);
+            for (let k = 1; k < c.length - 1; k++) {
+              // the spike may span up to three changed readings before it comes back
+              let j = -1; const s0 = c[k].s;
+              const pre = tr.filter(p => ok(p[key]) && p.s >= s0 - Wt && p.s < s0).map(p => p[key]), m0 = med(pre); if (m0 == null || pre.length < 2) continue;
+              const d = c[k].v - m0;
+              for (let q = k + 1; q < Math.min(c.length, k + 4); q++) if (Math.abs(c[q].v - m0) < Math.abs(d) / 2) { j = q; break; }
+              if (j < 0) continue;
+              const s1 = c[j].s;
+              const w = pre.concat(tr.filter(p => ok(p[key]) && p.s >= s1 && p.s <= s1 + Wt).map(p => p[key])), m = med(w);
+              const mad = med(w.map(x => Math.abs(x - m))) || 0, dd = c[k].v - m;
+              if (Math.abs(dd) <= Math.max(minDev, 3.5 * 1.4826 * mad) || Math.abs(c[k - 1].v - m) >= Math.abs(dd) / 2) continue;
+              // fast in and fast out: real flight changes height or speed gradually, a glitch jumps between readings.
+              // A reading can't be timed better than how often that sensor updates (U).
+              const prevS = Math.max(...tr.filter(p => p.s < s0 && ok(p[key])).map(p => p.s), -Infinity);
+              const rin = Math.abs(dd) / Math.max(U, s0 - prevS), rout = Math.abs(dd) / Math.max(U, s1 - c[j - 1].s);
+              if (rin < minRate || rout < minRate || s1 - s0 > Math.max(4, 2 * U)) continue;
+              const top = c.slice(k, j).reduce((a2, x) => (Math.abs(x.v - m) > Math.abs(a2 - m) ? x.v : a2), c[k].v);
+              if (!punchAt(s0, s1)) res.push({ s: s0, s2: s1, d: top - m, v: top });
+              k = j - 1;
+            }
+            return res;
+          };
+          // 1. height jump with no throttle behind it
+          spikes('alt', 3, 6).forEach(x => out.push({ t: x.s, t2: x.s2, kind: 'alt-jump', sev: 'info', text: `Height jumped ${x.d > 0 ? '+' : ''}${fmt(x.d, 1)} m and back with no throttle increase (barometer or GPS glitch; height smoothing removes it)` }));
+          // 2. speed spike with no throttle behind it
+          spikes('kmh', 20, 25).filter(x => x.d > 0).forEach(x => out.push({ t: x.s, t2: x.s2, kind: 'spd-jump', sev: 'info', text: `Speed spiked to ${fmt(x.v)} km/h with no throttle increase (GPS glitch; speed smoothing removes it)` }));
+          // 3. GPS position jump: further between fixes than the aircraft could have flown
+          const hav = (la1, lo1, la2, lo2) => { const R = 6371000, r = Math.PI / 180, x = Math.sin((la2 - la1) * r / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+          let lastG = null;
+          tr.forEach(p => { if (!ok(p.lat) || !ok(p.lng) || (p.lat === 0 && p.lng === 0)) return;
+            if (lastG && lastG.lat === p.lat && lastG.lng === p.lng) return;
+            if (lastG) { const d = hav(lastG.lat, lastG.lng, p.lat, p.lng), dt = Math.max(0.5, p.s - lastG.s), vmax = Math.max(0, ...inWin('kmh', lastG.s - 1, p.s + 1)) / 3.6;
+              if (d > 40 && d > (vmax * 1.5 + 15) * dt) { const prev = out.find(e => e.kind === 'gps-jump' && p.s - e.t2 <= 5);
+                if (prev) { prev.t2 = p.s; prev.n = (prev.n || 1) + 1; prev.text = `GPS position jumped ${prev.d} m and back within ${fmt(p.s - prev.t, 1)} s (faster than the aircraft can fly; a GPS glitch)`; }
+                else out.push({ t: lastG.s, t2: p.s, d: Math.round(d), kind: 'gps-jump', sev: 'info', text: `GPS position jumped ${Math.round(d)} m in ${fmt(dt, 1)} s (faster than the aircraft was flying)` }); } }
+            lastG = p; });
+          // 4. satellites dropped
+          const sat = tr.map(p => p.sats), satTop = Math.max(0, ...sat.filter(ok));
+          const runs = (flag) => { const r = []; let cur = null; flag.forEach((f, k) => { if (f) { if (cur && k - cur.k2 <= 2) cur.k2 = k; else { cur = { k1: k, k2: k }; r.push(cur); } } }); return r; };
+          if (satTop >= 8) runs(sat.map(v => ok(v) && v < 6)).forEach(({ k1, k2 }) => {
+            out.push({ t: tr[k1].s, t2: tr[k2].s, kind: 'sats', sev: 'warn', text: `GPS satellites dropped to ${Math.min(...sat.slice(k1, k2 + 1).filter(ok))} (from ${satTop}): position hold and return-to-home are unreliable` }); });
+          // 5. voltage: low per-cell under load, and dips the current doesn't explain
+          const v0 = tr.find(p => ok(p.v)), cells = t.cells || (v0 ? Math.max(1, Math.ceil(v0.v / 4.25)) : null);
+          if (cells) {
+            runs(tr.map(p => ok(p.v) && p.v / cells < 3.3)).forEach(({ k1, k2 }) => { const lo = Math.min(...tr.slice(k1, k2 + 1).map(p => p.v).filter(ok));
+              out.push({ t: tr[k1].s, t2: tr[k2].s, kind: 'volt-low', sev: 'warn', text: `Battery down to ${fmt(lo / cells, 2)} V per cell (${fmt(lo, 2)} V, ${cells}S) under load` }); });
+            spikes('v', 0.25 * cells).filter(x => x.d < 0 && !out.some(e => e.kind === 'volt-low' && x.s >= e.t - 2 && x.s <= e.t2 + 2) && !(aMed != null && inWin('a', x.s - uA * 1.2, x.s2 + uA * 1.2).some(a => a > aMed * 1.3))).forEach(x =>
+              out.push({ t: x.s, t2: x.s2, kind: 'volt-dip', sev: 'warn', text: `Voltage dipped ${fmt(-x.d, 2)} V with no current rise to explain it (check the battery connector, leads and pack)` }));
+          }
+          // 6. big current spike while the aircraft was sitting still (not climbing, not moving): prop strike, crash or a motor/ESC fault
+          const uAlt = rate(changes('alt')), uSpd = rate(changes('kmh')), win = Math.min(8, Math.max(3, 1.5 * Math.max(uAlt, uSpd, uA)));
+          cA.filter(x => aMed != null && x.v >= Math.max(hiA, aMed * 2.2)).forEach(x => {
+            const alts = inWin('alt', x.s - win, x.s + win), spds = inWin('kmh', x.s - win, x.s + win);
+            if (alts.length < 2 || spds.length < 2) return;
+            const climb = Math.max(...alts) - Math.min(...alts), vtop = Math.max(...spds);
+            if (climb < 1.5 && vtop < 12 && !out.some(e => e.kind === 'amp-no-motion' && x.s - e.t2 < win)) out.push({ t: x.s, t2: x.s, kind: 'amp-no-motion', sev: 'warn', text: `Current spiked to ${fmt(x.v)} A while the aircraft wasn't climbing or moving (prop strike, crash, stuck motor or ESC issue? Check the aircraft)` });
+          });
+          // 7. log ends in the air
+          const last = tr[n - 1];
+          if ((ok(last.alt) && last.alt > 10) || (ok(last.kmh) && last.kmh > 20)) out.push({ t: last.s, t2: last.s, kind: 'end-air', sev: 'warn', text: `Log ends in the air (${ok(last.alt) ? fmt(last.alt) + ' m' : '—'}, ${ok(last.kmh) ? fmt(last.kmh) + ' km/h' : '—'}): disarmed in flight, power loss, crash or a cut log?` });
+          return out.sort((x, y) => x.t - y.t);
+        };
+        const ANOM_LABEL = { 'alt-jump': 'Height glitch', 'spd-jump': 'Speed glitch', 'gps-jump': 'GPS jump', sats: 'Satellites', 'volt-low': 'Low voltage', 'volt-dip': 'Voltage dip', 'amp-no-motion': 'Current spike', 'end-air': 'Log ends airborne' };
+        if (typeof window !== 'undefined') window.__wdAnomalies = tlmAnomalies;
+        // Updates a flight's telemetry smoothing (kind 'alt' or 'spd'); auto-filled height segments follow the new values
+        const smoothFlight = (f, level, kind = 'alt') => {
           if (!f || !f.telemetry) return f;
-          const old = f.telemetry, nt = smoothAltTelemetry(old, level); if (nt === old) return f;
+          const old = f.telemetry, nt = kind === 'spd' ? smoothSpdTelemetry(old, level) : smoothAltTelemetry(old, level); if (nt === old) return f;
           const ft = (m) => String(Math.round((m || 0) * 3.28084));
           const auto = { 'Take-Off': [old.takeoffMaxM, nt.takeoffMaxM], 'Flight Operation': [old.maxAltM, nt.maxAltM], 'Landing': [old.landingMaxM, nt.landingMaxM] };
           const segments = (f.segments || []).map(sg => { const x = auto[sg.name]; return x && String(sg.maxFt) === ft(x[0]) ? { ...sg, maxFt: ft(x[1]) } : sg; });
@@ -2746,6 +2839,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             track = { d: gp.map((_, i) => px(i).toFixed(1) + ',' + py(i).toFixed(1)).join(' '), hm, end: [px(gp.length - 1), py(gp.length - 1)] };
           }
           const ke = telemetryKe(t, kg);
+          const anom = useMemo(() => tlmAnomalies(t), [t]);
           const keLim = oonp === true ? 34 : null;
           const st = (label, value, sub, warn) => (
             <div className="bg-white border border-slate-200 rounded px-2 py-1 min-w-0">
@@ -2771,7 +2865,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
                 {st(t.altSmooth ? 'Max alt · smoothed' : 'Max alt', dash(t.maxAltM, ' m'), t.maxAltM != null ? (t.altSmooth && t.rawStats ? 'raw ' + t.rawStats.maxAltM + ' m · ' : '') + Math.round(t.maxAltM * 3.28084) + (t.altRef === 'landing' ? ' ft above landing point' : t.altRef === 'lowest' ? ' ft above lowest point' : ' ft above take-off') : '', t.maxAltM > 120)}
-                {st('Max speed', dash(t.maxSpeedKmh, ' km/h'), 'GPS ground speed')}
+                {st(t.spdSmooth ? 'Max speed · smoothed' : 'Max speed', dash(t.maxSpeedKmh, ' km/h'), (t.spdSmooth && t.rawStats ? 'raw ' + t.rawStats.maxSpeedKmh + ' km/h · ' : '') + 'GPS ground speed')}
                 {st('Max distance', dash(t.maxDistM, ' m'), t.pathM ? 'path ' + (t.pathM / 1000).toFixed(2) + ' km' : 'from home')}
                 {st('Battery', t.vStart != null ? `${t.vStart}→${t.vEnd} V` : '—', [t.cells ? t.cells + 'S' : '', t.vMin != null ? 'sag ' + t.vMin + ' V' : ''].filter(Boolean).join(' · '))}
                 {st('Used', dash(t.mahUsed, ' mAh'), t.maxCurrA != null ? `max ${t.maxCurrA} A · avg ${t.avgCurrA} A` : '')}
@@ -2788,6 +2882,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                     {altPts.length > 1 && <polyline points={altPts.join(' ')} fill="none" stroke="#1d76d2" strokeWidth="1.3" strokeLinejoin="round" />}
                     {spdPts.length > 1 && <polyline points={spdPts.join(' ')} fill="none" stroke="#f59e0b" strokeWidth="0.9" strokeLinejoin="round" opacity="0.9" />}
                     {(t.events || []).map((e, i) => <line key={i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke="#dc2626" strokeWidth="0.8" />)}
+                    {anom.map((e, i) => <line key={'a' + i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke={e.sev === 'warn' ? '#ea580c' : '#a855f7'} strokeWidth="0.7" strokeDasharray="1.5,1.2" />)}
                     <text x={L - 3} y={YA(topA) + 3} fontSize="7" textAnchor="end" fill="#1d76d2">{topA}m</text>
                     <text x={L - 3} y={YA(0) + 3} fontSize="7" textAnchor="end" fill="#64748b">0</text>
                     <text x={L + cw + 3} y={YS(topS) + 3} fontSize="7" fill="#b45309">{topS}</text>
@@ -2823,6 +2918,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 ))}
                 {t.minSats != null && <div>GPS sats {t.minSats}–{t.maxSats}{t.home ? ` · home ${t.home[0].toFixed(5)}, ${t.home[1].toFixed(5)}` : ''}</div>}
                 {(t.events || []).map((e, i) => <div key={i} className="text-red-700 font-semibold">⚠ {fmtMmSs(e.t)}: {e.text}</div>)}
+                {anom.length > 0 && <div data-anom-list="1" className="pt-0.5"><button type="button" onClick={() => setDetail(true)} className="font-semibold text-violet-800 hover:underline" data-anom-count={anom.length}><i className="fa-solid fa-flag text-[9px] mr-1"></i>{anom.length} telemetry flag{anom.length === 1 ? '' : 's'}</button>
+                  {anom.slice(0, 4).map((e, i) => <div key={'an' + i} data-anom={e.kind} className={e.sev === 'warn' ? 'text-orange-700 font-semibold' : 'text-violet-700'}>{e.sev === 'warn' ? '⚑' : '◇'} {fmtMmSs(e.t)}: {e.text}</div>)}
+                  {anom.length > 4 && <div className="text-slate-500">+ {anom.length - 4} more in Details</div>}</div>}
                 {(t.notes || []).map((n, i) => <div key={'n' + i} className="text-amber-700">ⓘ {n}</div>)}
               </div>
               {detail && <TlmDetail t={t} kg={kg} oonp={oonp} limitCtx={limitCtx} title={title} onClose={() => setDetail(false)} onSmooth={onSmooth} onSmoothAll={onSmoothAll} />}
@@ -2863,9 +2961,10 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
 
         // Full-screen detail view of one telemetry flight
         function TlmDetail({ t, kg, oonp, limitCtx, title, onClose, onSmooth, onSmoothAll }) {
-          const [smoothDef, setSmoothDef] = useState(() => { try { return localStorage.getItem('wd_tlm_smooth_default') || ''; } catch (e) { return ''; } });
+          const [smoothDef, setSmoothDef] = useState(() => { const g = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }; return { alt: g('wd_tlm_smooth_default'), spd: g('wd_tlm_smooth_spd_default') }; });
           const tr = (t.trace || []).filter(p => p && p[0] != null);
           const [hi, setHi] = useState(null);
+          const anom = useMemo(() => tlmAnomalies(t), [t]);
           const mapRef = useRef(null), mapObj = useRef(null), hover = useRef(null);
           useEffect(() => {
             const L = window.L, el = mapRef.current; if (!L || !el) return;
@@ -2911,11 +3010,12 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               <svg key={key} viewBox={`0 0 ${W} ${H}`} width="100%" className="block select-none" onMouseMove={onMove} onMouseLeave={() => setHi(null)} data-tlm-chart={key}>
                 {rl && [0, 0.5, 1].map(f => { const v = rl[0] + (rl[1] - rl[0]) * f; return <g key={f}><line x1={L0} x2={L0 + cw} y1={Y(v, rl)} y2={Y(v, rl)} stroke="#e2e8f0" strokeWidth="0.7" /><text x={L0 - 4} y={Y(v, rl) + 3} fontSize="9" textAnchor="end" fill={ax.l[0].color}>{fmt(v)}</text></g>; })}
                 {rr && [0, 0.5, 1].map(f => { const v = rr[0] + (rr[1] - rr[0]) * f; return <text key={f} x={L0 + cw + 4} y={Y(v, rr) + 3} fontSize="9" fill={ax.r[0].color}>{fmt(v)}</text>; })}
-                {extra && extra(Y, rl)}
+                {extra && extra(Y, rl, rr)}
                 {series.map(s => { const r = s.axis === 'r' ? rr : rl; if (!r) return null; const pts = tr.filter(p => p[s.idx] != null).map(p => X(p[0]).toFixed(1) + ',' + Y(p[s.idx], r).toFixed(1));
                   if (pts.length < 2) return null;
                   return <g key={s.label}>{s.fill && <polygon points={`${X(tr[0][0])},${Y(r[0], r)} ${pts.join(' ')} ${X(tr[tr.length - 1][0])},${Y(r[0], r)}`} fill={s.color} fillOpacity="0.15" />}<polyline points={pts.join(' ')} fill="none" stroke={s.color} strokeWidth="1.6" strokeLinejoin="round" /></g>; })}
                 {(t.events || []).map((e, i) => <line key={i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke="#dc2626" strokeWidth="1" strokeDasharray="3,2" />)}
+                {anom.map((e, i) => <g key={'a' + i} data-anom-mark={e.kind}><rect x={X(e.t) - 1} width={Math.max(2, X(e.t2) - X(e.t) + 2)} y={T} height={ch} fill={e.sev === 'warn' ? '#ea580c' : '#a855f7'} fillOpacity="0.12" /><line x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke={e.sev === 'warn' ? '#ea580c' : '#a855f7'} strokeWidth="0.8" strokeDasharray="2,2" /></g>)}
                 {hi != null && tr[hi] && <line x1={X(tr[hi][0])} x2={X(tr[hi][0])} y1={T} y2={T + ch} stroke="#0f172a" strokeWidth="0.8" />}
                 <text x={L0} y={H - 4} fontSize="9" fill="#64748b">0:00</text>
                 <text x={L0 + cw} y={H - 4} fontSize="9" textAnchor="end" fill="#64748b">{fmtMmSs(dur)}</text>
@@ -2925,6 +3025,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           };
           const has = (i) => tr.some(p => p[i] != null);
           const p = hi != null ? tr[hi] : null;
+          const goTo = (sec) => { let best = null, bd = 1e9; tr.forEach((q, i) => { const d = Math.abs(q[0] - sec); if (d < bd) { bd = d; best = i; } }); setHi(best); };
           const ke = telemetryKe(t, kg);
           const box = (label, value, sub, warn) => (
             <div className="bg-white border border-slate-200 rounded-lg px-3 py-2"><div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</div><div className={`text-base font-bold font-mono ${warn ? 'text-red-600' : 'text-slate-800'}`}>{value}</div>{sub && <div className="text-[10px] text-slate-500">{sub}</div>}</div>
@@ -2943,27 +3044,47 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 </div>
                 <div className="overflow-auto p-4 space-y-3">
                   {onSmooth && (() => {
-                    const cur = (t.altSmooth && t.altSmooth.level) || 'off';
-                    return (
-                      <div data-tlm-smooth="1" className="bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-x-3 gap-y-2 flex-wrap text-xs">
-                        <span className="font-semibold text-slate-700"><i className="fa-solid fa-wave-square text-cyan-600 mr-1.5"></i>Altitude smoothing</span>
-                        <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
-                          {[['off', 'Off'], ...Object.entries(ALT_SMOOTH).map(([k, v]) => [k, v.label])].map(([k, l]) => (
-                            <button key={k} type="button" data-smooth-level={k} onClick={() => onSmooth(k)} className={`px-3 py-1.5 font-semibold ${cur === k ? 'bg-cyan-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} ${k !== 'off' ? 'border-l border-slate-300' : ''}`}>{l}</button>
-                          ))}
+                    const row = (kind) => {
+                      const sm = kind === 'spd' ? t.spdSmooth : t.altSmooth, cur = (sm && sm.level) || 'off';
+                      const defKey = kind === 'spd' ? 'wd_tlm_smooth_spd_default' : 'wd_tlm_smooth_default', def = smoothDef[kind];
+                      const rawMax = t.rawStats ? (kind === 'spd' ? t.rawStats.maxSpeedKmh : t.rawStats.maxAltM) : null, unit = kind === 'spd' ? ' km/h' : ' m';
+                      return (
+                        <div key={kind} data-smooth-row={kind} className="flex items-center gap-x-3 gap-y-2 flex-wrap">
+                          <span className="font-semibold text-slate-700 w-36"><i className={`fa-solid ${kind === 'spd' ? 'fa-gauge-high' : 'fa-wave-square'} text-cyan-600 mr-1.5`}></i>{kind === 'spd' ? 'Speed smoothing' : 'Height smoothing'}</span>
+                          <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+                            {[['off', 'Off'], ...Object.entries(ALT_SMOOTH).map(([k, v]) => [k, v.label])].map(([k, l]) => (
+                              <button key={k} type="button" data-smooth-level={kind === 'spd' ? 'spd-' + k : k} onClick={() => onSmooth(k, kind)} className={`px-3 py-1.5 font-semibold ${cur === k ? 'bg-cyan-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} ${k !== 'off' ? 'border-l border-slate-300' : ''}`}>{l}</button>
+                            ))}
+                          </div>
+                          {sm && <span className="text-slate-500" data-smooth-info={kind === 'spd' ? 'spd' : '1'}>{sm.spikes} spike{sm.spikes === 1 ? '' : 's'} removed · raw max {rawMax != null ? rawMax : '—'}{unit} → {kind === 'spd' ? t.maxSpeedKmh : t.maxAltM}{unit}</span>}
+                          <span className="flex-1"></span>
+                          {onSmoothAll && <button type="button" data-smooth-all={kind === 'spd' ? 'spd' : '1'} onClick={() => onSmoothAll(cur, kind)} className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold">Apply {cur === 'off' ? 'Off' : ALT_SMOOTH[cur].label} to all flights on this aircraft</button>}
+                          <label className="inline-flex items-center gap-1.5 text-slate-600"><input type="checkbox" data-smooth-default={kind === 'spd' ? 'spd' : '1'} checked={!!def && def === cur && cur !== 'off'} disabled={cur === 'off'}
+                            onChange={e => { const v = e.target.checked ? cur : ''; try { if (v) localStorage.setItem(defKey, v); else localStorage.removeItem(defKey); } catch (x) {} setSmoothDef(d => ({ ...d, [kind]: v })); }} className="rounded" />Use for new imports</label>
                         </div>
-                        {t.altSmooth && <span className="text-slate-500" data-smooth-info="1">{t.altSmooth.spikes} spike{t.altSmooth.spikes === 1 ? '' : 's'} removed · raw max {t.rawStats ? t.rawStats.maxAltM : '—'} m → {t.maxAltM} m</span>}
-                        <span className="flex-1"></span>
-                        {onSmoothAll && <button type="button" data-smooth-all="1" onClick={() => onSmoothAll(cur)} className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold">Apply {cur === 'off' ? 'Off' : ALT_SMOOTH[cur].label} to all flights on this aircraft</button>}
-                        <label className="inline-flex items-center gap-1.5 text-slate-600"><input type="checkbox" data-smooth-default="1" checked={!!smoothDef && smoothDef === cur && cur !== 'off'} disabled={cur === 'off'}
-                          onChange={e => { const v = e.target.checked ? cur : ''; try { if (v) localStorage.setItem('wd_tlm_smooth_default', v); else localStorage.removeItem('wd_tlm_smooth_default'); } catch (x) {} setSmoothDef(v); }} className="rounded" />Use for new imports</label>
-                        <div className="basis-full text-[11px] text-slate-400">Removes short height spikes the aircraft didn't fly (gusts, prop wash, pressure changes in a stadium bowl) and evens out barometer steps. Climbs the quad holds for longer than a couple of seconds are kept, and so is any jump that lines up with a throttle punch in the current draw, so a real max height isn't hidden. The raw trace stays (grey dashes) and Off restores it. Smoothed heights are labelled in the PDF.</div>
+                      );
+                    };
+                    return (
+                      <div data-tlm-smooth="1" className="bg-white border border-slate-200 rounded-lg px-3 py-2 space-y-2 text-xs">
+                        {row('alt')}{row('spd')}
+                        <div className="text-[11px] text-slate-400">Removes short spikes the aircraft didn't fly: barometer jumps from gusts, prop wash or pressure changes in a stadium bowl, and GPS speed jumps from dropouts or multipath. Anything the quad holds for longer than a couple of seconds is kept, and so is any change that lines up with a throttle punch in the current draw, so a real max isn't hidden. The raw traces stay (dashed) and Off restores them. Smoothed values are labelled in the PDF.</div>
                       </div>
                     );
                   })()}
+                  {anom.length > 0 && (
+                    <div data-tlm-flags="1" className="bg-white border border-violet-200 rounded-lg px-3 py-2 text-xs">
+                      <div className="font-semibold text-slate-700 mb-1"><i className="fa-solid fa-flag text-violet-600 mr-1.5"></i>Telemetry flags ({anom.length}) <span className="font-normal text-slate-400">· checked on the raw readings · <span className="text-orange-600">⚑ check the aircraft or log</span> · <span className="text-violet-600">◇ sensor glitch</span> · tap one to find it on the charts and map</span></div>
+                      <div className="divide-y divide-slate-100">{anom.map((e, i) => (
+                        <button type="button" key={i} data-anom-row={e.kind} onClick={() => goTo((e.t + e.t2) / 2)} className="w-full text-left flex gap-2 py-1 hover:bg-slate-50">
+                          <span className="font-mono text-slate-500 w-14 shrink-0">{fmtMmSs(e.t)}</span>
+                          <span className={`w-28 shrink-0 font-semibold ${e.sev === 'warn' ? 'text-orange-700' : 'text-violet-700'}`}>{e.sev === 'warn' ? '⚑' : '◇'} {ANOM_LABEL[e.kind] || e.kind}</span>
+                          <span className="text-slate-700">{e.text}</span>
+                        </button>))}</div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
                     {box(t.altSmooth ? 'Max height (smoothed)' : 'Max height', t.maxAltM != null ? t.maxAltM + ' m' : '—', t.maxAltM != null ? (t.altSmooth && t.rawStats ? 'raw ' + t.rawStats.maxAltM + ' m · ' : '') + ft(t.maxAltM) + ' ft above ' + (t.altRef === 'landing' ? 'landing' : t.altRef === 'lowest' ? 'lowest point' : 'take-off') : '', t.maxAltM > 120)}
-                    {box('Max speed', t.maxSpeedKmh != null ? t.maxSpeedKmh + ' km/h' : '—', 'GPS ground speed')}
+                    {box(t.spdSmooth ? 'Max speed (smoothed)' : 'Max speed', t.maxSpeedKmh != null ? t.maxSpeedKmh + ' km/h' : '—', (t.spdSmooth && t.rawStats ? 'raw ' + t.rawStats.maxSpeedKmh + ' km/h · ' : '') + 'GPS ground speed')}
                     {box('Max distance', t.maxDistM != null ? t.maxDistM + ' m' : '—', 'from home')}
                     {box('Path flown', t.pathM ? (t.pathM / 1000).toFixed(2) + ' km' : '—', '')}
                     {box('Battery', t.vStart != null ? t.vStart + '→' + t.vEnd + ' V' : '—', [t.cells ? t.cells + 'S' : '', t.vMin != null ? 'sag ' + t.vMin + ' V' : ''].filter(Boolean).join(' · '))}
@@ -3003,9 +3124,10 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                   </div>
                   <div className="bg-white border border-slate-200 rounded-lg p-2 space-y-1">
                     {chart('alt', 190, [{ idx: 1, color: '#1d76d2', label: 'height', unit: 'm', fill: true, zero: true }, { idx: 2, color: '#d97706', label: 'speed', unit: 'km/h', axis: 'r', zero: true }],
-                      (Y, r) => <>{r && r[1] >= 120 ? <line x1={L0} x2={L0 + cw} y1={Y(120, r)} y2={Y(120, r)} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="4,3" /> : null}
+                      (Y, r, rs) => <>{rs && t.spdRaw && <polyline data-raw-spd="1" points={(t.trace || []).map((p2, i) => p2 && p2[0] != null && t.spdRaw[i] != null ? X(p2[0]).toFixed(1) + ',' + Math.max(2, Y(Math.min(t.spdRaw[i], rs[1] * 1.08), rs)).toFixed(1) : null).filter(Boolean).join(' ')} fill="none" stroke="#f59e0b" strokeOpacity="0.55" strokeWidth="1" strokeDasharray="2,2" />}
+                        {r && r[1] >= 120 ? <line x1={L0} x2={L0 + cw} y1={Y(120, r)} y2={Y(120, r)} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="4,3" /> : null}
                         {r && t.altRaw && <polyline data-raw-alt="1" points={(t.trace || []).map((p2, i) => p2 && p2[0] != null && t.altRaw[i] != null ? X(p2[0]).toFixed(1) + ',' + Math.max(2, Y(Math.min(t.altRaw[i], r[1] * 1.08), r)).toFixed(1) : null).filter(Boolean).join(' ')} fill="none" stroke="#94a3b8" strokeWidth="1" strokeDasharray="2,2" />}
-                        {r && t.altRaw && <text x={L0 + 4} y={14} fontSize="9" fill="#94a3b8">- - raw height (before smoothing)</text>}</>)}
+                        {(t.altRaw || t.spdRaw) && <text x={L0 + 4} y={14} fontSize="9" fill="#94a3b8">- - raw {t.altRaw && t.spdRaw ? 'height and speed' : t.altRaw ? 'height' : 'speed'} (before smoothing)</text>}</>)}
                     {(has(5) || has(6)) && chart('bat', 150, [...(has(5) ? [{ idx: 5, color: '#7c3aed', label: 'battery', unit: 'V' }] : []), ...(has(6) ? [{ idx: 6, color: '#db2777', label: 'current', unit: 'A', axis: 'r', zero: true }] : [])])}
                     {(has(7) || has(8)) && chart('link', 130, [...(has(7) ? [{ idx: 7, color: '#059669', label: 'link quality', unit: '%', zero: true }] : []), ...(has(8) ? [{ idx: 8, color: '#64748b', label: 'GPS sats', axis: 'r', zero: true }] : [])])}
                     {!has(5) && <div className="text-[11px] text-slate-400 px-2">Battery, current and link charts appear for logs imported with v5.41 or later.</div>}
@@ -3896,7 +4018,8 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           };
           const isBlank = (f) => !(parseInt(f.duration) > 0) && !f.batteries && !f.telemetry && !(f.segments || []).some(s => s.maxFt);
           // v7.2: smoothing chosen as "Use for new imports" in the flight detail view
-          const smoothDefault = (t) => { let lv = ''; try { lv = localStorage.getItem('wd_tlm_smooth_default') || ''; } catch (e) {} return lv && ALT_SMOOTH[lv] ? smoothAltTelemetry(t, lv) : t; };
+          const smoothDefault = (t) => { const g = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }; const a = g('wd_tlm_smooth_default'), sp = g('wd_tlm_smooth_spd_default');
+            return (ALT_SMOOTH[a] || ALT_SMOOTH[sp]) ? applyTlmSmoothing(t, a || 'off', sp || 'off') : t; };
           const importTelemetry = () => pickCsv(true, (results) => {
             const have = new Set(flights.filter(f => f.telemetry).map(f => f.telemetry.startMs));
             const found = [], skipped = [], empty = [];
@@ -3910,7 +4033,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             let updated = 0;
             const refreshed = flights.map(f => {
               const t0 = f.telemetry && refresh[f.telemetry.startMs]; if (!t0) return f;
-              const t = f.telemetry.altSmooth ? smoothAltTelemetry(t0, f.telemetry.altSmooth.level) : t0; // keep this flight's smoothing
+              const t = (f.telemetry.altSmooth || f.telemetry.spdSmooth) ? applyTlmSmoothing(t0, f.telemetry.altSmooth ? f.telemetry.altSmooth.level : 'off', f.telemetry.spdSmooth ? f.telemetry.spdSmooth.level : 'off') : t0; // keep this flight's smoothing
               if (JSON.stringify(t) === JSON.stringify(f.telemetry)) return f;
               updated++; const auto = flightFromTelemetry(t);
               return f.source === 'telemetry' ? { ...f, telemetry: t, segments: auto.segments, duration: auto.duration } : { ...f, telemetry: t };
@@ -4091,7 +4214,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
 
                     {fl.telemetry
                       ? <TelemetryPanel t={fl.telemetry} kg={fleetKg} oonp={fl.oonp} limitCtx={limitCtx} title={rpa + ' · Flight ' + (idx + 1)} onRemove={()=>removeTelemetry(fl.id)}
-                          onSmooth={(lvl) => commit(flights.map(f => f.id === fl.id ? smoothFlight(f, lvl) : f))} onSmoothAll={(lvl) => commit(flights.map(f => f.telemetry ? smoothFlight(f, lvl) : f))} />
+                          onSmooth={(lvl, kind) => commit(flights.map(f => f.id === fl.id ? smoothFlight(f, lvl, kind) : f))} onSmoothAll={(lvl, kind) => commit(flights.map(f => f.telemetry ? smoothFlight(f, lvl, kind) : f))} />
                       : (
                         <div className="px-3 py-1.5 border-b border-slate-100 flex justify-end">
                           <button onClick={()=>attachTelemetry(fl.id)} className="text-[10px] font-semibold text-cyan-700 hover:text-cyan-900 flex items-center gap-1" title="Attach an EdgeTX telemetry CSV to this flight">
@@ -5183,7 +5306,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 +(pts.length>1?'<polygon points="'+L+','+Y(0)+' '+pts.join(' ')+' '+X(dur).toFixed(1)+','+Y(0)+'" fill="'+col+'" fill-opacity="0.2"/><polyline points="'+pts.join(' ')+'" fill="none" stroke="'+col+'" stroke-width="1.1" stroke-linejoin="round"/>':'')
                 +(t.events||[]).map(e=>'<line x1="'+X(e.t).toFixed(1)+'" x2="'+X(e.t).toFixed(1)+'" y1="'+T+'" y2="'+(T+ch)+'" stroke="#dc2626" stroke-width="0.7"/>').join('')
                 +'<text x="'+L+'" y="'+(H-3)+'" font-size="5.2" fill="#64748b" font-weight="700">0:00</text>'
-                +'<text x="'+(L+cw/2)+'" y="'+(H-3)+'" font-size="5.2" text-anchor="middle" fill="#0e7490" font-weight="700">'+(t.altSmooth?'TELEMETRY · HEIGHT SMOOTHED ('+String(t.altSmooth.level).toUpperCase()+(t.rawStats?', RAW MAX '+Math.round((t.rawStats.maxAltM||0)*3.28084)+' FT':'')+')':'TELEMETRY')+'</text>'
+                +'<text x="'+(L+cw/2)+'" y="'+(H-3)+'" font-size="5.2" text-anchor="middle" fill="#0e7490" font-weight="700">'+('TELEMETRY'+(t.altSmooth?' · HEIGHT SMOOTHED ('+String(t.altSmooth.level).toUpperCase()+(t.rawStats?', RAW MAX '+Math.round((t.rawStats.maxAltM||0)*3.28084)+' FT':'')+')':'')+(t.spdSmooth?' · SPEED SMOOTHED ('+String(t.spdSmooth.level).toUpperCase()+')':''))+'</text>'
                 +'<text x="'+(L+cw)+'" y="'+(H-3)+'" font-size="5.2" text-anchor="end" fill="#64748b" font-weight="700">'+mm(dur)+'</text></svg>';
             };
             const tlmStrip=(fl)=>{
@@ -5200,6 +5323,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 +c('PEAK KE (EST.)',ke!=null?ke.toFixed(0)+' J':'—',ke!=null&&fl.oonp===true&&ke>34)
                 +'</div>'
                 +((t.events||[]).length?'<div style="padding:1pt 5pt;font-size:5.3pt;color:#dc2626;font-weight:700;">'+t.events.map(e=>esc(fmtMmSs(e.t)+' '+e.text)).join(' · ')+'</div>':'')
+                +(()=>{const an=tlmAnomalies(t);return an.length?'<div data-pdf-anom="1" style="padding:1pt 5pt;font-size:5.3pt;color:#7c2d12;">'+'<b>Telemetry flags:</b> '+an.map(e=>esc(fmtMmSs(e.t)+' '+(ANOM_LABEL[e.kind]||e.kind)+': '+e.text)).join(' · ')+'</div>':'';})()
                 +(()=>{const iss=flightLimitIssues(t,{...flightLimitCtx(fl.__rpa),kg,oonp:fl.oonp});return iss.length?'<div style="padding:1.5pt 5pt;font-size:5.6pt;font-weight:700;background:#fef2f2;">'+iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';">&#9888; '+esc(x.text)+'</span>').join('<br/>')+'</div>':'';})();
             };
             const profileSvg=(fl,peak)=>{
@@ -5275,13 +5399,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                   +flts.map((fl,i)=>{
                     const pk=peakOf(fl), t=fl.telemetry, kg=parseFloat(((db.fleet||{})[rpa]||{}).weight)||0;
                     const iss=t?flightLimitIssues(t,{...flightLimitCtx(rpa),kg,oonp:fl.oonp}):[];
-                    const notes=[...iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';font-weight:700;">&#9888; '+esc(x.text)+'</span>'),String(fl.notes||'').trim()?esc(String(fl.notes).trim()):'',fl.amendNote?'<span style="color:#b45309;">AMENDED — '+esc(fl.amendNote)+'</span>':''].filter(Boolean).join('<br>');
+                    const notes=[...iss.map(x=>'<span style="color:'+(x.sev==='red'?'#b91c1c':'#b45309')+';font-weight:700;">&#9888; '+esc(x.text)+'</span>'),...(t?tlmAnomalies(t).map(e=>'<span data-pdf-anom="1" style="color:'+(e.sev==='warn'?'#c2410c':'#7e22ce')+';">&#9873; '+esc(fmtMmSs(e.t)+' '+(ANOM_LABEL[e.kind]||e.kind))+'</span>'):[]),String(fl.notes||'').trim()?esc(String(fl.notes).trim()):'',fl.amendNote?'<span style="color:#b45309;">AMENDED — '+esc(fl.amendNote)+'</span>':''].filter(Boolean).join('<br>');
                     return '<tr style="break-inside:avoid;">'+td(i+1,'left','color:#94a3b8;')+td(esc(fl.label||'')+(t?' <span style="background:#0e7490;color:white;padding:0 2pt;border-radius:2pt;font-size:5pt;">AUTO</span>':''))
                       +td(fl.oonp===true?'<b style="color:#b45309;">OONP</b>':fl.oonp===false?'Non-OONP':'<span style="color:#94a3b8;">—</span>')
                       +td(parseInt(fl.duration)>0?fl.duration+' min':'—','right')+td(pk?pk+' ft'+(t&&t.altSmooth?'<span style="color:#0e7490;font-size:5.5pt;"> sm</span>':''):'—','right',pk>400?'color:#dc2626;font-weight:700;':'')
-                      +td(t&&t.maxSpeedKmh!=null?t.maxSpeedKmh+' km/h':'—','right')+td('<span style="font-family:monospace;">'+(esc(fl.batteries||'')||'—')+'</span>')+td(notes||'')+'</tr>';
+                      +td(t&&t.maxSpeedKmh!=null?t.maxSpeedKmh+' km/h'+(t.spdSmooth?'<span style="color:#0e7490;font-size:5.5pt;"> sm</span>':''):'—','right')+td('<span style="font-family:monospace;">'+(esc(fl.batteries||'')||'—')+'</span>')+td(notes||'')+'</tr>';
                   }).join('')+'</tbody></table>';
-                h+='<div style="font-size:6pt;color:#94a3b8;margin-top:3pt;">Compact flight table ('+flts.length+' flights). Max alt is the highest logged segment; telemetry heights are measured from ground level at take-off.'+(flts.some(f=>f.telemetry&&f.telemetry.altSmooth)?' &ldquo;sm&rdquo; = telemetry height smoothed to remove barometer spikes (raw values kept in the planner).':'')+'</div>';
+                h+='<div style="font-size:6pt;color:#94a3b8;margin-top:3pt;">Compact flight table ('+flts.length+' flights). Max alt is the highest logged segment; telemetry heights are measured from ground level at take-off.'+(flts.some(f=>f.telemetry&&(f.telemetry.altSmooth||f.telemetry.spdSmooth))?' &ldquo;sm&rdquo; = telemetry smoothed to remove barometer or GPS spikes (raw values kept in the planner).':'')+'</div>';
                 return '<div style="margin-bottom:12pt;">'+h+'</div>';
               }
               h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5pt;">';
