@@ -172,7 +172,7 @@ import qrcode from 'qrcode-generator';
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.5.4';
+        const APP_VERSION = '7.5.5';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5781,6 +5781,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               r2('Approved Date(s)',approval.approvedDates,'Approved RPA Types',(approval.approvedTypes||[]).join(', ')||'—'),
               cRow('Other Restrictions / Limitations',approval.otherRestrictions),
               cRow('Official Authorisation Reference',approval.officialAuth),
+              ...(()=>{const bp=reqItems.filter(x=>x.overridden);return bp.length?['<div data-pdf-bypass="1">'+cRow('Mandatory items bypassed by RPIC declaration',bp.map(x=>'• '+x.label+': '+x.overridden.reason+' (declared by '+((x.overridden.by&&x.overridden.by.name)||'the RPIC')+(x.overridden.by&&x.overridden.by.at?', '+new Date(x.overridden.by.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'}):'')+')').join('\n'))+'</div>']:[];})(),
               (()=>{const ns=summariseNotams(approval.notams);
                 return '<div style="display:grid;grid-template-columns:100px 1fr;border-bottom:1px solid '+S2+';">'
                   +'<div style="background:'+S5+';padding:4pt 6pt;font-size:6.5pt;font-weight:700;color:'+S6+';text-transform:uppercase;border-right:1px solid '+S2+';">Active NOTAMs</div>'
@@ -9034,8 +9035,22 @@ View in the Database & Settings tab.`);
               I('log', 'serviceableAtEnd', 'RPA serviceable at end? (Yes, or No + defects)', log.serviceableAtEnd === true || (log.serviceableAtEnd === false && t(log.defects)), '__M5__: whether the RPA became unserviceable', 'log'),
               I('log', 'crewRP', 'Remote pilot who flew', t(log.crewRP), 'CASA MOS 10.06 (remote pilot log)', 'log'),
               I('log', 'flights', 'Each flight with its length and height AGL', flown.length && withHeight.length === flown.length, '__M5__ and 10.06: each flight segment, its height AGL, and its length', 'log'),
-            ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }));
+            ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }))
+              // v7.5.5: an item the RPIC has declared not needed (with a reason) counts as recorded, and is flagged
+              .map(x => { const o = (approval.reqOverrides || {})[x.id]; return !x.ok && o && String(o.reason || '').trim() ? { ...x, ok: true, overridden: o } : x; });
           })();
+          // who may bypass a mandatory item: the RPIC named on the job (or the CRP); offline, whoever is using the planner
+          const rpicName = String(approval.rpName || overview.rpic || '').trim();
+          const bypassBlocked = signedIn && auth.role !== 'crp' && !(rpicName && String(auth.name || '').trim().toLowerCase() === rpicName.toLowerCase())
+            ? `Only the RPIC${rpicName ? ' (' + rpicName + ')' : ''} or the CRP can bypass mandatory items.` : '';
+          const [reqBypass, setReqBypass] = useState(null); // { tab, ids: Set, reason, declared }
+          const saveBypass = () => {
+            const b = reqBypass; if (!b || !b.ids.size || !b.declared || String(b.reason || '').trim().length < 10) return;
+            const by = { name: (signedIn && auth.name) || rpicName || '', email: signedIn ? auth.email : '', role: signedIn ? auth.role : 'rpic', at: new Date().toISOString() };
+            setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; b.ids.forEach(id => { const it = reqItems.find(x => x.id === id); o[id] = { reason: b.reason.trim(), label: it ? it.label : id, by }; }); return { ...prev, reqOverrides: o }; });
+            setReqBypass(null);
+          };
+          const undoBypass = (id) => setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; delete o[id]; return { ...prev, reqOverrides: o }; });
           const showOonpTools = (jsa.operationTypes || []).includes('OONP') || oonpMode || !!keData.enabled || !!ballistic.enabled || extraKe.length > 0 || oonpToolsOpen;
           const reqMissing = (tab) => reqItems.filter(x => !x.ok && (!tab || x.tab === tab));
           const reqWhy = (id) => { const x = reqItems.find(i => i.id === id); return x ? x.why : ''; };
@@ -9052,11 +9067,22 @@ View in the Database & Settings tab.`);
             }, 120);
           };
           // Compact "still to record" strip at the top of each section.
+          const BypassedList = ({ tab }) => {
+            const bp = reqItems.filter(x => x.tab === tab && x.overridden);
+            if (!bp.length) return null;
+            return <div className="mt-1.5 space-y-1" data-req-bypassed={tab}>{bp.map(x => (
+              <div key={x.id} data-bypassed={x.id} className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex items-start gap-2">
+                <i className="fa-solid fa-user-shield text-amber-600 mt-0.5"></i>
+                <span className="flex-1"><b>{x.label}</b>: bypassed by {x.overridden.by && x.overridden.by.name ? x.overridden.by.name : 'the RPIC'} — “{x.overridden.reason}”</span>
+                {!bypassBlocked && <button type="button" data-bypass-undo={x.id} onClick={() => undoBypass(x.id)} className="text-amber-700 underline">Undo</button>}
+              </div>))}</div>;
+          };
           const ReqStrip = ({ tab, title }) => {
             const m = reqMissing(tab);
             if (!m.length) return (
-              <div className="mx-6 mt-4 text-xs font-semibold text-emerald-700 flex items-center gap-1.5 print:hidden" data-req-strip={tab} data-req-left="0">
-                <i className="fa-solid fa-circle-check"></i> All mandatory items for this section are recorded.
+              <div className="mx-6 mt-4 print:hidden" data-req-strip={tab} data-req-left="0">
+                <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5"><i className="fa-solid fa-circle-check"></i> All mandatory items for this section are recorded.</div>
+                <BypassedList tab={tab} />
               </div>);
             return (
               <div className="mx-6 mt-4 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 print:hidden" data-req-strip={tab} data-req-left={m.length}>
@@ -9065,6 +9091,11 @@ View in the Database & Settings tab.`);
                   {m.map(x => <button key={x.id} type="button" data-allow-locked="1" data-req-chip={x.id} title={x.why} onClick={() => jumpToReq(x.id)}
                     className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-rose-200 text-rose-800 hover:bg-rose-100">{x.label}</button>)}
                 </div>
+                <div className="mt-1.5 text-[11px]">
+                  {bypassBlocked ? <span className="text-slate-500" data-bypass-locked={tab}><i className="fa-solid fa-lock mr-1"></i>{bypassBlocked}</span>
+                    : <button type="button" data-allow-locked="1" data-bypass-open={tab} onClick={() => setReqBypass({ tab, ids: new Set(), reason: '', declared: false })} className="text-rose-800 underline hover:text-rose-950"><i className="fa-solid fa-user-shield mr-1"></i>Can't record an item? RPIC declaration to bypass it</button>}
+                </div>
+                <BypassedList tab={tab} />
               </div>);
           };
 
@@ -9792,6 +9823,32 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {reqBypass && (() => {
+                const b = reqBypass, items = reqMissing(b.tab), ok = b.ids.size > 0 && b.declared && String(b.reason || '').trim().length >= 10;
+                const who = (signedIn && auth.name) || rpicName || 'the RPIC';
+                return (
+                  <div className="fixed inset-0 z-[5000] bg-slate-900/60 flex items-center justify-center p-3 print:hidden" data-testid="bypass-modal" onClick={e => { if (e.target === e.currentTarget) setReqBypass(null); }}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92dvh] overflow-y-auto">
+                      <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2"><i className="fa-solid fa-user-shield text-amber-600"></i><h3 className="font-bold text-slate-800 flex-1">RPIC declaration: bypass mandatory items</h3>
+                        <button type="button" onClick={() => setReqBypass(null)} className="text-slate-400 hover:text-slate-700 text-xl px-1" aria-label="Close"><i className="fa-solid fa-xmark"></i></button></div>
+                      <div className="p-5 space-y-3 text-sm">
+                        <div><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Items to bypass</div>
+                          <div className="space-y-1">{items.map(x => (
+                            <label key={x.id} className="flex items-start gap-2 cursor-pointer"><input type="checkbox" data-bypass-item={x.id} className="mt-0.5" checked={b.ids.has(x.id)} onChange={e => { const ids = new Set(b.ids); e.target.checked ? ids.add(x.id) : ids.delete(x.id); setReqBypass({ ...b, ids }); }} />
+                              <span><span className="font-medium text-slate-800">{x.label}</span><span className="block text-[11px] text-slate-500">{x.why.replace(/__MOS4__/g, 'MOS 10.04').replace(/__MOS5__/g, 'MOS 10.05')}</span></span></label>))}</div></div>
+                        <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Why it isn't needed, or how it's covered instead</label>
+                          <textarea data-bypass-reason="1" value={b.reason} onChange={e => setReqBypass({ ...b, reason: e.target.value })} rows={3} placeholder="e.g. Indoor operation in a closed venue: no launch coordinates (GPS unavailable); launch point marked on the site plan" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                          {String(b.reason || '').trim().length < 10 && <div className="text-[11px] text-slate-400">At least a sentence (10+ characters).</div>}</div>
+                        <label className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer"><input type="checkbox" data-bypass-declare="1" className="mt-0.5" checked={b.declared} onChange={e => setReqBypass({ ...b, declared: e.target.checked })} />
+                          <span className="text-amber-900 text-[13px]">I, <b>{who}</b>, as Remote Pilot in Command, declare that the item{b.ids.size === 1 ? '' : 's'} above {b.ids.size === 1 ? 'is' : 'are'} not required for this operation, or {b.ids.size === 1 ? 'is' : 'are'} managed as described, and that the operation remains safe and compliant. I understand this declaration is recorded with my name and the time, and printed in the flight record.</span></label>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button type="button" onClick={() => setReqBypass(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 font-semibold">Cancel</button>
+                          <button type="button" data-bypass-save="1" disabled={!ok} onClick={saveBypass} className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-semibold">Record declaration</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>);
+              })()}
               {showWelcome && !showGate && !isFree && !isCrewRole && auth.state !== 'loading' && (() => {
                 const close = () => { try { localStorage.setItem('wd_welcomed', new Date().toISOString()); } catch (e) {} setShowWelcome(false); };
                 return (
@@ -10049,9 +10106,9 @@ View in the Database & Settings tab.`);
                   <div className="min-w-0">
                     <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2 text-white min-w-0">
                       <i className="fa-solid fa-plane-departure text-lg sm:text-2xl shrink-0" style={{color:"#c084fc"}}></i>
-                      <span className="truncate">{(isFree ? (overview.operatorProfile || {}).name : (db.companyProfile && db.companyProfile.name)) || 'Dream Planner RPA'}</span>
+                      <span className="truncate" data-head-company="1">{(isFree ? (overview.operatorProfile || {}).name : isCrewRole ? ((crewCloud && crewCloud.company) || {}).name : (db.companyProfile && db.companyProfile.name)) || 'Dream Planner RPA'}</span>
                     </h1>
-                    <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{db.companyProfile && db.companyProfile.reocNumber ? ` · ReOC: ${db.companyProfile.reocNumber}` : ''} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
+                    <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{(() => { const co = isCrewRole ? ((crewCloud && crewCloud.company) || {}) : (db.companyProfile || {}); return co.reocNumber ? ` · ReOC: ${co.reocNumber}` : ''; })()} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>
                   <div className="flex flex-nowrap md:flex-wrap items-center md:justify-end gap-1.5 sm:gap-2 md:gap-3" data-header-actions="1">
                     <span id="wd-account-slot" className="self-center min-w-0 shrink"></span>
