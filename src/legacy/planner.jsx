@@ -9403,7 +9403,9 @@ View in the Database & Settings tab.`);
           const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
           // v7.5.7: the post-flight answers (weather, conducted as planned, serviceable, defects, crew…) go to the CRP too
           const logFieldsOf = (lg) => { const o = {}; Object.keys(lg || {}).sort().forEach(k => { if (k === 'rpaLogs' || k === 'yn60') return; const v = lg[k];
-            if (v === '' || v == null || v === false && !['weatherMeetsLimitations', 'conductedIAW', 'serviceableAtEnd'].includes(k)) return; o[k] = v; }); return o; };
+            if (v === '' || v == null || v === false && !['weatherMeetsLimitations', 'conductedIAW', 'serviceableAtEnd'].includes(k)) return;
+            if (typeof v === 'object') { const it = (v && v.items) || {}; if (k !== 'preflightChecks' || !Object.values(it).some(Boolean)) return; }
+            o[k] = v; }); return o; };
           const logSig = (lg) => JSON.stringify(logFieldsOf(lg));
           const logUnsent = onCloudJob && Object.keys(logFieldsOf(log)).length > 0 && logSig(log) !== (cloudJob.sentLogSig || cloudJob.baseLogSig);
           const unsentFlights = onCloudJob ? cloudLogFlights(log).filter(x => !(cloudJob.base || []).includes(x.key) && !(cloudJob.sent || []).includes(x.key)) : [];
