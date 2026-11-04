@@ -152,7 +152,7 @@ function Profile({ path, res, readOnly, onAlt, onPick, onStart, selPt }) {
   );
 }
 
-export default function OpsMap({ value, onChange, onClose, center, fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title }) {
+export default function OpsMap({ value, onChange, onClose, center, fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace }) {
   const [doc, setDoc] = useState(() => value || null);
   const docRef = useRef(doc); docRef.current = doc;
   const hist = useRef([]);
@@ -165,7 +165,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const [sel, setSel] = useState(null);
   const [selPt, setSelPt] = useState(null);
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -341,6 +341,14 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
       mk.addTo(g); return mk;
     };
     const selZone = sel && sel.t === 'zone' ? sel.id : null, selPath = sel && sel.t === 'path' ? sel.id : null;
+    // v7.10: airspace from openAIP (outdoor only), drawn under everything as outlines
+    if (show.airspace && doc.mode !== 'plan' && (airspace || []).length) airspace.forEach((a) => {
+      const ctl = a.cls && a.cls !== 'G' && !a.special;
+      if (!ctl && !a.special) return;
+      const lay = L.geoJSON(a.geometry, { interactive: true, style: { color: a.special ? '#be185d' : '#1d4ed8', weight: 2, dashArray: a.special ? '4 4' : '10 6', fill: a.special, fillOpacity: 0.05 } });
+      lay.bindTooltip(esc((a.cls ? 'Class ' + a.cls + ' · ' : '') + a.type + ' ' + a.name) + '<br>' + esc(a.lower + ' to ' + a.upper), { sticky: true, className: 'wd-ops-tag' });
+      lay.addTo(g);
+    });
     if (show.zones) {
       // fly zones first, exclusion on top
       const order = [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion'));
@@ -435,7 +443,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
       L.polyline([measure.a, measure.b], { color: '#6d28d9', weight: 3, dashArray: '4 4', interactive: false }).addTo(g);
       L.tooltip({ permanent: true, direction: 'top', className: 'wd-ops-tag' }).setLatLng(measure.b).setContent(r1(measure.d) + ' m').addTo(g);
     }
-  }, [doc, sel, selPt, draft, hover, show, tool, checks, measure, tick, readOnly]); // eslint-disable-line
+  }, [doc, sel, selPt, draft, hover, show, tool, checks, measure, tick, readOnly, airspace]); // eslint-disable-line
 
   // cursor
   useEffect(() => { if (mapEl.current) mapEl.current.style.cursor = tool === 'select' ? '' : 'crosshair'; }, [tool]);
@@ -537,7 +545,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               : <button type="button" onClick={() => setSel({ t: 'overlay' })} className={`w-full text-left text-xs border rounded-md p-2 ${sel && sel.t === 'overlay' ? 'border-violet-600 bg-violet-50' : 'border-slate-200'}`}><b className="block truncate">{doc.overlay.name}</b><span className="text-slate-500">{doc.overlay.locked ? 'Locked' : 'Not locked'} · {doc.overlay.widthM} m wide</span></button>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Show</div>
-            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['points', 'Points & notes'], ['overlay', 'Plan overlay']].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
+            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
           </div>
           <div className="px-1"><label className={lbl}>Over-people colour</label><div className="flex gap-1">{['green', 'blue'].map((c) => <button key={c} type="button" disabled={readOnly} onClick={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), oonpColour: c } }))} className={`${btn} flex-1 justify-center ${(settings.oonpColour || 'green') === c ? 'border-violet-600 bg-violet-50' : 'border-slate-300'}`}><span className="w-3 h-3 rounded-sm" style={{ background: c === 'blue' ? '#2563eb' : '#16a34a' }}></span>{c === 'blue' ? 'Blue' : 'Green'}</button>)}</div></div>
         </aside>
@@ -560,7 +568,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               <button type="button" className="text-xs underline text-slate-500" onClick={() => setScaleAsk(null)}>Cancel</button></div>}
             {busy && <div className="absolute inset-0 z-[700] bg-white/60 flex items-center justify-center text-sm font-semibold">{busy}</div>}
             {view === '2d' && <div className="absolute bottom-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]" data-ops-legend="1">
-              {[['Exclusion', { background: '#dc2626' }], ['Over people', { background: kindStyle('oonp', settings).color }], ['Near people', { border: '2px dashed #b45309', background: '#fff7e6' }], ['Clear of people', { background: '#b9a6f2' }], ['Buffer', { border: '2px dashed #d97706' }], ['Emergency LZ', { background: '#ea580c', borderRadius: '50%' }]].map(([l, s]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm inline-block" style={s}></span>{l}</span>)}
+              {[...((airspace || []).length && show.airspace && doc.mode !== 'plan' ? [['Controlled airspace', { border: '2px dashed #1d4ed8' }], ['Restricted / danger', { border: '2px dashed #be185d' }]] : []), ['Exclusion', { background: '#dc2626' }], ['Over people', { background: kindStyle('oonp', settings).color }], ['Near people', { border: '2px dashed #b45309', background: '#fff7e6' }], ['Clear of people', { background: '#b9a6f2' }], ['Buffer', { border: '2px dashed #d97706' }], ['Emergency LZ', { background: '#ea580c', borderRadius: '50%' }]].map(([l, s]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm inline-block" style={s}></span>{l}</span>)}
             </div>}
           </div>
           <section className="bg-white border-t border-slate-200" aria-label="Height profile">
