@@ -402,7 +402,7 @@ export function ObserverRegister({ crpName }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null), [err, setErr] = useState(''), [q, setQ] = useState(''), [qr, setQr] = useState(null), [device, setDevice] = useState(null), [review, setReview] = useState(null), [msg, setMsg] = useState('');
   const manual = useManualInfo();
-  const load = async () => { const { data, error } = await sb.rpc('observer_register'); if (error) setErr(error.message); else { setErr(''); setRows(data || []); } };
+  const load = async () => { try { const { data, error } = await sb.rpc('observer_register'); if (error) setErr(error.message); else { setErr(''); setRows(data || []); } } catch (e) { setErr(String(e.message || e)); } };
   useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-cloud-refresh', h); return () => window.removeEventListener('wd-cloud-refresh', h); }, []); // eslint-disable-line
   const today = Date.now();
   const stOf = (r) => r.status === 'awaiting_crp' ? ['Waiting for you', 'bg-amber-100 text-amber-900', 'waiting'] : r.status === 'not_yet_competent' ? ['Not yet competent', 'bg-rose-100 text-rose-800', 'nyc']
