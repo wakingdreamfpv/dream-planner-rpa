@@ -181,7 +181,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.12';
+        const APP_VERSION = '7.13';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1208,6 +1208,40 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             );
         };
 
+        // v7.13: several people in one field (VOs, support crew). Stored as before, "Name A, Name B", so everything that
+        // reads these fields keeps working; shown as removable chips with a picker to add the next person.
+        const splitPeople = (v) => String(v || '').split(/\s*[,;\n]\s*/).map(x => x.trim()).filter(Boolean);
+        const MultiPeople = ({ value, onChange, onBlur, onAdd, options, placeholder, name, className }) => {
+            const people = splitPeople(value);
+            const [draft, setDraft] = useState('');
+            const emit = (list) => onChange({ target: { name, value: list.join(', ') } });
+            const addOne = (raw) => {
+                const v = String(raw || '').trim(); if (!v) return;
+                const parts = splitPeople(v), cur = splitPeople(value), next = [...cur];
+                parts.forEach(n => { if (!next.some(x => x.toLowerCase() === n.toLowerCase())) next.push(n); });
+                if (next.length !== cur.length) emit(next);
+                parts.forEach(n => { if (onBlur) onBlur({ target: { name, value: n } }); });
+                setDraft('');
+            };
+            const remove = (i) => emit(people.filter((_, k) => k !== i));
+            return (
+                <div className="w-full" data-multi-people={name}>
+                    {people.length > 0 && <div className="flex flex-wrap gap-1.5 mb-1.5">
+                        {people.map((n, i) => <span key={n + i} data-person-chip={n} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-slate-100 border border-slate-300 text-sm text-slate-800">
+                            <i className="fa-solid fa-user text-[10px] text-slate-500"></i>{n}
+                            <button type="button" aria-label={'Remove ' + n} data-person-remove={n} onClick={() => remove(i)} className="ml-0.5 w-5 h-5 rounded-full text-slate-500 hover:bg-slate-200 hover:text-red-600 print:hidden"><i className="fa-solid fa-xmark text-[10px]"></i></button>
+                        </span>)}
+                    </div>}
+                    <div className="print:hidden">
+                        <ComboBox name={name} value={draft} onChange={e => setDraft(e.target.value)}
+                            onBlur={e => { const v = (e && e.target && e.target.value) || ''; if (v.trim()) addOne(v); }}
+                            onAdd={v => { if (onAdd) onAdd(v); addOne(v); }}
+                            options={(options || []).filter(o => !people.some(p => p.toLowerCase() === String(o).toLowerCase()))}
+                            placeholder={people.length ? 'Add another person…' : placeholder} className={className} />
+                    </div>
+                </div>
+            );
+        };
         const ComboBox = ({ value, onChange, onBlur, onAdd, options, placeholder, name, className }) => {
             const [isOpen, setIsOpen] = useState(false);
             const wrapperRef = useRef(null);
@@ -10854,7 +10888,7 @@ View in the Database & Settings tab.`);
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Visual Observer / Support</label>
                             <div className="flex gap-2">
-                              <ComboBox name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
+                              <MultiPeople name="supportPersonnel" value={overview.supportPersonnel} onChange={handleOverviewChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type name..." className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-sm" />
                             </div>
                           </div>
                           <div className="md:col-span-2" data-req-box="1">
@@ -12022,7 +12056,7 @@ View in the Database & Settings tab.`);
                                 <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg animate-in fade-in slide-in-from-top-2">
                                   <label className="block text-sm font-medium text-blue-900 mb-2">Visual Observer (VO){overview.supportPersonnel && String(jsa.evlosObserver || '').trim() === String(overview.supportPersonnel).trim() ? <span className="ml-2 text-[11px] font-normal text-blue-700" data-vo-from-prelim="1">from Section 1</span> : null}</label>
                                   <div className="flex gap-2">
-                                    <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                    <MultiPeople name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                   </div>
                                 </div>
                               )}
@@ -12152,7 +12186,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Remote Observers (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <MultiPeople name="bvlosObserver" value={jsa.bvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type Remote Observer name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -12167,7 +12201,7 @@ View in the Database & Settings tab.`);
                                   <div>
                                     <label className="block text-sm font-medium text-blue-900 print:text-slate-800 mb-2">Night Visual Observer (NVO) (Optional)</label>
                                     <div className="flex gap-2">
-                                      <ComboBox name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
+                                      <MultiPeople name="nvlosObserver" value={jsa.nvlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type NVO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                     </div>
                                   </div>
                                   <div>
@@ -14072,7 +14106,7 @@ View in the Database & Settings tab.`);
                             </div>
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Observer/Crew</label>
-                              <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              <MultiPeople name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
                               {!String(log.crewObserver || '').trim() && jobObserverNames() && <button type="button" data-fill-observers="1" onClick={() => setLog(prev => ({ ...prev, crewObserver: jobObserverNames() }))} className="mt-1 text-[11px] text-violet-700 underline print:hidden">Use the job's crew: {jobObserverNames()}</button>}
                             </div>
                           </div>
