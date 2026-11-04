@@ -59,36 +59,36 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
     <div className="space-y-3" data-registers="1">
       {st.error && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Couldn't load the registers: {st.error}{/function|does not exist/i.test(st.error) ? ' (run the Supabase migration 0008)' : ''}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-800" data-reg-count="current">{counts.current || 0} current</span>
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-900" data-reg-count="due_soon">{counts.due_soon || 0} due within 60 days</span>
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-800" data-reg-count="expired">{counts.expired || 0} expired</span>
+        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-800" data-cur-count="current">{counts.current || 0} current</span>
+        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-900" data-cur-count="due_soon">{counts.due_soon || 0} due within 60 days</span>
+        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-800" data-cur-count="expired">{counts.expired || 0} expired</span>
         <div className="ml-auto flex gap-2">
-          <button type="button" data-reg-record="1" onClick={() => setRec({ person: '', comp: 'evlos', date: new Date().toISOString().slice(0, 10), assessor: crpName })} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Record a check</button>
+          <button type="button" data-cur-record="1" onClick={() => setRec({ person: '', comp: 'evlos', date: new Date().toISOString().slice(0, 10), assessor: crpName })} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Record a check</button>
           <button type="button" onClick={csv} className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 bg-white"><i className="fa-solid fa-file-csv mr-1"></i>CSV</button>
         </div>
       </div>
-      {msg && <p className="text-xs text-emerald-800" data-reg-msg="1">{msg}</p>}
-      {rec && <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 grid sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end" data-reg-form="1">
+      {msg && <p className="text-xs text-emerald-800" data-cur-msg="1">{msg}</p>}
+      {rec && <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 grid sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end" data-cur-form="1">
         <label className="text-xs font-semibold text-slate-600">Person<select className={sel + ' w-full mt-1'} value={rec.person} onChange={(e) => setRec({ ...rec, person: e.target.value })}><option value="">Choose…</option>{st.people.filter((p) => p.active !== false).map((p) => <option key={p.id} value={p.id}>{p.full_name} ({p.role})</option>)}</select></label>
         <label className="text-xs font-semibold text-slate-600">Checked<select className={sel + ' w-full mt-1'} value={rec.comp} onChange={(e) => setRec({ ...rec, comp: e.target.value })}>{comps.map((c) => <option key={c} value={c}>{c.startsWith('type:') ? 'Type: ' + c.slice(5) : compLabel(c)}</option>)}</select></label>
         <label className="text-xs font-semibold text-slate-600">Date of the check<input type="date" className={sel + ' w-full mt-1'} value={rec.date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setRec({ ...rec, date: e.target.value })} /></label>
         <label className="text-xs font-semibold text-slate-600">Assessor<input className={sel + ' w-full mt-1'} value={rec.assessor} onChange={(e) => setRec({ ...rec, assessor: e.target.value })} /></label>
-        <div className="flex gap-2"><button type="button" data-reg-save="1" onClick={save} className="text-xs font-bold px-3 py-2 rounded-md bg-violet-700 text-white">Save</button><button type="button" onClick={() => setRec(null)} className="text-xs underline">Cancel</button></div>
+        <div className="flex gap-2"><button type="button" data-cur-save="1" onClick={save} className="text-xs font-bold px-3 py-2 rounded-md bg-violet-700 text-white">Save</button><button type="button" onClick={() => setRec(null)} className="text-xs underline">Cancel</button></div>
         <p className="sm:col-span-2 lg:col-span-5 text-[11px] text-slate-500">Recorded checks are due again in 12 months, or up to 24 months while the person flies 3 flights of that kind in each 12-month period.</p>
       </div>}
       <div className="flex flex-wrap items-center gap-1">
-        {TABS.map(([k, l]) => <button key={k} type="button" data-reg-tab={k} onClick={() => setTab(k)} className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${tab === k ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-200 text-slate-600'}`}>{l}</button>)}
+        {TABS.map(([k, l]) => <button key={k} type="button" data-cur-tab={k} onClick={() => setTab(k)} className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${tab === k ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-200 text-slate-600'}`}>{l}</button>)}
         <label className="ml-2 text-xs flex items-center gap-1"><input type="checkbox" checked={issues} onChange={(e) => setIssues(e.target.checked)} />Only due / expired</label>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search the registers" className="ml-auto px-2 py-1 border border-slate-300 rounded-md text-xs" />
       </div>
       {st.loading ? <p className="text-sm text-slate-500">Loading…</p> :
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
-          <table className="w-full text-sm" data-reg-table="1">
+          <table className="w-full text-sm" data-cur-table="1">
             <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr>{['Person', 'Competency', 'Checked', 'Due', 'Status', 'Flights (yr 1 / last 12 mo)', 'Hours logged'].map((h) => <th key={h} className="text-left px-3 py-2">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">
               {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-slate-500 text-sm">Nothing here yet.</td></tr>}
               {rows.map((r) => (
-                <tr key={r.cert_id} data-reg-row={r.status}>
+                <tr key={r.cert_id} data-cur-row={r.status}>
                   <td className="px-3 py-2"><b>{r.full_name}</b><div className="text-[11px] text-slate-500">{r.role}</div></td>
                   <td className="px-3 py-2">{compLabel(r.competency)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{fmtD(r.check_date)}<div className="text-[11px] text-slate-500">{r.assessor || ''}</div></td>
@@ -100,7 +100,7 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
             </tbody>
           </table>
         </div>}
-      {noCerts.length > 0 && <p className="text-xs text-slate-600" data-reg-nocerts="1"><b>No certifications yet:</b> {noCerts.map((p) => p.full_name).join(', ')}. Ask pilots to complete their induction, train and assess observers in EVLOS observers, or record a check.</p>}
+      {noCerts.length > 0 && <p className="text-xs text-slate-600" data-cur-nocerts="1"><b>No certifications yet:</b> {noCerts.map((p) => p.full_name).join(', ')}. Ask pilots to complete their induction, train and assess observers in EVLOS observers, or record a check.</p>}
       <p className="text-[11px] text-slate-500">Flights count automatically from completed jobs (the pilot who flew, the aircraft type, and EVLOS / OONP / night from the JSA). OONP also needs 10+ hours on type, checked on each job.</p>
     </div>
   );
