@@ -21,6 +21,10 @@ export const POINT_KINDS = {
   note: { label: 'Text note' },
 };
 export const DEFAULT_BUFFER = 30;
+// v7.12: speeds are kept in m/s and always shown in both units
+export const toKph = (ms) => Math.round(Number(ms) * 3.6 * 10) / 10;
+export const fromKph = (k) => Math.round((Number(k) / 3.6) * 100) / 100;
+export const fmtSpeed = (ms) => (ms == null || ms === '' || !isFinite(Number(ms)) ? '—' : Math.round(Number(ms) * 10) / 10 + ' m/s (' + toKph(ms) + ' kph)');
 export const G = 9.81;
 
 export const emptyOpsMap = (mode = 'geo') => ({ v: 1, mode, zones: [], paths: [], points: [], overlay: null, settings: { oonpColour: 'green' } });
@@ -113,7 +117,7 @@ export const zoneBuffer = (z) => {
 export const zoneTag = (z, settings) => {
   const k = kindStyle(z.kind, settings), L = zoneLimits(z), parts = [k.short];
   if (L.h != null) parts.push('≤ ' + L.h + ' m');
-  if (L.v != null) parts.push(L.v + ' m/s');
+  if (L.v != null) parts.push(fmtSpeed(L.v));
   if (z.kind === 'exclusion') { const b = zoneBuffer(z); parts.push(z.shielded ? 'shielded ' + b + ' m' : b + ' m buffer'); }
   return parts.join(' · ');
 };
@@ -158,7 +162,7 @@ export const checkOps = (m, keFor) => {
           const g = Number(z.ground) || 0; ground = Math.max(ground, g);
           const agl = alt - g;
           if (lim.h != null) { ceil = ceil == null ? g + lim.h : Math.min(ceil, g + lim.h); if (agl > lim.h + 0.01) add('stop', 'h' + z.id, 'is ' + agl.toFixed(1) + ' m above ground in "' + (z.name || KINDS[z.kind].label) + '" (limit ' + lim.h + ' m)'); }
-          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + speed + ' m/s is over ' + lim.v + ' m/s in "' + (z.name || KINDS[z.kind].label) + '"');
+          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + fmtSpeed(speed) + ' is over ' + fmtSpeed(lim.v) + ' in "' + (z.name || KINDS[z.kind].label) + '"');
           if ((z.kind === 'oonp' || z.kind === 'near') && K && speed > 0) {
             const E = Number(z.energy) || 34, ke = keAt(K, agl, speed);
             if (ke > E + 0.05) add('stop', 'ke' + z.id, 'impact energy ' + ke.toFixed(1) + ' J is over ' + E + ' J in "' + (z.name || KINDS[z.kind].label) + '" (' + (path.drone || 'drone') + ')');
@@ -202,4 +206,42 @@ export const opsSignable = (m) => {
   if (!hasOpsContent(m)) return undefined;
   const { overlay, ...rest } = m;
   return { ...rest, overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
+};
+
+// ── v7.12: freehand flight paths ──
+// A drawn stroke is simplified (Ramer–Douglas–Peucker), rounded off (Chaikin corner cutting) and thinned again, so a
+// shaky hand-drawn line becomes a smooth path with a sensible number of points. Works on {x, y[, z]} in any units.
+export const rdp = (pts, eps) => {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Array(pts.length).fill(false); keep[0] = keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop(); let idx = -1, max = 0;
+    for (let i = a + 1; i < b; i++) { const d = segPointDist(pts[i], pts[a], pts[b]); if (d > max) { max = d; idx = i; } }
+    if (idx > 0 && max > eps) { keep[idx] = true; stack.push([a, idx], [idx, b]); }
+  }
+  return pts.filter((p, i) => keep[i]);
+};
+export const chaikin = (pts, iter = 2) => {
+  let p = pts.slice();
+  for (let k = 0; k < iter && p.length > 2; k++) {
+    const out = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const a = p[i], b = p[i + 1], q = {}, r = {};
+      Object.keys(a).forEach((key) => { if (typeof a[key] === 'number') { q[key] = 0.75 * a[key] + 0.25 * b[key]; r[key] = 0.25 * a[key] + 0.75 * b[key]; } });
+      out.push(q, r);
+    }
+    out.push(p[p.length - 1]); p = out;
+  }
+  return p;
+};
+// stroke in screen pixels → smooth path in screen pixels (tolerance grows with the smoothing level 0–3)
+export const smoothStroke = (pts, level = 2, maxPts = 60) => {
+  if (pts.length < 2) return pts.slice();
+  const tol = [1.5, 3, 5, 8][Math.max(0, Math.min(3, level))];
+  let p = rdp(pts, tol);
+  if (level > 0) p = chaikin(p, level >= 2 ? 2 : 1);
+  p = rdp(p, Math.max(0.6, tol / 5));
+  let e = tol / 5; while (p.length > maxPts && e < 200) { e *= 1.5; p = rdp(p, e); }
+  return p;
 };

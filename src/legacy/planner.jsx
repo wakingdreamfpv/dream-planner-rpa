@@ -10,7 +10,7 @@ import OpsMap from '../opsmap/OpsMap.jsx';
 import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
 import Registers from '../compliance/Registers.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
-import { hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
+import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
@@ -5802,13 +5802,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Zone</th><th style="'+th+'">Type</th><th style="'+th+'">Drone · energy</th><th style="'+th+'">Max height</th><th style="'+th+'">Max speed</th><th style="'+th+'">Buffer / ground</th><th style="'+th+'">Notes</th></tr>');
                 mo.zones.forEach(z => { const lim = OPS_KINDS[z.kind] && OPS_KINDS[z.kind].limits;
                   const buf = z.kind === 'exclusion' ? (z.shielded ? 'Shielded: ' + opsZoneBuffer(z) + ' m (' + esc(z.shieldNote || 'not stated') + ')' : opsZoneBuffer(z) + ' m') : ((Number(z.ground) || 0) ? 'ground +' + z.ground + ' m' : '—');
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? z.v + ' m/s' : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? opsFmtSpeed(z.v) : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
                 P.push('</table>');
               }
               if ((mo.paths || []).length) {
                 P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Path</th><th style="'+th+'">Drone</th><th style="'+th+'">Speed</th><th style="'+th+'">Length</th><th style="'+th+'">Heights (m above take-off)</th><th style="'+th+'">Result</th></tr>');
                 mo.paths.forEach(p => { const r = chk && chk.paths[p.id], st = r ? (r.legs.some(l => l.status === 'stop') ? 'To fix' : r.legs.some(l => l.status === 'warn') ? 'To check' : 'Clear') : '—';
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+(p.speed || 0)+' m/s</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+opsFmtSpeed(p.speed || 0)+'</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
                 P.push('</table>');
               }
               const notes = (mo.points || []).filter(p => p.text || p.kind === 'poi' || p.kind === 'note');

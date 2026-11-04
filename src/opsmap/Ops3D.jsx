@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed } from './geo.js';
 
 let threeP = null;
 const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
@@ -100,7 +100,7 @@ function build(THREE, el, doc, checks) {
     if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = new THREE.Mesh(keep(new THREE.RingGeometry(z.r, z.r + b, 64)), keep(new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, 0.03, c.z); scene.add(ring); } }
     // label at the zone's top
     const cen = z.shape === 'circle' ? P(z.c) : (() => { const q = z.pts.map(P); return { x: q.reduce((t, p) => t + p.x, 0) / q.length, z: q.reduce((t, p) => t + p.z, 0) / q.length }; })();
-    const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + z.v + ' m/s' : '') : '');
+    const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
     const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, ground + h + lblScale * 0.3, cen.z); scene.add(sp); disposables.push(sp.material.map, sp.material);
   });
 

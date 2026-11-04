@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KINDS, POINT_KINDS, kindStyle, emptyOpsMap, makeProj, refOf, zoneTag, zoneBuffer, zoneArea, checkOps,
-  presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent,
+  presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent, smoothStroke, chaikin, rdp, toKph, fromKph, fmtSpeed,
 } from './geo.js';
 import { loadPdfJs } from '../cloud/Manual.jsx';
 
@@ -19,6 +19,35 @@ const llArr = (ll) => [ll.lat, ll.lng];
 const btn = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-colors';
 const lbl = 'block text-[11px] font-semibold text-slate-600 mb-1';
 const inp = 'w-full px-2 py-1.5 border border-slate-300 rounded-md text-sm bg-white';
+
+// v7.12: enter speeds in m/s or kph (remembered on this device); stored in m/s and always shown in both
+function useSpeedUnit() {
+  const get = () => { try { return localStorage.getItem('wd_ops_speedunit') === 'kph' ? 'kph' : 'ms'; } catch (e) { return 'ms'; } };
+  const [u, setU] = useState(get);
+  useEffect(() => { const h = () => setU(get()); window.addEventListener('wd-speedunit', h); return () => window.removeEventListener('wd-speedunit', h); }, []);
+  const set = (v) => { try { localStorage.setItem('wd_ops_speedunit', v); } catch (e) {} setU(v); window.dispatchEvent(new Event('wd-speedunit')); };
+  return [u, set];
+}
+const UnitToggle = ({ unit, setUnit }) => (
+  <span className="inline-flex ml-1 rounded border border-slate-300 overflow-hidden align-middle" role="group" aria-label="Speed unit">
+    {[['ms', 'm/s'], ['kph', 'kph']].map(([k, l]) => <button key={k} type="button" data-speed-unit={k} onClick={() => setUnit(k)} className={`px-1.5 text-[10px] font-bold ${unit === k ? 'bg-violet-700 text-white' : 'bg-white text-slate-600'}`}>{l}</button>)}
+  </span>);
+// a speed box: typed in the chosen unit, saved as m/s, with the other unit shown underneath
+function SpeedField({ id, label, ms, onMs, disabled, placeholder }) {
+  const [unit, setUnit] = useSpeedUnit();
+  const shown = ms == null || ms === '' ? '' : String(unit === 'kph' ? toKph(ms) : Math.round(Number(ms) * 100) / 100);
+  const [txt, setTxt] = useState(shown);
+  useEffect(() => { // follow outside changes (another path, the other unit) without fighting what's being typed
+    const t = parseFloat(txt), asMs = unit === 'kph' ? fromKph(t) : t;
+    if (!(isFinite(t) && ms != null && ms !== '' && Math.abs(asMs - Number(ms)) < 0.02) && !(txt === '' && (ms == null || ms === ''))) setTxt(shown);
+  }, [shown, unit]); // eslint-disable-line
+  return (<div>
+    <label className={lbl} htmlFor={id}>{label}<UnitToggle unit={unit} setUnit={setUnit} /></label>
+    <input id={id} type="number" min="0" step={unit === 'kph' ? 1 : 0.5} className={inp} disabled={disabled} value={txt} placeholder={placeholder}
+      onChange={(e) => { setTxt(e.target.value); const v = e.target.value; if (v === '') onMs(null); else if (isFinite(parseFloat(v))) onMs(unit === 'kph' ? fromKph(parseFloat(v)) : Math.round(parseFloat(v) * 100) / 100); }} />
+    {ms != null && ms !== '' && <div className="text-[10px] text-slate-500 mt-0.5" data-speed-both={id}>{fmtSpeed(ms)}</div>}
+  </div>);
+}
 
 // ── PDF / image → one JPEG for the overlay ──
 async function fileToOverlay(file, page) {
@@ -49,6 +78,7 @@ async function fileToOverlay(file, page) {
 // ── limits for a zone: tap to apply, type to add (saved against the drone) ──
 function LimitPicker({ zone, setZone, drones, fleet, keFor, onSaveDroneLimits, readOnly }) {
   const [hIn, setHIn] = useState(''), [vIn, setVIn] = useState('');
+  const [unit, setUnit] = useSpeedUnit();
   const drone = zone.drone || drones[0] || '';
   const E = Number(zone.energy) === 15 ? 15 : 34;
   const K = keFor(drone);
@@ -56,17 +86,17 @@ function LimitPicker({ zone, setZone, drones, fleet, keFor, onSaveDroneLimits, r
   const hidden = new Set(saved.hidden || []);
   const all = [...presetLimits(K, E).filter((p) => !hidden.has(p.id)), ...(saved.custom || []).filter((c) => (c.e || 34) === E)];
   const save = (next) => onSaveDroneLimits && onSaveDroneLimits(drone, { custom: next.custom || [], hidden: next.hidden || [] });
-  const hN = parseFloat(hIn), vN = parseFloat(vIn), valid = isFinite(hN) && isFinite(vN) && hN >= 0 && vN >= 0;
+  const hN = parseFloat(hIn), vRaw = parseFloat(vIn), vN = unit === 'kph' ? fromKph(vRaw) : vRaw, valid = isFinite(hN) && isFinite(vN) && hN >= 0 && vN >= 0;
   const add = () => {
     if (!valid || readOnly) return;
-    const c = { id: 'c' + uid(), h: r1(hN), v: r1(vN), e: E };
+    const c = { id: 'c' + uid(), h: r1(hN), v: Math.round(vN * 100) / 100, e: E };
     save({ custom: [...(saved.custom || []), c], hidden: saved.hidden });
     if (K && keAt(K, c.h, c.v) <= E + 0.05) setZone({ h: c.h, v: c.v, limitId: c.id });
     setHIn(''); setVIn('');
   };
   const drop = (c) => c.preset ? save({ custom: saved.custom, hidden: [...(saved.hidden || []), c.id] }) : save({ custom: (saved.custom || []).filter((x) => x.id !== c.id), hidden: saved.hidden });
   let preview = 'Type a height and speed, then Add. It becomes a limit you can tap, saved for ' + (drone || 'this drone') + '.', pc = 'text-slate-500';
-  if (valid && K) { const k = keAt(K, hN, vN); const ok = k <= E + 0.05; preview = hN + ' m at ' + vN + ' m/s = ' + k.toFixed(1) + ' J ' + (ok ? '(within ' + E + ' J)' : '(over ' + E + ' J: at ' + hN + ' m the most is ' + (speedAt(K, E, hN) || 0) + ' m/s)'); pc = ok ? 'text-emerald-700' : 'text-red-700'; }
+  if (valid && K) { const k = keAt(K, hN, vN); const ok = k <= E + 0.05; preview = hN + ' m at ' + fmtSpeed(vN) + ' = ' + k.toFixed(1) + ' J ' + (ok ? '(within ' + E + ' J)' : '(over ' + E + ' J: at ' + hN + ' m the most is ' + fmtSpeed(speedAt(K, E, hN) || 0) + ')'); pc = ok ? 'text-emerald-700' : 'text-red-700'; }
   return (
     <div className="space-y-2" data-limit-picker="1">
       <div>
@@ -93,23 +123,23 @@ function LimitPicker({ zone, setZone, drones, fleet, keFor, onSaveDroneLimits, r
           return (
             <div key={c.id} data-limit-chip={c.id} className={`flex items-stretch rounded-lg border overflow-hidden ${on ? 'border-violet-600 bg-violet-50' : ok ? 'border-slate-300 bg-white' : 'border-red-300 bg-red-50'}`}>
               <button type="button" disabled={readOnly || !ok} onClick={() => setZone({ h: c.h, v: c.v, limitId: c.id })} aria-pressed={on} className="px-2 py-1 text-left">
-                <div className="text-xs font-bold text-slate-800">{c.h} m · {c.v} m/s</div>
+                <div className="text-xs font-bold text-slate-800">{c.h} m · {c.v} m/s</div><div className="text-[10px] text-slate-600">{toKph(c.v)} kph</div>
                 <div className={`text-[10px] ${ok ? 'text-slate-500' : 'text-red-700'}`}>{c.preset ? 'from weight' : 'yours'}{k != null ? ' · ' + k.toFixed(1) + ' J' : ''}{ok ? '' : ' · over ' + E + ' J'}</div>
               </button>
-              {!readOnly && <button type="button" aria-label="Edit this limit" title="Edit" onClick={() => { setHIn(String(c.h)); setVIn(String(c.v)); drop(c); }} className="px-1.5 border-l border-slate-200 text-slate-500 hover:text-slate-800"><i className="fa-solid fa-pen text-[10px]"></i></button>}
+              {!readOnly && <button type="button" aria-label="Edit this limit" title="Edit" onClick={() => { setHIn(String(c.h)); setVIn(String(unit === 'kph' ? toKph(c.v) : c.v)); drop(c); }} className="px-1.5 border-l border-slate-200 text-slate-500 hover:text-slate-800"><i className="fa-solid fa-pen text-[10px]"></i></button>}
               {!readOnly && <button type="button" aria-label="Remove this limit" title="Remove" onClick={() => drop(c)} className="px-1.5 border-l border-slate-200 text-slate-500 hover:text-red-700"><i className="fa-solid fa-xmark text-[11px]"></i></button>}
             </div>);
         })}
       </div>
       {!readOnly && <div className="grid grid-cols-[1fr_1fr_auto] gap-1.5 items-end">
         <div><label className={lbl} htmlFor="ops-lh">Max height (m)</label><input id="ops-lh" type="number" inputMode="decimal" min="0" step="0.5" className={inp} value={hIn} onChange={(e) => setHIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} placeholder="e.g. 4" /></div>
-        <div><label className={lbl} htmlFor="ops-lv">Max speed (m/s)</label><input id="ops-lv" type="number" inputMode="decimal" min="0" step="0.5" className={inp} value={vIn} onChange={(e) => setVIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} placeholder="e.g. 8" /></div>
+        <div><label className={lbl} htmlFor="ops-lv">Max speed<UnitToggle unit={unit} setUnit={(u) => { if (vIn !== '' && isFinite(parseFloat(vIn)) && u !== unit) setVIn(String(u === 'kph' ? toKph(parseFloat(vIn)) : fromKph(parseFloat(vIn)))); setUnit(u); }} /></label><input id="ops-lv" type="number" inputMode="decimal" min="0" step="0.5" className={inp} value={vIn} onChange={(e) => setVIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} placeholder={unit === 'kph' ? 'e.g. 30' : 'e.g. 8'} /></div>
         <button type="button" data-limit-add="1" onClick={add} disabled={!valid} className={`${btn} border-violet-700 bg-violet-700 text-white disabled:opacity-40 h-[34px]`}>Add</button>
       </div>}
       {!readOnly && <p className={`text-[11px] ${pc}`} data-limit-preview="1">{preview}</p>}
       <div className="grid grid-cols-2 gap-2 bg-violet-50 border border-violet-200 rounded-lg p-2" data-zone-applied="1">
         <div><div className="text-[10px] text-slate-500">Max height</div><div className="text-base font-bold">{zone.h != null && zone.h !== '' ? zone.h + ' m' : '—'}</div></div>
-        <div><div className="text-[10px] text-slate-500">Max speed</div><div className="text-base font-bold">{zone.v != null && zone.v !== '' ? zone.v + ' m/s' : '—'}</div></div>
+        <div><div className="text-[10px] text-slate-500">Max speed</div><div className="text-base font-bold" data-applied-speed="1">{zone.v != null && zone.v !== '' ? zone.v + ' m/s' : '—'}</div>{zone.v != null && zone.v !== '' && <div className="text-[11px] text-slate-600">{toKph(zone.v)} kph</div>}</div>
         <div className="col-span-2 text-[11px] text-slate-600">{K && zone.h != null && zone.v != null && zone.h !== '' ? 'Impact energy ' + keAt(K, Number(zone.h), Number(zone.v)).toFixed(1) + ' J of ' + E + ' J · ' + (E === 34 ? 'informed consent needed' : 'no consent needed') : 'Pick or add a limit.'}</div>
       </div>
     </div>
@@ -174,6 +204,13 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const [mob, setMob] = useState(null); // small screens: 'tools' | 'details' drawer
   const mapEl = useRef(null), mapRef = useRef(null), groupRef = useRef(null), imgRef = useRef(null), fileRef = useRef(null);
   const toolRef = useRef(tool); toolRef.current = tool;
+  // v7.12: flight paths are drawn freehand (press and drag) and smoothed, or clicked point by point
+  const [pathMode, setPathMode] = useState(() => { try { return localStorage.getItem('wd_ops_pathmode') || 'draw'; } catch (e) { return 'draw'; } });
+  const [smoothLevel, setSmoothLevel] = useState(() => { try { const v = parseInt(localStorage.getItem('wd_ops_smooth'), 10); return isFinite(v) ? v : 2; } catch (e) { return 2; } });
+  useEffect(() => { try { localStorage.setItem('wd_ops_pathmode', pathMode); localStorage.setItem('wd_ops_smooth', String(smoothLevel)); } catch (e) {} }, [pathMode, smoothLevel]);
+  const pathModeRef = useRef(pathMode); pathModeRef.current = pathMode;
+  const [stroke, setStroke] = useState(null); // the line being drawn, as [lat, lng]
+  const noClickUntil = useRef(0);
 
   const drones = useMemo(() => {
     const job = (jobDrones || []).filter((d) => d && d !== 'Custom');
@@ -294,7 +331,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
 
   // map clicks by tool
   const onMapClick = (latlng) => {
-    if (readOnly) return;
+    if (readOnly || Date.now() < noClickUntil.current) return;
     const t = toolRef.current, ll = llArr(latlng), d = draftRef.current, cur = docRef.current;
     if (t === 'select') { setSel(null); setSelPt(null); return; }
     if (t === 'zone') {
@@ -308,6 +345,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
       setDraft(d ? { ...d, pts: [...d.pts, ll] } : { type: 'zone', shape, kind, pts: [ll] }); return;
     }
     if (t === 'path') {
+      if (pathModeRef.current === 'draw' || Date.now() < noClickUntil.current) return; // drawn with press-and-drag instead
       const alt = d && d.pts.length ? d.pts[d.pts.length - 1][2] : 0;
       const nextAlt = d ? (d.pts.length === 1 ? 5 : alt) : 0;
       setDraft(d ? { ...d, pts: [...d.pts, [ll[0], ll[1], nextAlt]] } : { type: 'path', pts: [[ll[0], ll[1], 0]] }); return;
@@ -327,6 +365,52 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   };
   const zoneKindRef = useRef(zoneKind); zoneKindRef.current = zoneKind;
   const zoneShapeRef = useRef(zoneShape); zoneShapeRef.current = zoneShape;
+
+  // ── freehand drawing of a flight path ──
+  useEffect(() => {
+    const m = mapRef.current, el = mapEl.current;
+    if (!m || !el || view !== '2d' || readOnly || tool !== 'path' || pathMode !== 'draw') return;
+    m.dragging.disable(); const ta = el.style.touchAction; el.style.touchAction = 'none';
+    let pts = null, pid = null, raf = 0;
+    const cp = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const toLL = (q) => llArr(m.containerPointToLatLng([q.x, q.y]));
+    const show = () => { raf = 0; if (pts) setStroke(pts.map(toLL)); };
+    const down = (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (e.target.closest && e.target.closest('.leaflet-control, .leaflet-marker-icon, button, a')) return;
+      e.preventDefault(); e.stopPropagation(); pid = e.pointerId; try { el.setPointerCapture(pid); } catch (er) {}
+      pts = [cp(e)]; setStroke([toLL(pts[0])]);
+    };
+    const move = (e) => {
+      if (!pts || e.pointerId !== pid) return; e.preventDefault();
+      const q = cp(e), l = pts[pts.length - 1]; if (Math.hypot(q.x - l.x, q.y - l.y) < 2) return;
+      pts.push(q); if (!raf) raf = requestAnimationFrame(show);
+    };
+    const up = (e) => {
+      if (!pts || e.pointerId !== pid) return;
+      const raw = pts; pts = null; pid = null; noClickUntil.current = Date.now() + 450; setStroke(null);
+      const len = raw.reduce((t, q, i) => (i ? t + Math.hypot(q.x - raw[i - 1].x, q.y - raw[i - 1].y) : 0), 0);
+      if (raw.length < 3 || len < 12) return; // a tap, not a line
+      const sm = smoothStroke(raw, smoothLevel).map(toLL);
+      const cur = docRef.current, d = draftRef.current, base = d && d.extend ? (cur.paths.find((p) => p.id === d.extend) || {}).pts || [] : [];
+      const prj = makeProj(cur.mode, sm[0]), alt = base.length ? Number(base[base.length - 1][2]) || 5 : 5;
+      const back = !base.length && prj.dist(sm[0], sm[sm.length - 1]) < 12; // drawn back to where it started: lands there
+      const next = sm.map((q, i) => [q[0], q[1], !base.length && i === 0 ? 0 : back && i === sm.length - 1 ? 0 : alt]);
+      draftRef.current = { type: 'path', pts: [...base, ...(base.length ? next.slice(1) : next)], extend: d && d.extend };
+      finishDraft();
+    };
+    el.addEventListener('pointerdown', down, true); el.addEventListener('pointermove', move, true); el.addEventListener('pointerup', up, true); el.addEventListener('pointercancel', up, true);
+    return () => { if (raf) cancelAnimationFrame(raf); el.removeEventListener('pointerdown', down, true); el.removeEventListener('pointermove', move, true); el.removeEventListener('pointerup', up, true); el.removeEventListener('pointercancel', up, true);
+      el.style.touchAction = ta; try { m.dragging.enable(); } catch (e) {} setStroke(null); };
+  }, [tool, pathMode, smoothLevel, view, readOnly, doc ? doc.mode : null]); // eslint-disable-line
+
+  // smooth / thin an existing path (heights are smoothed with it)
+  const smoothPath = (path, how) => {
+    const prj = makeProj(docRef.current.mode, [path.pts[0][0], path.pts[0][1]]);
+    let q = path.pts.map((p) => ({ ...prj.to(p), z: Number(p[2]) || 0 }));
+    q = how === 'thin' ? rdp(q, 1.5) : rdp(chaikin(q, 1), 0.3);
+    setPath(path.id, { pts: q.map((v) => { const ll = prj.from(v); return [ll[0], ll[1], Math.round(v.z * 2) / 2]; }) });
+  };
 
   // ── draw everything ──
   useEffect(() => {
@@ -413,15 +497,26 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
     // overlay handles
     if (doc.overlay && sel && sel.t === 'overlay' && !doc.overlay.locked && !readOnly) {
       const o = doc.overlay, prj = makeProj(doc.mode, o.center), r = ((o.rot || 0) * Math.PI) / 180;
-      const hp = prj.from({ x: Math.cos(r) * (o.widthM / 2), y: -Math.sin(r) * (o.widthM / 2) });
       const mv = L.marker(o.center, { draggable: true, icon: L.divIcon({ className: '', html: '<div style="margin:-16px 0 0 -16px;width:32px;height:32px;border-radius:50%;background:#6d28d9;color:#fff;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"><i class="fa-solid fa-up-down-left-right"></i></div>', iconSize: [0, 0] }), title: 'Drag to move the plan', zIndexOffset: 2000 });
       mv.on('drag', (e) => { docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, center: llArr(e.target.getLatLng()) } }; placeOverlay(); });
       mv.on('dragend', (e) => setOverlay({ center: llArr(e.target.getLatLng()) }));
       mv.addTo(g);
-      const rs = L.marker(hp, { draggable: true, icon: L.divIcon({ className: '', html: '<div style="margin:-14px 0 0 -14px;width:28px;height:28px;border-radius:50%;background:#fff;color:#6d28d9;display:flex;align-items:center;justify-content:center;border:2px solid #6d28d9;box-shadow:0 1px 4px rgba(0,0,0,.4)"><i class="fa-solid fa-rotate"></i></div>', iconSize: [0, 0] }), title: 'Drag to turn and resize the plan', zIndexOffset: 2000 });
-      const fromHandle = (ll) => { const v = prj.to(ll); return { widthM: Math.max(1, 2 * Math.hypot(v.x, v.y)), rot: Math.round(((Math.atan2(-v.y, v.x) * 180) / Math.PI) * 10) / 10 }; };
-      rs.on('drag', (e) => { docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, ...fromHandle(llArr(e.target.getLatLng())) } }; placeOverlay(); });
-      rs.on('dragend', (e) => setOverlay(fromHandle(llArr(e.target.getLatLng()))));
+      // v7.12: drag a corner to resize (keeps the shape, about the centre); drag the knob above the top edge to turn it
+      const hw = o.widthM / 2, hh = (o.widthM * (o.aspect || 1)) / 2, diag = Math.hypot(hw, hh);
+      const at = (a, b) => prj.from({ x: a * Math.cos(r) - b * Math.sin(r), y: -(a * Math.sin(r) + b * Math.cos(r)) }); // image frame (x right, y down) → map
+      const live = (ch) => { docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, ...ch } }; placeOverlay(); };
+      const sizeFrom = (ll) => { const v = prj.to(ll); return { widthM: Math.max(1, Math.round(o.widthM * (Math.hypot(v.x, v.y) / diag) * 10) / 10) }; };
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy], i) => {
+        const ck = L.marker(at(sx * hw, sy * hh), { draggable: true, icon: L.divIcon({ className: '', html: '<div data-ops-corner="' + i + '" style="margin:-9px 0 0 -9px;width:18px;height:18px;background:#fff;border:3px solid #6d28d9;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:nwse-resize"></div>', iconSize: [0, 0] }), title: 'Drag to resize the plan', zIndexOffset: 2000 });
+        ck.on('drag', (e) => live(sizeFrom(llArr(e.target.getLatLng()))));
+        ck.on('dragend', (e) => setOverlay(sizeFrom(llArr(e.target.getLatLng()))));
+        ck.addTo(g);
+      });
+      const knobOff = hh + Math.max(4, 28 / Math.max(0.01, px)); // a little above the top edge
+      const rs = L.marker(at(0, -knobOff), { draggable: true, icon: L.divIcon({ className: '', html: '<div data-ops-rotate="1" style="margin:-14px 0 0 -14px;width:28px;height:28px;border-radius:50%;background:#fff;color:#6d28d9;display:flex;align-items:center;justify-content:center;border:2px solid #6d28d9;box-shadow:0 1px 4px rgba(0,0,0,.4)"><i class="fa-solid fa-rotate"></i></div>', iconSize: [0, 0] }), title: 'Drag to turn the plan', zIndexOffset: 2000 });
+      const rotFrom = (ll) => { const v = prj.to(ll); return { rot: Math.round(((Math.atan2(v.x, v.y) * 180) / Math.PI) * 10) / 10 }; };
+      rs.on('drag', (e) => live(rotFrom(llArr(e.target.getLatLng()))));
+      rs.on('dragend', (e) => setOverlay(rotFrom(llArr(e.target.getLatLng()))));
       rs.addTo(g);
     }
     // drawing in progress
@@ -439,11 +534,12 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
         if (h && (draft.type === 'measure' || draft.type === 'scale')) L.tooltip({ permanent: true, direction: 'right', className: 'wd-ops-tag' }).setLatLng(h).setContent(r1(makeProj(doc.mode, pts[0]).dist(pts[0], h)) + ' m').addTo(g);
       }
     }
+    if (stroke && stroke.length > 1) L.polyline(stroke, { color: '#6d28d9', weight: 4, opacity: 0.85, interactive: false }).addTo(g);
     if (measure) {
       L.polyline([measure.a, measure.b], { color: '#6d28d9', weight: 3, dashArray: '4 4', interactive: false }).addTo(g);
       L.tooltip({ permanent: true, direction: 'top', className: 'wd-ops-tag' }).setLatLng(measure.b).setContent(r1(measure.d) + ' m').addTo(g);
     }
-  }, [doc, sel, selPt, draft, hover, show, tool, checks, measure, tick, readOnly, airspace]); // eslint-disable-line
+  }, [doc, sel, selPt, draft, hover, show, tool, checks, measure, tick, readOnly, airspace, stroke]); // eslint-disable-line
 
   // cursor
   useEffect(() => { if (mapEl.current) mapEl.current.style.cursor = tool === 'select' ? '' : 'crosshair'; }, [tool]);
@@ -459,7 +555,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
       const aspect = r.canvas.height / r.canvas.width, cur = docRef.current, m = mapRef.current;
       let center = cur.overlay ? cur.overlay.center : null, widthM = cur.overlay ? cur.overlay.widthM : null;
       if (!center) {
-        if (m) { const c = m.getCenter(); center = llArr(c); const b = m.getBounds(); widthM = makeProj(cur.mode, center).dist([c.lat, b.getWest()], [c.lat, b.getEast()]) * 0.7; }
+        if (m) { const c = m.getCenter(); center = llArr(c); const b = m.getBounds(); const pj = makeProj(cur.mode, center), vw = pj.dist([c.lat, b.getWest()], [c.lat, b.getEast()]), vh = pj.dist([b.getSouth(), c.lng], [b.getNorth(), c.lng]); widthM = Math.min(vw, vh / aspect) * 0.7; /* fits on screen, corners included */ }
         else { center = [0, 0]; widthM = 100; }
         if (cur.mode === 'plan' && !cur.overlay) { center = [0, 0]; widthM = 100; }
       }
@@ -531,7 +627,12 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             <div className="space-y-0.5">{['exclusion', 'oonp', 'near', 'clear'].map((k) => <div key={k} className={zoneToolActive(k) ? 'rounded-md ring-2 ring-violet-500' : ''}>{zoneTool(k)}</div>)}</div>
             {tool === 'zone' && <div className="flex gap-1 mt-1 px-1">{[['poly', 'fa-draw-polygon', 'Shape'], ['circle', 'fa-circle', 'Circle']].map(([s, ic, l]) => <button key={s} type="button" data-ops-shape={s} onClick={() => { setZoneShape(s); setDraft(null); }} className={`${btn} flex-1 justify-center ${zoneShape === s ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 text-slate-600'}`}><i className={`fa-solid ${ic}`}></i>{l}</button>)}</div>}
           </div>
-          <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Paths</div><ToolBtn id="path" icon="fa-route" label="Flight path" /></div>
+          <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Paths</div><ToolBtn id="path" icon="fa-route" label="Flight path" />
+            {tool === 'path' && <div className="mt-1 px-1 space-y-1.5" data-ops-pathopts="1">
+              <div className="flex gap-1">{[['draw', 'fa-pencil', 'Draw'], ['click', 'fa-arrow-pointer', 'Click points']].map(([k, ic, l]) => <button key={k} type="button" data-ops-pathmode={k} onClick={() => { setPathMode(k); setDraft((d) => (d && d.extend ? d : null)); }} className={`${btn} flex-1 justify-center ${pathMode === k ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 text-slate-600'}`}><i className={`fa-solid ${ic}`}></i>{l}</button>)}</div>
+              {pathMode === 'draw' && <label className="block text-[11px] text-slate-600">Smoothing: <b>{['Off', 'Light', 'Medium', 'Strong'][smoothLevel]}</b>
+                <input type="range" min="0" max="3" step="1" value={smoothLevel} data-ops-smooth="1" onChange={(e) => setSmoothLevel(Number(e.target.value))} className="w-full accent-violet-700" /></label>}
+            </div>}</div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Points &amp; notes</div>
             <div className="space-y-0.5">
               <ToolBtn id="tlz" label="Take-off / landing" sw={{ background: '#0f172a', borderColor: '#0f172a', borderRadius: 2 }} />
@@ -555,10 +656,10 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
-              <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? 'Click each point · double-click or Finish to end' : 'Click the second point'}</span>
+              <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? 'Press and drag from the end of the path to carry on drawing' : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
               {(draft.type === 'zone' && draft.shape === 'poly' && draft.pts.length >= 3) || (draft.type === 'path' && draft.pts.length >= 2) ? <button type="button" data-ops-finish="1" onClick={finishDraft} className="bg-violet-400 text-violet-950 font-bold rounded px-2 py-1">Finish</button> : null}
               <button type="button" onClick={() => setDraft(null)} className="underline">Cancel</button></div>}
-            {!draft && tool !== 'select' && view === '2d' && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/85 text-white text-xs rounded-lg px-3 py-2" data-ops-noprint="1">{tool === 'zone' ? (zoneShape === 'circle' ? 'Click the centre of the ' : 'Click the first corner of the ') + KINDS[zoneKind].label.toLowerCase() + ' zone' : tool === 'path' ? 'Click where the path starts (usually the TLZ)' : tool === 'measure' ? 'Click two points to measure' : tool === 'scale' ? 'Click both ends of a distance you know on the plan' : 'Click to place it'}</div>}
+            {!draft && tool !== 'select' && view === '2d' && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/85 text-white text-xs rounded-lg px-3 py-2" data-ops-noprint="1">{tool === 'zone' ? (zoneShape === 'circle' ? 'Click the centre of the ' : 'Click the first corner of the ') + KINDS[zoneKind].label.toLowerCase() + ' zone' : tool === 'path' ? (pathMode === 'draw' ? 'Press and drag to draw the path (start at the TLZ). It\'s smoothed when you let go' : 'Click where the path starts (usually the TLZ)') : tool === 'measure' ? 'Click two points to measure' : tool === 'scale' ? 'Click both ends of a distance you know on the plan' : 'Click to place it'}</div>}
             {scaleAsk && <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[650] bg-white border border-slate-300 rounded-xl shadow-xl p-3 w-[300px] space-y-2" data-ops-scale="1">
               <div className="text-sm">Measured <b>{r1(scaleAsk.d)} m</b> on the plan. What is the real distance?</div>
               <div className="flex gap-2"><input autoFocus type="number" min="0" step="0.1" className={inp} value={scaleAsk.real} onChange={(e) => setScaleAsk({ ...scaleAsk, real: e.target.value })} placeholder="metres" aria-label="Real distance in metres" />
@@ -567,14 +668,14 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
                   setOverlay({ widthM: Math.round(o.widthM * f * 100) / 100 }); void prj; } setScaleAsk(null); }}>Apply</button></div>
               <button type="button" className="text-xs underline text-slate-500" onClick={() => setScaleAsk(null)}>Cancel</button></div>}
             {busy && <div className="absolute inset-0 z-[700] bg-white/60 flex items-center justify-center text-sm font-semibold">{busy}</div>}
-            {view === '2d' && <div className="absolute bottom-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]" data-ops-legend="1">
+            {view === '2d' && <div className="absolute bottom-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] pointer-events-none" data-ops-legend="1">
               {[...((airspace || []).length && show.airspace && doc.mode !== 'plan' ? [['Controlled airspace', { border: '2px dashed #1d4ed8' }], ['Restricted / danger', { border: '2px dashed #be185d' }]] : []), ['Exclusion', { background: '#dc2626' }], ['Over people', { background: kindStyle('oonp', settings).color }], ['Near people', { border: '2px dashed #b45309', background: '#fff7e6' }], ['Clear of people', { background: '#b9a6f2' }], ['Buffer', { border: '2px dashed #d97706' }], ['Emergency LZ', { background: '#ea580c', borderRadius: '50%' }]].map(([l, s]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm inline-block" style={s}></span>{l}</span>)}
             </div>}
           </div>
           <section className="bg-white border-t border-slate-200" aria-label="Height profile">
             <div className="flex items-center gap-2 px-3 py-1.5" data-ops-noprint="1">
               <button type="button" onClick={() => setPanel((p) => !p)} className="text-xs font-bold text-slate-700"><i className={`fa-solid ${panel ? 'fa-chevron-down' : 'fa-chevron-up'} mr-1`}></i>Side-on profile{profPath ? ' · ' + profPath.name : ''}</button>
-              {profPath && checks && checks.paths[profPath.id] && <span className="text-[11px] text-slate-500">{Math.round(checks.paths[profPath.id].length)} m · {profPath.pts.length} points · {profPath.speed || 0} m/s · {profPath.drone || 'no drone'}</span>}
+              {profPath && checks && checks.paths[profPath.id] && <span className="text-[11px] text-slate-500">{Math.round(checks.paths[profPath.id].length)} m · {profPath.pts.length} points · {fmtSpeed(profPath.speed || 0)} · {profPath.drone || 'no drone'}</span>}
               <span className="ml-auto text-[11px] text-slate-400 hidden sm:inline">Drag a point up or down to set its height</span>
             </div>
             {panel && <div className="px-2 pb-2"><Profile path={profPath} res={profPath && checks ? checks.paths[profPath.id] : null} readOnly={readOnly} selPt={profPath && selPathO ? selPt : null}
@@ -593,7 +694,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             {KINDS[selZone.kind].limits && <LimitPicker zone={selZone} setZone={(ch) => setZone(selZone.id, ch)} drones={drones} fleet={fleet} keFor={keFor} onSaveDroneLimits={onSaveDroneLimits} readOnly={readOnly} />}
             {selZone.kind === 'clear' && <div className="grid grid-cols-2 gap-2">
               <div><label className={lbl} htmlFor="oz-ch">Max height (m)</label><input id="oz-ch" type="number" min="0" className={inp} disabled={readOnly} value={selZone.h == null ? '' : selZone.h} onChange={(e) => setZone(selZone.id, { h: e.target.value === '' ? null : Number(e.target.value) })} placeholder="120" /></div>
-              <div><label className={lbl} htmlFor="oz-cv">Max speed (m/s)</label><input id="oz-cv" type="number" min="0" className={inp} disabled={readOnly} value={selZone.v == null ? '' : selZone.v} onChange={(e) => setZone(selZone.id, { v: e.target.value === '' ? null : Number(e.target.value) })} placeholder="any" /></div></div>}
+              <SpeedField id="oz-cv" label="Max speed" ms={selZone.v} disabled={readOnly} placeholder="any" onMs={(v) => setZone(selZone.id, { v })} /></div>}
             {selZone.kind === 'exclusion' && <div className="space-y-2" data-ops-buffer="1">
               <div><label className={lbl} htmlFor="oz-buf">Buffer around it (m)</label><input id="oz-buf" type="number" min="0" className={inp} disabled={readOnly || selZone.shielded} value={selZone.buffer == null ? DEFAULT_BUFFER : selZone.buffer} onChange={(e) => setZone(selZone.id, { buffer: e.target.value === '' ? null : Number(e.target.value) })} /></div>
               <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" disabled={readOnly} checked={!!selZone.shielded} onChange={(e) => setZone(selZone.id, { shielded: e.target.checked, shieldBuffer: selZone.shieldBuffer == null ? 0 : selZone.shieldBuffer })} /><span>Shielded: people are protected (roof, netting, barrier, building), so a smaller buffer applies</span></label>
@@ -608,9 +709,9 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
           {selPathO && <div className="space-y-3" data-ops-path={selPathO.id}>
             <div className="flex items-center gap-2"><i className="fa-solid fa-route text-slate-600"></i><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">Flight path</span>{!readOnly && <button type="button" onClick={delSel} className="text-xs text-red-600"><i className="fa-solid fa-trash-can mr-1"></i>Delete</button>}</div>
             <div><label className={lbl} htmlFor="op-name">Name</label><input id="op-name" className={inp} disabled={readOnly} value={selPathO.name || ''} onChange={(e) => setPath(selPathO.id, { name: e.target.value })} /></div>
-            <div className="grid grid-cols-[1fr_90px] gap-2">
+            <div className="grid grid-cols-[1fr_120px] gap-2">
               <div><label className={lbl} htmlFor="op-drone">Drone</label><select id="op-drone" className={inp} disabled={readOnly} value={selPathO.drone || ''} onChange={(e) => setPath(selPathO.id, { drone: e.target.value })}>{drones.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
-              <div><label className={lbl} htmlFor="op-speed">Speed (m/s)</label><input id="op-speed" type="number" min="0" step="0.5" className={inp} disabled={readOnly} value={selPathO.speed == null ? '' : selPathO.speed} onChange={(e) => setPath(selPathO.id, { speed: Number(e.target.value) || 0 })} /></div>
+              <SpeedField id="op-speed" label="Speed" ms={selPathO.speed == null ? '' : selPathO.speed} disabled={readOnly} onMs={(v) => setPath(selPathO.id, { speed: v || 0 })} />
             </div>
             <div><div className={lbl}>Points (height above take-off)</div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-52 overflow-y-auto">{selPathO.pts.map((p, i) => (
@@ -620,8 +721,10 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
                   {checks && checks.paths[selPathO.id] && checks.paths[selPathO.id].legs[i] && <span className="ml-auto w-2.5 h-2.5 rounded-full" title={'Leg ' + (i + 1) + '→' + (i + 2)} style={{ background: STATUS[checks.paths[selPathO.id].legs[i].status] }}></span>}
                   {!readOnly && selPathO.pts.length > 2 && <button type="button" aria-label={'Delete point ' + (i + 1)} onClick={() => setPath(selPathO.id, { pts: selPathO.pts.filter((q, j) => j !== i) })} className={`${checks && checks.paths[selPathO.id] && checks.paths[selPathO.id].legs[i] ? '' : 'ml-auto'} text-slate-400 hover:text-red-600`}><i className="fa-solid fa-xmark"></i></button>}
                 </div>))}</div>
-              {!readOnly && <div className="flex gap-2 mt-2"><button type="button" className={`${btn} border-slate-300`} onClick={() => setPath(selPathO.id, { pts: [...selPathO.pts].reverse() })}><i className="fa-solid fa-arrow-right-arrow-left"></i>Reverse</button>
-                <button type="button" className={`${btn} border-slate-300`} onClick={() => { setTool('path'); setDraft({ type: 'path', pts: selPathO.pts, extend: selPathO.id }); }}><i className="fa-solid fa-plus"></i>Add points at the end</button></div>}
+              {!readOnly && <div className="flex flex-wrap gap-2 mt-2"><button type="button" className={`${btn} border-slate-300`} onClick={() => setPath(selPathO.id, { pts: [...selPathO.pts].reverse() })}><i className="fa-solid fa-arrow-right-arrow-left"></i>Reverse</button>
+                <button type="button" className={`${btn} border-slate-300`} onClick={() => { setTool('path'); setDraft({ type: 'path', pts: selPathO.pts, extend: selPathO.id }); }}><i className="fa-solid fa-plus"></i>{pathMode === 'draw' ? 'Draw more from the end' : 'Add points at the end'}</button>
+                <button type="button" data-ops-smoothpath="1" className={`${btn} border-slate-300`} disabled={selPathO.pts.length < 3} onClick={() => smoothPath(selPathO, 'smooth')}><i className="fa-solid fa-bezier-curve"></i>Smooth</button>
+                <button type="button" data-ops-thinpath="1" className={`${btn} border-slate-300`} disabled={selPathO.pts.length < 4} onClick={() => smoothPath(selPathO, 'thin')}><i className="fa-solid fa-compress"></i>Fewer points</button></div>}
             </div>
           </div>}
 
@@ -638,11 +741,23 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             <div className="text-sm font-semibold truncate">{doc.overlay.name}{doc.overlay.pages > 1 ? ' · page ' + doc.overlay.page + ' of ' + doc.overlay.pages : ''}</div>
             <div><label className={lbl} htmlFor="oo-op">Opacity {doc.overlay.opacity == null ? 60 : doc.overlay.opacity}%</label><input id="oo-op" type="range" min="10" max="100" className="w-full accent-violet-700" value={doc.overlay.opacity == null ? 60 : doc.overlay.opacity} onChange={(e) => { const v = Number(e.target.value); docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, opacity: v } }; setDoc(docRef.current); if (onChange && !readOnly) onChange(docRef.current); }} /></div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={readOnly} checked={!!doc.overlay.locked} onChange={(e) => setOverlay({ locked: e.target.checked })} />Locked (stops it moving by accident)</label>
-            {!doc.overlay.locked && !readOnly && <p className="text-[11px] text-slate-500">Drag the purple handle to move the plan, and the round handle to turn and resize it. Then set the scale.</p>}
-            <div className="grid grid-cols-2 gap-2">
+            {!doc.overlay.locked && !readOnly && <p className="text-[11px] text-slate-500">Drag the purple handle to move the plan, a corner to resize it, and the round knob to turn it. Or use the sliders. Then <b>Set scale</b> from a distance you know.</p>}
+            {!readOnly && <div className="space-y-2" data-ops-ovsliders="1">
+              <label className="block text-[11px] font-semibold text-slate-600">Size · {doc.overlay.widthM} m wide
+                <input type="range" data-ops-ovsize="1" min={Math.log(5)} max={Math.log(5000)} step="0.002" disabled={doc.overlay.locked} value={Math.log(Math.max(5, doc.overlay.widthM))} className="w-full accent-violet-700"
+                  onPointerDown={() => { if (docRef.current) hist.current.push(docRef.current); }}
+                  onChange={(e) => { const w = Math.round(Math.exp(Number(e.target.value)) * 10) / 10; docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, widthM: w } }; setDoc(docRef.current); onChange && onChange(docRef.current); }} /></label>
+              <label className="block text-[11px] font-semibold text-slate-600">Turn · {doc.overlay.rot || 0}°
+                <input type="range" data-ops-ovrot="1" min="-180" max="180" step="0.5" disabled={doc.overlay.locked} value={doc.overlay.rot || 0} className="w-full accent-violet-700"
+                  onPointerDown={() => { if (docRef.current) hist.current.push(docRef.current); }}
+                  onChange={(e) => { docRef.current = { ...docRef.current, overlay: { ...docRef.current.overlay, rot: Number(e.target.value) } }; setDoc(docRef.current); onChange && onChange(docRef.current); }} /></label>
+              <div className="flex gap-1">{[['−1%', 0.99], ['+1%', 1.01], ['↺ 1°', -1], ['↻ 1°', 1]].map(([l, v]) => <button key={l} type="button" disabled={doc.overlay.locked} onClick={() => setOverlay(Math.abs(v) === 1 ? { rot: Math.round(((doc.overlay.rot || 0) + v) * 10) / 10 } : { widthM: Math.round(doc.overlay.widthM * v * 100) / 100 })} className={`${btn} flex-1 justify-center border-slate-300 disabled:opacity-40`}>{l}</button>)}</div>
+            </div>}
+            <details className="text-[11px] text-slate-500"><summary className="cursor-pointer">Exact numbers</summary>
+            <div className="grid grid-cols-2 gap-2 mt-1">
               <div><label className={lbl} htmlFor="oo-w">Width (m)</label><input id="oo-w" type="number" min="1" step="0.5" className={inp} disabled={readOnly || doc.overlay.locked} value={doc.overlay.widthM} onChange={(e) => setOverlay({ widthM: Math.max(1, Number(e.target.value) || 1) })} /></div>
               <div><label className={lbl} htmlFor="oo-r">Turn (°)</label><input id="oo-r" type="number" step="0.5" className={inp} disabled={readOnly || doc.overlay.locked} value={doc.overlay.rot || 0} onChange={(e) => setOverlay({ rot: Number(e.target.value) || 0 })} /></div>
-            </div>
+            </div></details>
             {!readOnly && <div className="flex flex-wrap gap-2">
               <button type="button" data-ops-tool="scale" disabled={doc.overlay.locked} onClick={() => { setTool('scale'); setDraft(null); }} className={`${btn} border-slate-300 disabled:opacity-40`}><i className="fa-solid fa-ruler-combined"></i>Set scale</button>
               <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className={`${btn} border-slate-300`}><i className="fa-solid fa-file-arrow-up"></i>Replace</button>
