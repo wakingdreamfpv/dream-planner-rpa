@@ -107,6 +107,30 @@ Deno.serve(async (req) => {
       }
       return json({ ok: true, sent, skipped });
     }
+    // v7.16: the CRP asks the job's RPIC to log in and sign the plan
+    if (event === 'rpic_sign_request') {
+      if (me.role !== 'crp') return json({ error: 'Only the CRP can send this' }, 403);
+      const { data: job } = await admin.from('jobs').select('id, title, op_id, start_date').eq('id', String(body.job_id || '')).single();
+      if (!job) return json({ error: 'Job not found' }, 404);
+      const { data: crew } = await admin.from('job_crew').select('job_role, people:person_id (full_name, email, user_id)').eq('job_id', job.id).eq('job_role', 'rpic');
+      const r5 = (crew || []).map((c: any) => c.people || {})[0] || null;
+      const name5 = r5?.full_name || String(body.name || '');
+      if (!r5 || !r5.user_id || !r5.email) return json({ ok: false, reason: 'no_login', name: name5, email: r5?.email || '' });
+      const { data: crpP } = await admin.from('profiles').select('full_name').eq('id', who.user.id).single();
+      const send5 = await keep([String(r5.email).toLowerCase()], 'sign_request');
+      if (!send5.length) return json({ ok: true, sent: 0, name: name5, email: r5.email, message: 'they have turned these emails off' });
+      if (!resendKey) return json({ ok: true, sent: 0, name: name5, email: r5.email, message: 'Email not set up (RESEND_API_KEY missing)' });
+      const subject5 = `Please review and sign as RPIC: ${job.title || job.op_id || 'your job'}`;
+      const html5 = page(subject5,
+        P(`Hi ${esc(String(name5).split(' ')[0] || '')},`) +
+        P(`${esc(crpP?.full_name || 'The Chief Remote Pilot')} has asked you to review and sign the flight plan for <b>${esc(job.title || '')}</b>${job.op_id ? ' (' + esc(job.op_id) + ')' : ''}${job.start_date ? ' · ' + esc(job.start_date) : ''} as Remote Pilot in Command.`) +
+        P('Log in, read the plan, map, JSA and risk register, then sign: click to sign, type your name or draw your signature. You can add comments for the CRP.'),
+        'Log in and sign', appUrl + '#rpic-sign=' + job.id);
+      const r6 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: send5, subject: subject5, html: html5 }) });
+      if (!r6.ok) return json({ ok: false, error: 'Email failed: ' + (await r6.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: 1, name: name5, email: r5.email });
+    }
     // v7.5.2: a crew member signed as RPIC on a company job → email the CRP(s)
     if (event === 'rpic_signed') {
       const { data: row } = await admin.from('job_flights')

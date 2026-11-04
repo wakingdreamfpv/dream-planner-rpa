@@ -9,6 +9,7 @@ import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import OpsMap from '../opsmap/OpsMap.jsx';
 import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
 import Registers from '../compliance/Registers.jsx';
+import SignDialog from '../cloud/SignDialog.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
@@ -181,7 +182,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.15';
+        const APP_VERSION = '7.16';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -949,7 +950,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             } else if (c.op === 'unsign') {
               const ap = plan.approval || (plan.approval = {});
               const before = (ap.crpSigned ? 'CRP signed ' + (ap.crpDate || '') : 'CRP unsigned') + ' / ' + (ap.rpSigned ? 'RPIC signed ' + (ap.rpDate || '') : 'RPIC unsigned');
-              Object.assign(ap, { crpSigned: false, crpDate: '', rpSigned: false, rpDate: '' });
+              Object.assign(ap, { crpSigned: false, crpDate: '', rpSigned: false, rpDate: '', crpSig: null, rpSig: null });
               rec.push({ field: 'Authorisation signatures', from: before, to: 'cleared — re-sign required', reason: why });
             } else if (c.op === 'pilotArn') {
               const pl = pilots.find(x => x.name === c.name);
@@ -1474,9 +1475,18 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           if (lg.serviceableAtEnd === false && !String(lg.defects || '').trim()) lg.serviceableAtEnd = null; lg.yn60 = 1; return lg; };
         // v5.55: the CRP's own review answers (SOP mitigates / JSA correct) are left out, so answering them after the
         // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
+        // v7.16: how the signature was given (click / typed / drawn), shown in the RPIC and CRP boxes
+        const SigShown = ({ sig, name, role }) => (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-900" data-sig-shown={role} data-sig-kind={sig.method || 'click'}>
+            {sig.method === 'drawn' && sig.image ? <img src={sig.image} alt="Signature" className="h-12 bg-white rounded border border-slate-200" />
+              : sig.method === 'typed' && sig.typed ? <div className="text-xl text-slate-800" style={{ fontFamily: '"Brush Script MT","Segoe Script","Snell Roundhand",cursive' }}>{sig.typed}</div>
+              : <div className="font-semibold"><i className="fa-solid fa-fingerprint mr-1"></i>Digital signature (click to sign)</div>}
+            <div className="mt-0.5 text-emerald-800">{sig.method === 'drawn' ? 'Drawn' : sig.method === 'typed' ? 'Typed' : 'Clicked'} {sig.at ? new Date(sig.at).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}{sig.declaration ? ' · declaration confirmed' : ''}{sig.fingerprint ? ' · plan version ' + fpShort(sig.fingerprint) : ''}</div>
+            {sig.comments && <div className="mt-1 text-slate-700"><b>{role === 'rp' ? 'RPIC' : 'CRP'} comments:</b> {sig.comments}</div>}
+          </div>);
         const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy) => {
           const ap = { ...(approval || {}) };
-          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy'].forEach(k => delete ap[k]);
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           // v7.14: the CRP's crew-record bypasses are admin, not part of what the RPIC signs (adding one doesn't void a signature)
@@ -5262,7 +5272,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (learned.length) updateDb('fleet', fleet);
             if (rpaTypes.length !== (overview.rpaTypes || []).length) setOverview(prev => ({ ...prev, rpaTypes }));
             setLog(prev => ({ ...prev, rpaLogs }));
-            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null,
+            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: amendNote, approvedAt: prev.approvedAt || '' }] }));
             setLogDump(null);
             const secs = chosen.reduce((s, it) => s + (it.t.durationSec || 0), 0);
@@ -5712,7 +5722,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             );
 
             // Sig block
-            const sigBlk=(title,name,arn,date,signed,remote,by)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
+            const sigBlk=(title,name,arn,date,signed,remote,by,sg)=>'<div style="border:1px solid '+S2+';border-radius:4pt;padding:8pt;flex:1;">'
               +(signed&&by&&by.email?'<div data-signed-by="1" style="font-size:6.5pt;color:#047857;margin-bottom:3pt;">&#10003; Signed in the planner by '+esc(by.name||by.email)+' ('+esc(by.email)+(by.role==='crp'?', CRP account':'')+') '+esc(new Date(by.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+'</div>':'')
               +'<div style="font-size:8pt;font-weight:700;color:'+NV+';margin-bottom:5pt;">'+esc(title)+'</div>'
               +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6pt;margin-bottom:6pt;">'
@@ -5724,6 +5734,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +(remote&&signed?('<div style="min-height:24pt;border-bottom:1px solid '+S2+';">'+(remote.signatureImage?'<img src="'+remote.signatureImage+'" style="max-height:34pt;max-width:100%;">':'<span style="font-family:cursive;font-size:13pt;">'+esc(remote.typedSignature||name)+'</span>')+'</div>'
                 +'<div style="font-size:6pt;color:'+S6+';margin-top:2pt;">Signed remotely '+esc(new Date(remote.signedAt).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+(remote.timeZone?' ('+esc(remote.timeZone)+')':'')+' · plan version '+esc(fpShort(remote.fingerprint))+'</div>'
                 +(remote.comments?'<div style="font-size:6.5pt;color:'+S8+';margin-top:2pt;"><b>RPIC comments:</b> '+esc(remote.comments)+'</div>':''))
+              :(signed&&sg)?('<div data-pdf-sig="'+esc(sg.method||'click')+'" style="min-height:24pt;border-bottom:1px solid '+S2+';">'+(sg.method==='drawn'&&sg.image?'<img src="'+sg.image+'" style="max-height:34pt;max-width:100%;">':sg.method==='typed'&&sg.typed?'<span style="font-family:\'Brush Script MT\',\'Segoe Script\',cursive;font-size:15pt;">'+esc(sg.typed)+'</span>':'<span style="font-size:8pt;color:#047857;font-weight:700;">&#10003; Digital signature (click to sign)</span>')+'</div>'
+                +'<div style="font-size:6pt;color:'+S6+';margin-top:2pt;">'+(sg.method==='drawn'?'Drawn':sg.method==='typed'?'Typed':'Clicked')+(sg.at?' '+esc(new Date(sg.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})):'')+(sg.declaration?' · RPIC declaration confirmed':'')+(sg.fingerprint?' · plan version '+esc(fpShort(sg.fingerprint)):'')+'</div>'
+                +(sg.comments?'<div style="font-size:6.5pt;color:'+S8+';margin-top:2pt;"><b>Comments:</b> '+esc(sg.comments)+'</div>':''))
               :'<div style="height:24pt;border-bottom:1px solid '+S2+';"></div>')+'</div>';
 
             // Sites
@@ -6061,8 +6074,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if((approval.amendLog||[]).length) P.push('<div style="font-size:7pt;color:'+S6+';margin:4pt 0;border:1px solid '+S2+';border-radius:3pt;padding:4pt 6pt;"><b>Amended after approval:</b> '+approval.amendLog.map(a=>esc(new Date(a.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+(a.reason?' — '+esc(a.reason):'')).join(' · ')+(approval.flightAuthApproved?' · re-approved'+(approval.approvedAt?' '+esc(new Date(approval.approvedAt).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})):''):'')+'</div>');
             P.push('<div style="background:'+(approval.flightAuthApproved?'#dcfce7':'#fee2e2')+';border:2px solid '+(approval.flightAuthApproved?'#16a34a':'#dc2626')+';border-radius:4pt;padding:10pt;text-align:center;font-size:11pt;font-weight:700;color:'+(approval.flightAuthApproved?'#15803d':'#dc2626')+';margin:10pt 0;">'+(approval.flightAuthApproved?'✓  FLIGHT AUTHORISED':'FLIGHT NOT YET AUTHORISED — Pending RPIC sign-off')+'</div>');
             P.push('<div style="display:flex;gap:12pt;margin-top:10pt;">');
-            P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned,null,approval.crpSignedBy));
-            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy));
+            P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned,null,approval.crpSignedBy,approval.crpSig));
+            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy,approval.rpRemote?null:approval.rpSig));
             P.push('</div>');
 
             // S4
@@ -7765,7 +7778,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const by = approval.crpName || 'the CRP';
             const reason = window.prompt(`Amend this approved plan?\n\nThis withdraws the flight authorisation and clears the CRP and RPIC signatures. ${by} must re-approve before flight.\n\nReason for the amendment (kept in the plan's record):`, '');
             if (reason === null) return;
-            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, rpRemote: null,
+            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null, rpRemote: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: (reason || '').trim(), approvedAt: prev.approvedAt || '' }] }));
           };
           const LockBanner = ({ section }) => !planLocked ? null : (
@@ -7851,7 +7864,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             } catch (e) { return 'could not read the database back (' + e.message + ')'; }
           };
 
-          const handleSaveDraftPlan = async () => {
+          const handleSaveDraftPlan = async (opts) => {
+            opts = (opts && !opts.nativeEvent && !opts.target) ? opts : {};
             const ov = resolvePlanId(); if (!ov) return;
             const title = getOpTitle(ov);
             const draft = {
@@ -7859,6 +7873,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               savedAt: new Date().toISOString(), status: 'draft',
               ...buildPlanSnapshot(ov),
             };
+            if (opts.approvalPatch) draft.approval = { ...(draft.approval || {}), ...opts.approvalPatch };
             const newDb = isFree
               ? { ...db, draftPlans: [draft], savedPlans: (db.savedPlans || []).filter(p => p.id === draft.id) } // v6.8: free keeps one job
               : { ...db, draftPlans: [draft, ...(db.draftPlans || []).filter(p => p.id !== draft.id)] };
@@ -7867,6 +7882,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const problem = await verifySaved('draftPlans', draft);
             if (problem) { alert(`⚠ Draft saved, but the check after saving failed: ${problem}.\n\nDon't close the planner. Export a backup from Database & Settings and tell Claude what you were editing.`); return; }
             markSaved();
+            if (opts.quiet) return draft;
             if (isFree) { alert(`Saved on this device: "${title}"\n\nFree mode keeps this one job until you start a new one. Come back any time to finish the flight log, and keep your exported PDFs.`); return; }
             const hasApproved = (db.savedPlans || []).some(p => p.id === draft.id);
             alert(`Draft saved and checked: "${title}" (${draft.id})\n\nResume it any time from the Database & Settings tab.`
@@ -8325,6 +8341,30 @@ View in the Database & Settings tab.`);
             setApproval(prev => ({ ...prev, rpRequest: { sentAt: new Date().toISOString(), fingerprint: fp, requestId, to: approval.rpName } }));
             alert(`Sign-off file downloaded for ${approval.rpName}.\n\n1. Send them the file (email, message or AirDrop).\n2. They open it in any browser, review the plan and sign (finger or typed).\n3. They send back a small reply file (RPIC-signed_${overview.identifier}.json).\n4. Click "Import signed reply" here.\n\nPlan version ${fpShort(fp)}. If you change the plan before their reply arrives, they'll need to sign the new version.`);
           };
+          // v7.16: the CRP asks the RPIC to sign in the planner: the draft is saved (and goes to the cloud), and the RPIC is
+          // emailed a link that opens the job on the sign screen. The RPIC needs a login; otherwise use the sign-off file.
+          const [askingRpic, setAskingRpic] = useState(false);
+          const askRpicSign = async () => {
+            if (!approval.rpName) { alert('Choose the RPIC in the Remote Pilot in Command block first.'); return; }
+            if (!risks.some(r => String(r.hazard || '').trim())) { if (!window.confirm('The risk register is empty. Ask for the RPIC signature anyway?')) return; }
+            const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap });
+            const rpRequest = { sentAt: new Date().toISOString(), fingerprint: fp, via: 'email', to: approval.rpName };
+            setAskingRpic(true);
+            const draft = await handleSaveDraftPlan({ quiet: true, approvalPatch: { rpRequest } });
+            if (!draft) { setAskingRpic(false); return; }
+            setApproval(prev => ({ ...prev, rpRequest }));
+            const ov = draft.overview || {};
+            window.dispatchEvent(new CustomEvent('wd-request-rpic-sign', { detail: { uid: ov.uid, opId: ov.identifier || draft.id || null, title: getOpTitle(ov) || draft.title || '', status: 'draft',
+              startDate: isoDay(ov.operationDate), endDate: isoDay(ov.operationEndDate) || isoDay(ov.operationDate), plan: draft, crew: planCrew(draft), name: approval.rpName } }));
+          };
+          useEffect(() => {
+            const h = (e) => { const d = e.detail || {}; setAskingRpic(false);
+              if (d.ok && d.sent) { alert(`✅ Saved and sent: ${d.name || approval.rpName} has been emailed${d.email ? ' (' + d.email + ')' : ''} to log in and sign as RPIC.\n\nWhen they sign, you'll get an email and it shows in Awaiting action on Home. Their signature is added when you open the job.`); return; }
+              if (d.reason === 'no_login') { if (window.confirm(`${d.name || approval.rpName} doesn't have a planner login yet${d.email ? '' : ' (or isn\'t in Crew & users)'}, so they can't sign in the planner.\n\nOK: send them a sign-off file instead\nCancel: invite them first (Database & Settings › Crew & users)`)) sendForRpicSign(); return; }
+              if (d.ok && !d.sent) { alert('Saved, and the job is in their list to sign, but the email wasn\'t sent: ' + (d.message || 'email not set up') + '.\n\nLet them know to log in: it shows on their Home under "Waiting for your signature".'); return; }
+              alert('Couldn\'t ask for the signature: ' + (d.error || 'unknown error') + '\n\nThe draft is saved. Try again when you have signal, or send a sign-off file.'); };
+            window.addEventListener('wd-rpic-request-result', h); return () => window.removeEventListener('wd-rpic-request-result', h);
+          }); // eslint-disable-line
           const importRpicSignoff = (e) => {
             const file = e.target.files && e.target.files[0]; e.target.value = ''; if (!file) return;
             const r = new FileReader(); wdTrackReader(r, file, 'Importing RPIC signature');
@@ -8355,7 +8395,15 @@ View in the Database & Settings tab.`);
           const crpSignBlocked = signedIn && auth.role !== 'crp' ? 'Only the Chief Remote Pilot\'s account can sign as CRP.' : '';
           const rpSignBlocked = signedIn && auth.role !== 'crp' && String(approval.rpName || '').trim() && !sameName(approval.rpName, signName) ? `Only ${approval.rpName} can sign here. You're signed in as ${signName || auth.email}.` : '';
           const approveBlocked = signedIn && auth.role !== 'crp' ? 'Only the Chief Remote Pilot\'s account can approve the flight.' : '';
+          // v7.16: signing opens the sign dialog (click to sign, typed or drawn; the RPIC confirms the declaration)
+          const [signDlg, setSignDlg] = useState(null);
           const handleSignature = (role) => {
+            if (role === 'crp' && crpSignBlocked) { alert(crpSignBlocked); return; }
+            if (role !== 'crp' && rpSignBlocked) { alert(rpSignBlocked); return; }
+            setSignDlg({ role });
+          };
+          const doSignature = (role, sig) => {
+            setSignDlg(null);
             const d = new Date(); // local date, not UTC (UTC is "yesterday" before 10 am in Queensland)
             const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
             const by = signedIn ? { email: auth.email, name: signName, role: auth.role, at: new Date().toISOString() } : null;
@@ -8364,17 +8412,17 @@ View in the Database & Settings tab.`);
               if (signedIn && signName && !sameName(approval.crpName, signName)) {
                 if (!window.confirm(`You're signed in as ${signName}. The CRP block names ${approval.crpName || 'nobody'}.\n\nSign as ${signName}?`)) return;
                 const p = (db.pilots || []).find(x => sameName(x.name, signName));
-                setApproval(prev => ({ ...prev, crpName: signName, crpArn: (p && p.arn) || prev.crpArn, crpSigned: true, crpDate: today, crpSignedBy: by }));
+                setApproval(prev => ({ ...prev, crpName: signName, crpArn: (p && p.arn) || prev.crpArn, crpSigned: true, crpDate: today, crpSignedBy: by, crpSig: sig || null }));
                 return;
               }
-              setApproval(prev => ({ ...prev, crpSigned: true, crpDate: today, crpSignedBy: by }));
+              setApproval(prev => ({ ...prev, crpSigned: true, crpDate: today, crpSignedBy: by, crpSig: sig || null }));
             } else {
               if (rpSignBlocked) { alert(rpSignBlocked); return; }
               // a crew member with no RPIC named yet signs as themselves
-              if (signedIn && auth.role !== 'crp' && !String(approval.rpName || '').trim()) { setApproval(prev => ({ ...prev, rpName: signName || auth.email, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by }));
-                pushRpicSignature({ name: signName || auth.email, arn: approval.rpArn || '', date: today, by }); return; }
-              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by }));
-              pushRpicSignature({ name: approval.rpName, arn: approval.rpArn || '', date: today, by });
+              if (signedIn && auth.role !== 'crp' && !String(approval.rpName || '').trim()) { setApproval(prev => ({ ...prev, rpName: signName || auth.email, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by, rpSig: sig || null }));
+                pushRpicSignature({ name: signName || auth.email, arn: approval.rpArn || '', date: today, by, sig }); return; }
+              setApproval(prev => ({ ...prev, rpSigned: true, rpDate: today, rpRemote: null, rpSignedBy: by, rpSig: sig || null }));
+              pushRpicSignature({ name: approval.rpName, arn: approval.rpArn || '', date: today, by, sig });
             }
           };
 
@@ -9657,9 +9705,12 @@ View in the Database & Settings tab.`);
               alert(`Request sent to ${d.sent} ${d.sent === 1 ? 'person' : 'people'}.` + (d.skipped && d.skipped.length ? `\n\nNot sent (not on this job in the cloud): ${d.skipped.join(', ')}` : '') + (d.message ? '\n\n' + d.message : '') + '\n\nTheir flights and answers will appear in Awaiting action on Home.'); };
             window.addEventListener('wd-request-log-result', h); return () => window.removeEventListener('wd-request-log-result', h);
           }, []);
-          // crew: the email link #crew-job=<id> opens that job on the flight log
-          const [crewJobLink, setCrewJobLink] = useState(() => { const m = /^#crew-job=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
-          useEffect(() => { const h = () => { const m = /^#crew-job=([\w-]+)$/.exec(location.hash || ''); if (m) setCrewJobLink(m[1]); }; window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          // crew: the email link #crew-job=<id> opens that job on the flight log; v7.16: #rpic-sign=<id> opens it on the sign screen
+          const linkOf = (h) => { const m = /^#(crew-job|rpic-sign)=([\w-]+)$/.exec(h || ''); return m ? { id: m[2], sign: m[1] === 'rpic-sign' } : null; };
+          const [crewJobLink, setCrewJobLink] = useState(() => linkOf(typeof location !== 'undefined' ? location.hash : ''));
+          useEffect(() => { const h = () => { const l = linkOf(location.hash); if (l) setCrewJobLink(l); }; window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          const [signAfterLoad, setSignAfterLoad] = useState(null); // job id to open the RPIC sign screen for once it's loaded
+          const signWantRef = useRef(null);
           // Chunk 4: EVLOS observer sign-off — a plan summary for the observer, and countersigning from Awaiting action
           const obsSummary = () => ({ job: { title: getOpTitle(overview), op_id: overview.identifier, start_date: overview.operationDate || '' },
             overview: { location: overview.location, operationDate: overview.operationDate, startTime: overview.startTime, endTime: overview.endTime, rpaTypes: overview.rpaTypes, rpic: approval.rpName || overview.rpic, maxHeight: jsa.maxOperatingHeightAgl || overview.maxHeightPlanned },
@@ -9724,17 +9775,29 @@ View in the Database & Settings tab.`);
               const prev = lsJson(cjKey, null);
               setCloudJob({ ...d.job, base, sent: prev && prev.id === d.job.id ? (prev.sent || []) : [], baseLogSig: logSig(d.plan.log || {}), sentLogSig: prev && prev.id === d.job.id ? prev.sentLogSig : undefined });
               setTimeout(() => setActiveTab(d.job.status === 'completed' ? 'preliminary' : 'log'), 120);
+              if (signWantRef.current === d.job.id) { signWantRef.current = null; setSignAfterLoad({ id: d.job.id, uid: d.job.uid }); }
             };
             window.addEventListener('wd-load-cloud-job', h); return () => window.removeEventListener('wd-load-cloud-job', h);
           }); // eslint-disable-line
           useEffect(() => {
             if (!crewJobLink || !isCrewRole || !crewCloud) return;
-            const j = (crewCloud.jobs || []).find(x => String(x.id) === crewJobLink);
+            const j = (crewCloud.jobs || []).find(x => String(x.id) === crewJobLink.id);
             try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-            setCrewJobLink(null);
+            const wantSign = crewJobLink.sign; setCrewJobLink(null);
             if (!j) { alert('That job isn\'t one of yours (or it was removed). Check My jobs on Home.'); setActiveTab('home'); return; }
-            openCloudJob(j);
+            if (wantSign) signCloudJob(j); else openCloudJob(j);
           }, [crewJobLink, isCrewRole, crewCloud]); // eslint-disable-line
+          const signCloudJob = (j) => {
+            if (dirty && !window.confirm(`Open “${j.title || 'this job'}” to sign it? The job that's open now has unsaved changes, which will be lost.`)) return;
+            signWantRef.current = j.id; window.dispatchEvent(new CustomEvent('wd-open-cloud-job', { detail: { id: j.id } }));
+          };
+          useEffect(() => {
+            if (!signAfterLoad || !signAfterLoad.uid || overview.uid !== signAfterLoad.uid) return;
+            const t = setTimeout(() => { setSignAfterLoad(null); setActiveTab('approval');
+              if (approval.rpSigned) { alert('You\'ve already signed this job as RPIC.'); return; }
+              handleSignature('rp'); }, 450);
+            return () => clearTimeout(t);
+          }, [signAfterLoad, overview.uid, approval.rpName, approval.rpSigned]); // eslint-disable-line
           const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
           const isObserverOnJob = onCloudJob && ((((crewCloud && crewCloud.jobs) || []).find(j => j.id === cloudJob.id) || {}).myRole === 'observer'
             || [jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel, log.crewObserver].some(n => String(n || '').split(/[,;/&]|\band\b/).some(x => sameName(x, auth.name))));
@@ -9791,7 +9854,7 @@ View in the Database & Settings tab.`);
                 done(); return;
               }
               setApproval(prev => ({ ...prev, rpSigned: true, rpName: sig.name || prev.rpName, rpArn: sig.arn || prev.rpArn, rpDate: sig.date || prev.rpDate, rpRemote: null,
-                rpSignedBy: sig.by || { name: sig.name, role: 'pilot', at: row.created_at } }));
+                rpSignedBy: sig.by || { name: sig.name, role: 'pilot', at: row.created_at }, rpSig: sig.sig ? { ...sig.sig, fingerprint: sig.fingerprint || '' } : null }));
               done(); setActiveTab('approval');
               setTimeout(() => alert(`✅ ${sig.name}'s RPIC signature (signed ${sig.date ? fmtDate(sig.date) : ''} in the planner) is now on “${row.job.title || 'the job'}”.\n\nCheck the plan, then sign as CRP and approve. Save the job when you're done.`), 250);
             };
@@ -9916,7 +9979,7 @@ View in the Database & Settings tab.`);
             exportBackup: () => handleExportDb(),
             openPlanFile: () => planFileRef.current && planFileRef.current.click(),
             openJob: openDashJob,
-            openCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
+            openCloudJob, signCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
           };
           const jumpToDbSection = (id) => {
             const fe = document.querySelector(`[data-dbfold="${id}"]`);
@@ -10268,6 +10331,21 @@ View in the Database & Settings tab.`);
                       </div>
                     </div>
                   </div>);
+              })()}
+              {signDlg && (() => {
+                const isRp = signDlg.role !== 'crp', win = opWindow(overview);
+                const f = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return d && m && y ? d + '/' + m + '/' + y : iso; };
+                const res = (risks || []).filter(r => String(r.hazard || '').trim());
+                const high = res.filter(r => /HIGH|EXTREME/i.test(riskBand(r.resL, r.resC).short || '')).length;
+                return <SignDialog role={signDlg.role} name={isRp ? (approval.rpName || signName || auth.email) : (signName || approval.crpName)} arn={isRp ? approval.rpArn : approval.crpArn}
+                  by={signedIn ? { email: auth.email } : null} declaration={RPIC_DECLARATION}
+                  summary={[['Job', getOpTitle(overview)], ['Date(s)', [f(win.sd), win.ed && win.ed !== win.sd ? '→ ' + f(win.ed) : ''].filter(Boolean).join(' ')], ['Location', overview.location],
+                    ['RPA', (overview.rpaTypes || []).join(', ')], ['Operation', (jsa.operationTypes || []).join(', ')], ['Max height', jsa.maxOperatingHeightAgl ? jsa.maxOperatingHeightAgl + ' ft AGL' : ''],
+                    ['Risks', res.length ? `${res.length} in the register${high ? ` · ${high} still high after controls` : ''}` : 'None recorded'],
+                    ['NOTAMs', String(approval.notams || '').trim() ? 'Checked and recorded' : 'Not recorded yet']]}
+                  review={[['preliminary', 'Plan & map', 'fa-map'], ['jsa', 'JSA & risks', 'fa-triangle-exclamation'], ['approval', 'NOTAMs & authorisation', 'fa-file-signature']]}
+                  onReview={(tab) => { setSignDlg(null); setActiveTab(tab); }}
+                  onSign={(sig) => doSignature(signDlg.role, sig)} onClose={() => setSignDlg(null)} />;
               })()}
               {reqBypass && (() => {
                 const b = reqBypass, items = reqMissing(b.tab), ok = b.ids.size > 0 && b.declared && String(b.reason || '').trim().length >= 10;
@@ -13730,6 +13808,7 @@ View in the Database & Settings tab.`);
                               </div>
                               {crpSignBlocked && !approval.crpSigned && <div className="text-xs text-slate-500 print:hidden" data-sign-note="crp"><i className="fa-solid fa-lock mr-1"></i>{crpSignBlocked}</div>}
                               {approval.crpSigned && approval.crpSignedBy && <div className="text-[11px] text-slate-500 print:hidden"><i className="fa-solid fa-user-check mr-1 text-emerald-600"></i>Signed in the planner by {approval.crpSignedBy.name || approval.crpSignedBy.email} ({approval.crpSignedBy.email})</div>}
+                              {approval.crpSigned && approval.crpSig && <SigShown sig={approval.crpSig} name={approval.crpName} role="crp" />}
                             </div>
 
                             {/* RPIC Signature Block */}
@@ -13762,6 +13841,7 @@ View in the Database & Settings tab.`);
                               </div>
                               {rpSignBlocked && !approval.rpSigned && <div className="text-xs text-slate-500 print:hidden" data-sign-note="rp"><i className="fa-solid fa-lock mr-1"></i>{rpSignBlocked}</div>}
                               {approval.rpSigned && approval.rpSignedBy && !approval.rpRemote && <div className="text-[11px] text-slate-500 print:hidden"><i className="fa-solid fa-user-check mr-1 text-emerald-600"></i>Signed in the planner by {approval.rpSignedBy.name || approval.rpSignedBy.email} ({approval.rpSignedBy.email})</div>}
+                              {approval.rpSigned && approval.rpSig && !approval.rpRemote && <SigShown sig={approval.rpSig} name={approval.rpName} role="rp" />}
                               {/* Remote signing (v5.51) */}
                               <div data-rp-remote="1" className="print:hidden border-t border-slate-100 pt-3">
                                 {approval.rpSigned && approval.rpRemote ? (
@@ -13774,11 +13854,12 @@ View in the Database & Settings tab.`);
                                   </div>
                                 ) : !approval.rpSigned && (
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <button type="button" data-rp-send="1" onClick={sendForRpicSign} className="text-xs px-2.5 py-1.5 rounded bg-violet-600 text-white font-semibold hover:bg-violet-700"><i className="fa-solid fa-paper-plane mr-1"></i>Send to RPIC for signing</button>
+                                    {isCrpCloud && <button type="button" data-rp-ask="1" disabled={askingRpic} onClick={askRpicSign} className="text-xs px-2.5 py-1.5 rounded bg-violet-600 text-white font-semibold hover:bg-violet-700 disabled:opacity-50"><i className="fa-solid fa-envelope mr-1"></i>{askingRpic ? 'Saving and sending…' : `Email ${approval.rpName ? approval.rpName.split(' ')[0] : 'the RPIC'} to log in and sign`}</button>}
+                                    <button type="button" data-rp-send="1" onClick={sendForRpicSign} className={isCrpCloud ? 'text-xs px-2.5 py-1.5 rounded border border-violet-300 bg-white text-violet-800 font-semibold hover:bg-violet-50' : 'text-xs px-2.5 py-1.5 rounded bg-violet-600 text-white font-semibold hover:bg-violet-700'}><i className="fa-solid fa-paper-plane mr-1"></i>{isCrpCloud ? 'No login? Send a sign-off file' : 'Send to RPIC for signing'}</button>
                                     <label className="text-xs px-2.5 py-1.5 rounded border border-violet-300 bg-white text-violet-800 font-semibold hover:bg-violet-50 cursor-pointer"><i className="fa-solid fa-file-import mr-1"></i>Import signed reply
                                       <input type="file" accept=".json,application/json" className="hidden" data-rp-import="1" onChange={importRpicSignoff} />
                                     </label>
-                                    {approval.rpRequest && <span className="text-[11px] text-slate-500">Sent {new Date(approval.rpRequest.sentAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{approval.rpRequest.fingerprint !== planFp && planFp ? ' · plan changed since — send again' : ''}</span>}
+                                    {approval.rpRequest && <span className="text-[11px] text-slate-500" data-rp-requested={approval.rpRequest.via || 'file'}>{approval.rpRequest.via === 'email' ? 'Emailed to ' + (approval.rpRequest.to || 'the RPIC') + ' ' : 'Sent '}{new Date(approval.rpRequest.sentAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{approval.rpRequest.fingerprint !== planFp && planFp ? ' · plan changed since — send again' : ''}</span>}
                                   </div>
                                 )}
                               </div>

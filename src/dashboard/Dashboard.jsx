@@ -312,7 +312,8 @@ function MyJobs({ c, a }) {
     <div key={j.id} className="flex items-center gap-3 py-2" data-crew-job={j.id}>
       <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800 truncate">{j.title || j.op_id || 'Untitled job'}</div>
         <div className="text-xs text-slate-500 truncate">{[fmtD(j.start_date), j.op_id, j.myRole ? 'You: ' + ROLE[j.myRole] : ''].filter(Boolean).join(' · ')}</div></div>
-      <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${st[1]}`}>{st[0]}</span>
+      {j.signState === 'with_crp' && <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800" data-crew-signed={j.id}>Signed · with the CRP</span>}
+      {j.toSign ? <Btn kind="primary" onClick={() => a.signCloudJob(j)} data-crew-sign={j.id}><i className="fa-solid fa-pen-nib mr-1"></i>Sign</Btn> : <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${st[1]}`}>{st[0]}</span>}
       <Btn onClick={() => a.openCloudJob(j)} data-crew-open={j.id}>{j.status === 'completed' ? 'View' : 'Open'}</Btn>
     </div>); })}</div>;
 }
@@ -534,6 +535,17 @@ export default function Dashboard({ d, a }) {
           <i className={`fa-solid ${edit ? 'fa-check' : 'fa-sliders'}`}></i>{edit ? 'Done' : 'Edit dashboard'}
         </button>
       </div>
+      {d.crewMode && d.crew && (d.crew.jobs || []).some(j => j.toSign) && (
+        <div className="rounded-xl border-2 border-violet-300 bg-violet-50 p-3 sm:p-4" data-to-sign="1">
+          <div className="flex items-center gap-2 mb-2"><i className="fa-solid fa-pen-nib text-violet-700"></i><h3 className="font-bold text-violet-900 text-sm sm:text-base flex-1">Waiting for your signature</h3></div>
+          <div className="divide-y divide-violet-200">{(d.crew.jobs || []).filter(j => j.toSign).map(j => (
+            <div key={j.id} className="flex items-center gap-3 py-2" data-to-sign-job={j.id}>
+              <div className="flex-1 min-w-0"><div className="text-sm font-semibold text-slate-800 truncate">{j.title || j.op_id || 'Untitled job'}</div>
+                <div className="text-xs text-slate-600 truncate">{[fmtD(j.start_date), j.op_id, 'You: RPIC', j.askedAt ? 'asked ' + fmtD(j.askedAt) : ''].filter(Boolean).join(' · ')}</div></div>
+              <Btn kind="primary" onClick={() => a.signCloudJob(j)} data-to-sign-go={j.id}>Review &amp; sign</Btn>
+            </div>))}</div>
+        </div>
+      )}
       {edit && (
         <div className="rounded-xl border border-dashed border-violet-300 bg-violet-50/60 p-3 text-sm" data-dash-tray="1">
           <div className="text-violet-900 font-semibold mb-1.5">Customise</div>

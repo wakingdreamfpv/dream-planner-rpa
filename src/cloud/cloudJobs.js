@@ -61,9 +61,8 @@ export function useCloudJobs(sb, me) {
           publish('wdObsWaiting', (ob || []).map(r => ({ ...r, job: jById[r.job_id] || null })), 'wd-obs-waiting'); } catch (e) {}
       } catch (e) { /* offline: try again later */ }
     };
-    const onSaved = async (e) => {
-      const d = e.detail || {}; if (!d.uid) return;
-      try {
+    // the job + who is on it, in the cloud; returns the job id
+    const syncJob = async (d) => {
         await loadPeople();
         const row = { plan_uid: d.uid, op_id: d.opId || null, title: d.title || '', status: d.status || 'draft', start_date: d.startDate || null, end_date: d.endDate || d.startDate || null,
           plan: slimPlan(d.plan), updated_by: me.id, updated_at: new Date().toISOString() };
@@ -78,9 +77,28 @@ export function useCloudJobs(sb, me) {
         for (const g of gone) await sb.from('job_crew').delete().eq('job_id', job.id).eq('person_id', g.person_id);
         if (want.size) await sb.from('job_crew').upsert([...want].map(([person_id, job_role]) => ({ job_id: job.id, person_id, job_role })), { onConflict: 'job_id,person_id' });
         const unmatched = (d.crew || []).filter(c => !findPerson(c.name, c.email)).map(c => c.name);
-        emit('wd-job-synced', { uid: d.uid, ok: true, jobId: job.id, crew: want.size, unmatched });
-      } catch (err) { emit('wd-job-synced', { uid: d.uid, ok: false, error: String((err && err.message) || err) }); }
+        return { jobId: job.id, crew: want.size, unmatched };
     };
+    const onSaved = async (e) => {
+      const d = e.detail || {}; if (!d.uid) return;
+      try { const r = await syncJob(d); emit('wd-job-synced', { uid: d.uid, ok: true, ...r }); }
+      catch (err) { emit('wd-job-synced', { uid: d.uid, ok: false, error: String((err && err.message) || err) }); }
+    };
+    // v7.16: ask the RPIC to log in and sign: save the job to the cloud now, then email them
+    const onAskSign = async (e) => {
+      const d = e.detail || {};
+      try {
+        if (!d.uid) throw new Error('Save the job first');
+        const r = await syncJob(d);
+        emit('wd-job-synced', { uid: d.uid, ok: true, ...r });
+        const { data, error } = await sb.functions.invoke('notify', { body: { event: 'rpic_sign_request', job_id: r.jobId, name: d.name || '' } });
+        if (data && data.reason) { emit('wd-rpic-request-result', { ok: false, reason: data.reason, name: data.name || d.name, email: data.email }); return; }
+        if (error || (data && data.error)) throw new Error((data && data.error) || error.message);
+        emit('wd-rpic-request-result', { ok: true, sent: (data && data.sent) || 0, name: data && data.name, email: data && data.email, message: data && data.message });
+        refreshInbox();
+      } catch (err) { emit('wd-rpic-request-result', { ok: false, error: String((err && err.message) || err) }); }
+    };
+    window.addEventListener('wd-request-rpic-sign', onAskSign);
     let pubTimer = null;
     const onPublish = (e) => {
       const d = e.detail || {}; clearTimeout(pubTimer);
@@ -142,7 +160,7 @@ export function useCloudJobs(sb, me) {
     window.addEventListener('wd-currency-refresh', loadCurrency);
     loadPeople().then(() => { refreshInbox(); loadCurrency(); }); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
-    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
+    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-request-rpic-sign', onAskSign); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
       window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
 
@@ -154,18 +172,29 @@ export function useCloudJobs(sb, me) {
       try {
         const { data: pe } = await sb.from('people').select('id,full_name,total_hours').eq('user_id', me.id).maybeSingle();
         personId = pe && pe.id;
-        const [{ data: shared }, { data: jobs }, { data: roles }, { data: hours }, { data: grants }] = await Promise.all([
+        const [{ data: shared }, { data: jobs }, { data: roles }, { data: hours }, { data: grants }, sigs] = await Promise.all([
           sb.from('shared_data').select('area,data,updated_at'),
-          sb.from('jobs').select('id,plan_uid,op_id,title,status,start_date,end_date,updated_at').order('start_date', { ascending: false }),
+          sb.from('jobs').select('id,plan_uid,op_id,title,status,start_date,end_date,updated_at,approval:plan->approval').order('start_date', { ascending: false }),
           sb.from('job_crew').select('job_id,job_role').eq('person_id', personId || '00000000-0000-0000-0000-000000000000'),
           sb.from('pilot_hours').select('rpa_type,flights,seconds,last_flown'),
           sb.from('access_grants').select('id,area,status,requested_at,decided_at'),
+          // v7.16: my own RPIC signatures, so Home can show which jobs still need mine
+          Promise.resolve(sb.from('job_flights').select('id,job_id,created_at,flight').eq('person_id', personId || '00000000-0000-0000-0000-000000000000').order('created_at', { ascending: false }).limit(400)).catch(() => ({ data: [] })),
         ]);
         if (dead) return;
         const sh = {}; (shared || []).forEach(s => { sh[s.area] = s.data; });
         const role = {}; (roles || []).forEach(r => { role[r.job_id] = r.job_role; });
+        const mySig = {}; ((sigs && sigs.data) || []).filter(f => f.flight && f.flight.kind === 'rpic_signature').forEach(f => { const at = f.created_at || new Date().toISOString(); if (!mySig[f.job_id] || String(at) > String(mySig[f.job_id])) mySig[f.job_id] = at; });
+        const sign = (j) => {
+          const ap = j.approval || (j.plan && j.plan.approval) || {};
+          if (role[j.id] !== 'rpic' || !['draft', 'approved'].includes(j.status || 'draft')) return {};
+          if (ap.rpSigned) return { signState: 'signed' };
+          const asked = ap.rpRequest && ap.rpRequest.sentAt;
+          if (mySig[j.id] && !(asked && String(asked) > String(mySig[j.id]))) return { signState: 'with_crp', mySignedAt: mySig[j.id] };
+          return { signState: 'to_sign', toSign: true, askedAt: asked || null };
+        };
         publish('wdCrew', { personId, name: (pe && pe.full_name) || me.full_name || '', role: me.role, inductionHours: pe && pe.total_hours,
-          company: sh.company || null, shared: sh, jobs: (jobs || []).map(j => ({ ...j, myRole: role[j.id] || null })), hours: hours || [], grants: grants || [] }, 'wd-crew');
+          company: sh.company || null, shared: sh, jobs: (jobs || []).map(j => { const { plan, approval, ...rest } = j; return { ...rest, myRole: role[j.id] || null, ...sign(j) }; }), hours: hours || [], grants: grants || [] }, 'wd-crew');
       } catch (e) { /* offline */ }
     };
     const onOpen = async (e) => {
@@ -194,7 +223,7 @@ export function useCloudJobs(sb, me) {
         if (error) throw error;
         let emailed = false;
         try { const r = await sb.functions.invoke('notify', { body: { event: 'rpic_signed', flight_id: data.id } }); emailed = !!(r && r.data && r.data.sent); } catch (x) { /* the CRP still sees it in Awaiting action */ }
-        emit('wd-signature-result', { ok: true, emailed });
+        emit('wd-signature-result', { ok: true, emailed }); load();
       } catch (err) { emit('wd-signature-result', { ok: false, error: String((err && err.message) || err) }); }
     };
     window.addEventListener('wd-push-signature', onSign);
