@@ -420,7 +420,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             ? `${c.a.label} and ${c.b.label} share ${Math.round(c.ov[0])}–${Math.round(c.ov[1])} MHz. Both hop or spread across the band, so they normally coexist, but expect reduced range in a busy 2.4 GHz environment — do a range check with everything on.`
             : `${c.a.label} overlaps ${c.b.label} at ${Math.round(c.ov[0])}–${Math.round(c.ov[1])} MHz — move a channel or agree a split before flight.`;
         // SVG string (used inline in the app and in the PDF)
-        const rfChartSvg = (items) => {
+        const rfChartSvg = (items, forPdf) => { // v7.12: the AU class-licence bands are a planner aid only, not printed
           const L = (items || []).map(i => ({ ...i, r: rfRanges(i.mhz) })).filter(i => i.r.length);
           const groups = [
             { name: 'VHF (airband)', lo: 100, hi: 180 }, { name: 'UHF (433 / CB / radios / mics)', lo: 400, hi: 700 }, { name: '868 / 915 MHz', lo: 850, hi: 960 },
@@ -445,8 +445,8 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             const h = 18 + Math.max(1, rows.length) * rowH + 16;
             body += `<rect x="0" y="${y}" width="${W}" height="${h}" fill="#f8fafc" stroke="#e2e8f0"/>`;
             body += `<text x="6" y="${y + 12}" font-size="10" font-weight="700" fill="#0f172a">${esc2(g.name)}</text>`;
-            RF_LIPD.forEach(([a, b]) => { if (b > g.lo && a < g.hi) body += `<rect x="${X(a)}" y="${y + 16}" width="${Math.max(1, X(b) - X(a))}" height="${h - 32}" fill="#dbeafe" opacity="0.55"/>`; });
-            conf.forEach(c => { if (c.ov[1] > g.lo && c.ov[0] < g.hi) body += `<rect x="${X(c.ov[0])}" y="${y + 16}" width="${Math.max(2, X(c.ov[1]) - X(c.ov[0]))}" height="${h - 32}" fill="${c.sev === 'clash' ? '#fecaca' : '#fde68a'}" opacity="0.85"/>`; });
+            if (!forPdf) RF_LIPD.forEach(([a, b]) => { if (b > g.lo && a < g.hi) body += `<rect x="${X(a)}" y="${y + 16}" width="${Math.max(1, X(b) - X(a))}" height="${h - 32}" fill="#dbeafe" opacity="0.55"/>`; });
+            conf.forEach(c => { if (c.ov[1] > g.lo && c.ov[0] < g.hi) body += `<rect x="${X(c.ov[0])}" y="${y + 16}" width="${Math.max(2, X(c.ov[1]) - X(c.ov[0]))}" height="${h - 32}" fill="${c.sev === 'clash' || c.sev === 'pyro' ? '#fcd34d' : '#fef3c7'}" opacity="0.85"/>`; });
             rows.forEach((it, k) => {
               const ry = y + 18 + k * rowH, us = it.side === 'us';
               const col = it.kind === 'pyro' ? '#dc2626' : us ? (it.kind === 'video' ? '#0e7490' : it.kind === 'control' ? '#2563eb' : it.kind === 'comms' ? '#7c3aed' : '#64748b') : (it.kind === 'video' ? '#c2410c' : it.kind === 'control' ? '#d97706' : it.kind === 'comms' ? '#9333ea' : '#a16207');
@@ -457,7 +457,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             for (let f = Math.ceil(g.lo / step) * step; f <= g.hi; f += step) body += `<line x1="${X(f)}" x2="${X(f)}" y1="${y + 16}" y2="${y + h - 14}" stroke="#cbd5e1" stroke-width="0.5"/><text x="${X(f)}" y="${ty}" font-size="7.5" text-anchor="middle" fill="#64748b">${f}</text>`;
             y += h + 6;
           });
-          body += `<text x="6" y="${y + 8}" font-size="8" fill="#64748b">MHz · ● ours  ○ others · <tspan fill="#2563eb">■</tspan> control  <tspan fill="#0e7490">■</tspan> video  <tspan fill="#7c3aed">■</tspan> comms  <tspan fill="#dc2626">■</tspan> pyro · red = overlap to resolve · amber = shared hopping band · pale blue = AU class-licence band</text>`;
+          body += `<text x="6" y="${y + 8}" font-size="8" fill="#64748b">MHz · ● ours  ○ others · <tspan fill="#2563eb">■</tspan> control  <tspan fill="#0e7490">■</tspan> video  <tspan fill="#7c3aed">■</tspan> comms  <tspan fill="#dc2626">■</tspan> pyro · yellow = overlap to look at · pale yellow = shared hopping band${forPdf ? '' : ' · pale blue = AU class-licence band (planner only)'}</text>`;
           return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${y + 14}" width="100%" style="display:block;font-family:Inter,Arial,sans-serif">${body}</svg>`;
         };
         const rfSummaryText = (items, who) => {
@@ -5877,11 +5877,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               const rf=jsa.rfPlan||{};
               if(rf.enabled!==false&&(rf.items||[]).some(i=>rfRanges(i.mhz).length)){
                 P.push('<div style="break-inside:avoid;">'+sub('RF Coordination — Radio & Video Bands'));
-                P.push('<div style="border:1px solid '+S2+';border-radius:3pt;padding:3pt;">'+rfChartSvg(rf.items)+'</div>');
+                P.push('<div style="border:1px solid '+S2+';border-radius:3pt;padding:3pt;">'+rfChartSvg(rf.items, true)+'</div>');
                 P.push('<table style="width:100%;border-collapse:collapse;font-size:7pt;margin-top:3pt;">'+rf.items.filter(i=>rfRanges(i.mhz).length).map(i=>'<tr><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';color:'+(i.side==='us'?'#0e7490':'#b45309')+';font-weight:700;width:12%;">'+(i.side==='us'?'OURS':'OTHERS')+'</td><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';">'+esc(i.label)+(i.ch!=null?' (CH'+i.ch+(i.bw&&i.plan!=='uhfcb'?', '+i.bw+' MHz':'')+')':'')+(i.power?' · '+esc(i.power):'')+(i.who?' <span style="color:'+S6+';">· '+esc(i.who)+'</span>':'')+'</td><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';font-family:monospace;white-space:nowrap;text-align:right;">'+esc(rfFmt(rfRanges(i.mhz)))+'</td></tr>').join('')+'</table>');
                 const cf=rfConflicts(rf.items);
-                P.push('<div style="font-size:6.8pt;margin-top:3pt;">'+(cf.length?cf.map(c=>'<div style="color:'+(c.sev==='clash'||c.sev==='pyro'?'#b91c1c':'#b45309')+';font-weight:700;">'+(c.sev==='clash'?'&#9940; ':c.sev==='pyro'?'&#128293; ':'&#9888; ')+esc(rfConflictText(c))+'</div>').join(''):'<div style="color:#15803d;font-weight:700;">&#10003; No overlaps between our systems and the others listed.</div>')+'</div>');
-                if(rf.notes) P.push('<div style="font-size:7pt;color:'+S8+';margin-top:3pt;white-space:pre-wrap;"><b>Agreements:</b> '+esc(rf.notes)+'</div>');
+                P.push('<div style="font-size:6.8pt;margin-top:3pt;">'+(cf.length?cf.map(c=>'<div style="color:#854d0e;background:#fefce8;border-left:3px solid #eab308;padding:1.5pt 4pt;margin-bottom:1.5pt;font-weight:700;">'+(c.sev==='clash'?'&#9888; ':c.sev==='pyro'?'&#128293; ':'&#9888; ')+esc(rfConflictText(c))+'</div>').join(''):'<div style="color:#15803d;font-weight:700;">&#10003; No overlaps between our systems and the others listed.</div>')+'</div>');
+                if(String(rf.notes||'').trim()) P.push('<div style="margin-top:5pt;border:2px solid #16a34a;background:#f0fdf4;border-radius:5pt;padding:6pt 9pt;color:#14532d;"><div style="font-size:9pt;font-weight:900;text-transform:uppercase;letter-spacing:.5pt;">&#10004; RF plan agreed</div><div style="font-size:9.5pt;font-weight:700;white-space:pre-wrap;margin-top:2pt;">'+esc(rf.notes)+'</div></div>');
                 P.push('</div>');
               }
             }
@@ -12783,8 +12783,8 @@ View in the Database & Settings tab.`);
                                   <select value={it.plan} data-rf-mode="1" onChange={e => setCh(it, it.ch, it.bw, e.target.value)} className="px-1 py-0.5 text-xs border border-gray-300 rounded bg-white" title="Stock: what DJI's manual lists (1 channel at 40 / 60 MHz). FCC mode: 3 channels at 40 / 60 MHz, 7 at 20 MHz.">
                                     <option value="o4">Stock (1 channel at 40 / 60 MHz)</option><option value="o4fcc">FCC mode (CH1–3 at 40 / 60 MHz)</option></select>
                                 </div>}
-                                {(() => { const rs = rfRanges(it.mhz || ''), five = rs.filter(r => r[1] > 5600 && r[0] < 6000); const out = five.some(r => r[0] < 5725 || r[1] > 5850);
-                                  return out ? <div className="col-span-12 text-[10px] font-semibold text-red-700" data-rf-outside="1"><i className="fa-solid fa-triangle-exclamation mr-1"></i>{it.mhz} MHz goes outside 5725–5850 MHz, the 5.8 GHz band in Australia's class licence (LIPD). Pick another channel or a narrower bandwidth.</div> : null; })()}
+                                {(() => { const rs = rfRanges(it.mhz || ''), five = rs.filter(r => r[1] > 5600 && r[0] < 6000); const lip = RF_LIPD.find(b => b[0] > 5600 && b[0] < 6000) || [5725, 5875]; const out = five.some(r => r[0] < lip[0] || r[1] > lip[1]);
+                                  return out ? <div className="col-span-12 text-[10px] font-semibold text-yellow-800 bg-yellow-50 border-l-4 border-yellow-400 rounded px-1.5 py-0.5" data-rf-outside="1"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Check: {it.mhz} MHz goes outside {lip[0]}–{lip[1]} MHz, the 5.8 GHz band in Australia's class licence (LIPD). Planner note only (not printed).</div> : null; })()}
                                 {it.plan === 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">FCC mode channels: 40 MHz CH1 5735 / CH2 5795 / CH3 5855; 60 MHz taken as the same centres. Confirm the channel and frequency in the goggles.</div>}
                                 {it.note && it.plan !== 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">{it.note}</div>}
                               </div>
@@ -12830,10 +12830,11 @@ View in the Database & Settings tab.`);
                                 <div className="mt-4 bg-white border border-slate-200 rounded-lg p-2" data-rf-chart="1" dangerouslySetInnerHTML={{ __html: rfChartSvg(rf.items) }}></div>
                                 <div className="mt-2 space-y-1" data-rf-conflicts="1">
                                   {conf.length === 0 ? <div className="text-xs text-emerald-700 font-semibold"><i className="fa-solid fa-circle-check mr-1"></i>No overlaps between our systems and the others listed.</div>
-                                    : conf.map((c, k) => <div key={k} className={`text-xs font-semibold ${c.sev === 'clash' || c.sev === 'pyro' ? 'text-red-700' : 'text-amber-700'}`}>{c.sev === 'clash' ? '⛔' : c.sev === 'pyro' ? '🔥' : '⚠'} {rfConflictText(c)}</div>)}
+                                    : conf.map((c, k) => <div key={k} className={`text-xs font-semibold rounded px-2 py-1 ${c.sev === 'clash' || c.sev === 'pyro' ? 'bg-yellow-50 border-l-4 border-yellow-400 text-yellow-900' : 'text-amber-800'}`}>{c.sev === 'pyro' ? '🔥' : '⚠'} {rfConflictText(c)}</div>)}
                                 </div>
                               </>)}
-                              <textarea value={rf.notes || ''} onChange={e => setRf(r => ({ ...r, notes: e.target.value }))} rows="2" placeholder="Agreements / notes (e.g. Broadcast confirmed 7 GHz only; light sticks 2.4 GHz; we stay on DJI CH4; power-up test at 17:00)" className="mt-3 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md bg-white" />
+                              <textarea value={rf.notes || ''} onChange={e => setRf(r => ({ ...r, notes: e.target.value }))} rows="2" placeholder="Agreements / notes (e.g. Broadcast confirmed 7 GHz only; light sticks 2.4 GHz; we stay on DJI CH4; power-up test at 17:00)" data-rf-notes="1" className={`mt-3 w-full px-2 py-1.5 text-sm rounded-md ${String(rf.notes || '').trim() ? 'border-2 border-green-600 bg-green-50 font-bold text-green-900' : 'border border-gray-300 bg-white'}`} />
+                              {String(rf.notes || '').trim() && <div className="text-[11px] font-bold text-green-700 mt-0.5" data-rf-agreed="1"><i className="fa-solid fa-circle-check mr-1"></i>RF plan agreed: prints in a green box in the PDF.</div>}
                               </>)}
                             </>);
                           })()}
