@@ -264,7 +264,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const settings = (doc && doc.settings) || {};
 
   useEffect(() => { const k = (e) => {
-    if (e.key === 'Escape') { if (draftRef.current) setDraft(null); else if (toolRef.current !== 'select') setTool('select'); }
+    if (e.key === 'Escape' && !/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) { if (draftRef.current) setDraft(null); else if (toolRef.current !== 'select') setTool('select'); else { setSel(null); setSelPt(null); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) { e.preventDefault(); undo(); }
     if (e.key === 'Enter' && draftRef.current && !/INPUT|TEXTAREA/.test((e.target || {}).tagName || '')) finishDraft();
   }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); });
@@ -740,6 +740,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
         </main>
 
         <aside className={`w-[320px] max-w-[92vw] shrink-0 bg-white border-l border-slate-200 overflow-y-auto p-3 space-y-4 lg:block lg:static ${mob === 'details' ? 'block absolute right-0 top-0 bottom-0 z-[900] shadow-2xl' : 'hidden'}`} data-ops-inspector="1" aria-label="Details">
+          {sel && <button type="button" data-ops-back="1" onClick={() => { setSel(null); setSelPt(null); setAckOpen(null); }} className="-mt-1 mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900"><i className="fa-solid fa-arrow-left"></i>Back to checks &amp; everything on the map</button>}
           {selZone && <div className="space-y-3" data-ops-zone={selZone.id}>
             <div className="flex items-center gap-2"><span className="w-4 h-4 rounded" style={{ background: kindStyle(selZone.kind, settings).color }}></span><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">Zone · {KINDS[selZone.kind].label}</span>{!readOnly && <button type="button" onClick={delSel} className="text-xs text-red-600"><i className="fa-solid fa-trash-can mr-1"></i>Delete</button>}</div>
             <div><label className={lbl} htmlFor="oz-name">Name</label><input id="oz-name" className={inp} disabled={readOnly} value={selZone.name || ''} onChange={(e) => setZone(selZone.id, { name: e.target.value })} /></div>
@@ -772,7 +773,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               <div><label className={lbl} htmlFor="op-drone">Drone</label><select id="op-drone" className={inp} disabled={readOnly} value={selPathO.drone || ''} onChange={(e) => setPath(selPathO.id, { drone: e.target.value })}>{drones.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
               <SpeedField id="op-speed" label="Speed" ms={selPathO.speed == null ? '' : selPathO.speed} disabled={readOnly} onMs={(v) => setPath(selPathO.id, { speed: v || 0 })} />
             </div>
-            <div><div className={lbl}>Points (height above take-off)</div>
+            <div><div className={lbl}>Points (height above take-off) <span className="font-normal text-slate-400">· dot = the leg to the next point: <span style={{ color: '#0f172a' }}>●</span> clear <span style={{ color: '#d97706' }}>●</span> check <span style={{ color: '#dc2626' }}>●</span> fix</span></div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-52 overflow-y-auto">{selPathO.pts.map((p, i) => (
                 <div key={i} className={`flex items-center gap-2 px-2 py-1 text-sm ${selPt === i ? 'bg-violet-50' : ''}`} data-ops-pt={i}>
                   <span className="w-6 font-bold text-slate-600">{i + 1}</span>
