@@ -1827,6 +1827,24 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           { id: 'weightUnder2kg',       label: 'RPA MTOW ≤ 2 kg' },
         ];
 
+        // v7.12: Event Logistics & Key Personnel fields can be renamed, hidden, removed, added and reordered (per job, with
+        // a company default for new jobs). The five original fields keep their values where they always were (oonp.callTime,
+        // oonp.venueContact / venueContactPhone …) so older plans, the PDF and signatures are unchanged.
+        const DEFAULT_LOGISTICS = [
+          { id: 'callTime', label: 'Call Time', kind: 'text', builtin: true, ph: 'e.g. 4:00 PM 21AUG2026' },
+          { id: 'venueContact', label: 'Venue Point of Contact', kind: 'contact', builtin: true },
+          { id: 'rfCoordinator', label: 'RF / Comms Coordinator', kind: 'contact', builtin: true },
+          { id: 'mediaLead', label: 'Media / Broadcast Lead', kind: 'contact', builtin: true },
+          { id: 'pyroCoordinator', label: 'Pyro / Fireworks Coordinator', kind: 'contact', builtin: true },
+        ];
+        const logisticsRows = (oonp, tmpl) => {
+          if (Array.isArray(oonp && oonp.logisticsRows)) return oonp.logisticsRows;
+          const base = Array.isArray(tmpl) && tmpl.length ? tmpl : DEFAULT_LOGISTICS;
+          // a job filled in before a field was removed from the default still shows that field (nothing is lost)
+          const extra = DEFAULT_LOGISTICS.filter(d => !base.some(b => b.id === d.id) && oonp && (oonp[d.id] || oonp[d.id + 'Phone']));
+          return [...base.map(b => (b.off && oonp && (oonp[b.id] || oonp[b.id + 'Phone']) ? { ...b, off: false } : b)), ...extra];
+        };
+        const logisticsVal = (oonp, r) => (r.builtin ? { value: (oonp || {})[r.id] || '', name: (oonp || {})[r.id] || '', phone: (oonp || {})[r.id + 'Phone'] || '' } : { value: r.value || '', name: r.name || '', phone: r.phone || '' });
         const DEFAULT_OONP_CHECKLISTS = {
           consent: [
             { id: 'venueApproval',            label: 'Venue Approval — formal permission obtained for indoor/outdoor OONP flight' },
@@ -4622,6 +4640,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [oonp, setOonp] = useState(getInitialOonp);
           const handleOonpChange = (e) => { const {name, value, type, checked} = e.target; setOonp(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value })); };
           const handleOonpToggle = (name) => setOonp(prev => ({ ...prev, [name]: !prev[name] }));
+          const [logisticsEdit, setLogisticsEdit] = useState(false), [logisticsMsg, setLogisticsMsg] = useState('');
 
           // ── Dynamic OONP checklist helpers ──────────────────────────────────
           // Which section header's edit pencil is active; null = none
@@ -5358,13 +5377,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const oonpHtml=oonpMode?(
               '<div style="border-left:4px solid #f59e0b;background:#fffbeb;border-radius:0 4pt 4pt 0;padding:10pt;margin:10pt 0;break-inside:avoid;">'
               +'<div style="font-weight:700;font-size:10pt;color:#78350f;margin-bottom:6pt;">⚡ OONP'+(jsa.oonpPathway?' — '+esc(jsa.oonpPathway==='Custom'&&jsa.oonpCustomPathway?jsa.oonpCustomPathway:jsa.oonpPathway):' — pathway not selected')+'</div>'
-              +grid(r2('Venue Contact',oonp.venueContact,'Contact Phone',oonp.venueContactPhone),
+              +grid(...(() => { // v7.12: the job's own logistics fields (hidden ones left out)
+                      const cells = []; logisticsRows(oonp, db.oonpLogisticsTemplate).filter(r => !r.off).forEach(r => { const v = logisticsVal(oonp, r);
+                        if (r.kind === 'contact') cells.push([r.label, v.name], [r.label.length > 18 ? 'Phone' : r.label + ' Phone', v.phone]); else cells.push([r.label, v.value]); });
+                      const out = []; for (let i = 0; i < cells.length; i += 2) out.push(r2(cells[i][0], cells[i][1], cells[i + 1] ? cells[i + 1][0] : '', cells[i + 1] ? cells[i + 1][1] : '')); return out; })(),
                     r2('RC Link',oonp.rcLink,'RC Freq',oonp.rcFreq),
                     r2('Video TX',oonp.videoTx,'Video Freq',oonp.videoFreq),
-                    r2('Call Time',oonp.callTime,'Media Format',oonp.mediaFormat),
-                    r2('RF Coordinator',oonp.rfCoordinator,'RF Phone',oonp.rfCoordinatorPhone),
-                    r2('Pyro Coordinator',oonp.pyroCoordinator,'Pyro Phone',oonp.pyroCoordinatorPhone),
-                    ...((oonp.mediaLead||oonp.mediaLeadPhone)?[r2('Media Lead',oonp.mediaLead,'Media Phone',oonp.mediaLeadPhone)]:[]))
+                    r2('Media Format',oonp.mediaFormat,'',''))
               +'<div style="font-size:7.5pt;font-weight:700;color:#92400e;margin:8pt 0 4pt;">INFORMED CONSENT</div>'
               +'<div style="display:grid;grid-template-columns:1fr 1fr;">'
               +( () => {
@@ -12999,40 +13018,46 @@ View in the Database & Settings tab.`);
 
                         {/* ── OONP: Event Logistics ── */}
                         <OonpSection label="Event Logistics & Key Personnel" icon="fa-calendar-star" oonpMode={oonpMode && isSectionVisible('logistics')}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Call Time</label>
-                              <input type="text" name="callTime" value={oonp.callTime} onChange={handleOonpChange} placeholder="e.g. 4:00 PM 21AUG2026" className="w-full px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Venue Point of Contact</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="venueContact" value={oonp.venueContact} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="venueContactPhone" value={oonp.venueContactPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                          {(() => {
+                            // v7.12: fields can be renamed, switched off, removed, added and reordered
+                            const rows = logisticsRows(oonp, db.oonpLogisticsTemplate);
+                            const setRows = (fn) => setOonp(prev => ({ ...prev, logisticsRows: fn(logisticsRows(prev, db.oonpLogisticsTemplate)).map(r => ({ ...r })) }));
+                            const upd = (id, ch) => setRows(rs => rs.map(r => r.id === id ? { ...r, ...ch } : r));
+                            const setVal = (r, key, v) => r.builtin ? setOonp(prev => ({ ...prev, [key === 'phone' ? r.id + 'Phone' : r.id]: v })) : upd(r.id, { [key]: v });
+                            const move = (i, d) => setRows(rs => { const n = [...rs], j = i + d; if (j < 0 || j >= n.length) return n; [n[i], n[j]] = [n[j], n[i]]; return n; });
+                            const fieldCls = 'px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white';
+                            const lab = 'block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider';
+                            const shown = logisticsEdit ? rows : rows.filter(r => !r.off);
+                            return (<div data-logistics="1">
+                              <div className="flex flex-wrap items-center justify-end gap-2 mb-3 print:hidden">
+                                {logisticsEdit && <button type="button" data-logistics-add="1" onClick={() => setRows(rs => [...rs, { id: 'lg' + Date.now().toString(36), label: 'New contact', kind: 'contact', name: '', phone: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded-md border border-amber-300 bg-white text-amber-900"><i className="fa-solid fa-plus mr-1"></i>Add a field</button>}
+                                {logisticsEdit && <button type="button" data-logistics-default="1" onClick={() => { updateDb('oonpLogisticsTemplate', rows.map(({ id, label, kind, builtin, ph, off }) => ({ id, label, kind, builtin, ph, off }))); setLogisticsMsg('Saved: new jobs start with these fields.'); }} className="text-xs font-semibold px-2.5 py-1 rounded-md border border-amber-300 bg-white text-amber-900"><i className="fa-solid fa-bookmark mr-1"></i>Use for new jobs</button>}
+                                {logisticsEdit && Array.isArray(oonp.logisticsRows) && <button type="button" onClick={() => setOonp(prev => { const { logisticsRows: _drop, ...rest } = prev; return rest; })} className="text-xs underline text-amber-900">Reset to default</button>}
+                                <button type="button" data-logistics-edit="1" onClick={() => { setLogisticsEdit(v => !v); setLogisticsMsg(''); }} className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${logisticsEdit ? 'border-amber-600 bg-amber-500 text-white' : 'border-amber-300 bg-white text-amber-900'}`}><i className={`fa-solid ${logisticsEdit ? 'fa-check' : 'fa-pen'} mr-1`}></i>{logisticsEdit ? 'Done' : 'Edit fields'}</button>
                               </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">RF / Comms Coordinator</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="rfCoordinator" value={oonp.rfCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="rfCoordinatorPhone" value={oonp.rfCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                              {logisticsMsg && <p className="text-xs text-emerald-700 mb-2" data-logistics-msg="1">{logisticsMsg}</p>}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {shown.map(r => { const v = logisticsVal(oonp, r), i = rows.indexOf(r);
+                                  return (<div key={r.id} data-logistics-row={r.id} className={logisticsEdit ? `border border-dashed rounded-lg p-2 ${r.off ? 'border-slate-300 opacity-60' : 'border-amber-300'}` : ''}>
+                                    {logisticsEdit ? <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                                      <input aria-label="Field name" data-logistics-label={r.id} value={r.label} onChange={e => upd(r.id, { label: e.target.value })} className="flex-1 min-w-[120px] px-2 py-1 text-xs font-bold uppercase tracking-wider border border-amber-300 rounded bg-white" />
+                                      <select aria-label="Field type" data-logistics-kind={r.id} value={r.kind} onChange={e => upd(r.id, { kind: e.target.value })} className="px-1 py-1 text-xs border border-amber-300 rounded bg-white"><option value="contact">Name + phone</option><option value="text">Text</option></select>
+                                      <button type="button" title={r.off ? 'Show' : 'Hide (switch off)'} aria-label={r.off ? 'Show field' : 'Hide field'} data-logistics-toggle={r.id} onClick={() => upd(r.id, { off: !r.off })} className="px-1.5 text-slate-600"><i className={`fa-solid ${r.off ? 'fa-eye-slash' : 'fa-eye'}`}></i></button>
+                                      <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="px-1 text-slate-500 disabled:opacity-30"><i className="fa-solid fa-arrow-up"></i></button>
+                                      <button type="button" aria-label="Move down" disabled={i === rows.length - 1} onClick={() => move(i, 1)} className="px-1 text-slate-500 disabled:opacity-30"><i className="fa-solid fa-arrow-down"></i></button>
+                                      <button type="button" aria-label="Delete field" data-logistics-del={r.id} onClick={() => setRows(rs => rs.filter(x => x.id !== r.id))} className="px-1.5 text-red-600"><i className="fa-solid fa-trash-can"></i></button>
+                                    </div> : <label className={lab}>{r.label}</label>}
+                                    {r.kind === 'contact'
+                                      ? <div className="flex gap-2">
+                                          <input type="text" name={r.builtin ? r.id : undefined} data-logistics-name={r.id} value={v.name} onChange={e => setVal(r, 'name', e.target.value)} placeholder="Name" className={'flex-1 min-w-0 ' + fieldCls} />
+                                          <input type="tel" name={r.builtin ? r.id + 'Phone' : undefined} data-logistics-phone={r.id} value={v.phone} onChange={e => setVal(r, 'phone', e.target.value)} placeholder="Phone" className={'w-32 ' + fieldCls} />
+                                        </div>
+                                      : <input type="text" name={r.builtin ? r.id : undefined} data-logistics-value={r.id} value={v.value} onChange={e => setVal(r, 'value', e.target.value)} placeholder={r.ph || ''} className={'w-full ' + fieldCls} />}
+                                  </div>); })}
                               </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Media / Broadcast Lead</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="mediaLead" value={oonp.mediaLead} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="mediaLeadPhone" value={oonp.mediaLeadPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Pyro / Fireworks Coordinator</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="pyroCoordinator" value={oonp.pyroCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="pyroCoordinatorPhone" value={oonp.pyroCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                              </div>
-                            </div>
-                          </div>
+                              {!shown.length && <p className="text-xs text-amber-800">No fields. Press Edit fields to add one.</p>}
+                            </div>);
+                          })()}
                         </OonpSection>
 
                         {/* ── OONP: Equipment & Frequencies ── */}
