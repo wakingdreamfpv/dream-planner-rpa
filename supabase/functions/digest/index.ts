@@ -101,6 +101,7 @@ Deno.serve(async (req) => {
         if (onlyPerson && (!p || p.id !== onlyPerson)) return;
         if (!p) { out.push(`${esc(c.name)} isn't in the crew list, so their currency can't be checked`); return; }
         c.needs.forEach((anyOf: string[]) => {
+          if (anyOf[0] === 'induction' && p.role === 'crp') return; // the CRP doesn't induct themselves
           const have = rows.filter((r) => r.person_id === p.id && anyOf.includes(r.competency));
           const ok = have.some((r) => r.status !== 'expired' && (!r.due || r.due >= (j.start_date || today)));
           if (!ok) out.push(`${esc(c.name)}: ${esc(anyOf.length > 1 ? 'type (' + anyOf.map(compLabel).join(' / ') + ')' : compLabel(anyOf[0]))} ${have.length ? 'not current on the day' : 'not certified'}`);
