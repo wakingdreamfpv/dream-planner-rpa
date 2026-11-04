@@ -344,6 +344,9 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         // Channel plans (v5.47). bws: { bandwidthMHz: { channel: centreMHz } }. Sources: DJI O4 Air Unit specs page; DJI O3 published table.
         const RF_PLANS = {
           o4: { name: 'DJI O4 5.8 GHz', bws: { 60: { 1: 5794.5 }, 40: { 1: 5794.5 }, 20: { 1: 5768.5, 2: 5789.5, 3: 5814.5 }, 10: { 1: 5768.5, 2: 5789.5, 3: 5814.5 } } },
+          // v7.12: O4 with FCC mode unlocked: 3 channels at 40 and 60 MHz, 7 at 20 MHz (published FPV frequency guides; DJI's manual only lists stock).
+          // The 60 MHz centres are taken as the 40 MHz ones: confirm in the goggles.
+          o4fcc: { name: 'DJI O4 5.8 GHz (FCC mode)', fcc: true, bws: { 60: { 1: 5735, 2: 5795, 3: 5855 }, 40: { 1: 5735, 2: 5795, 3: 5855 }, 20: { 1: 5669, 2: 5705, 3: 5741, 4: 5769, 5: 5790, 6: 5815, 7: 5876 } } },
           o3: { name: 'DJI O3 / Avatar 5.8 GHz', bws: { 20: RF_DJI_CH, 40: { 1: 5695, 2: 5770, 3: 5878, 8: 5839 } } },
           uhfcb: { name: 'UHF CB (AU)', bws: { 0.0125: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [i + 1, Math.round((476.425 + i * 0.025) * 10000) / 10000])) } },
         };
@@ -12748,8 +12751,8 @@ View in the Database & Settings tab.`);
                             const add = (side, p) => setRf(r => ({ ...r, items: [...r.items, { id: Date.now() + Math.random(), side, label: p ? p.label : '', who: side === 'us' ? (db.companyProfile && db.companyProfile.name) || 'Our team' : '', mhz: p ? p.mhz : '', kind: p ? p.kind : 'other', note: p && p.note || '', ch: p && p.ch, bw: p && p.bw, plan: p && p.plan, powers: p && p.powers, power: p && p.power || '' }] }));
                             const presetGroups = (side) => { const g = {}; RF_PRESETS[side].forEach(p => { (g[p.group || 'Other'] = g[p.group || 'Other'] || []).push(p); }); return Object.entries(g); };
                             const conf = rfConflicts(rf.items);
-                            const setCh = (it, ch, bw) => {
-                              const plan = it.plan || 'o3', bws = RF_PLANS[plan].bws, b = bws[bw] ? bw : +Object.keys(bws)[0];
+                            const setCh = (it, ch, bw, planOverride) => {
+                              const plan = planOverride || it.plan || 'o3', bws = RF_PLANS[plan].bws, b = bws[bw] ? bw : +Object.keys(bws)[0];
                               const c = bws[b][ch] ? ch : +Object.keys(bws[b])[0];
                               upd(it.id, { plan, ch: c, bw: b, mhz: rfPlanMhz(plan, c, b) || it.mhz });
                             };
@@ -12775,7 +12778,15 @@ View in the Database & Settings tab.`);
                                     </select>
                                   </div>
                                 )}
-                                {it.note && <div className="col-span-12 text-[10px] text-slate-500">{it.note}</div>}
+                                {(it.plan === 'o4' || it.plan === 'o4fcc') && <div className="col-span-12 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                                  <span>Channels</span>
+                                  <select value={it.plan} data-rf-mode="1" onChange={e => setCh(it, it.ch, it.bw, e.target.value)} className="px-1 py-0.5 text-xs border border-gray-300 rounded bg-white" title="Stock: what DJI's manual lists (1 channel at 40 / 60 MHz). FCC mode: 3 channels at 40 / 60 MHz, 7 at 20 MHz.">
+                                    <option value="o4">Stock (1 channel at 40 / 60 MHz)</option><option value="o4fcc">FCC mode (CH1–3 at 40 / 60 MHz)</option></select>
+                                </div>}
+                                {(() => { const rs = rfRanges(it.mhz || ''), five = rs.filter(r => r[1] > 5600 && r[0] < 6000); const out = five.some(r => r[0] < 5725 || r[1] > 5850);
+                                  return out ? <div className="col-span-12 text-[10px] font-semibold text-red-700" data-rf-outside="1"><i className="fa-solid fa-triangle-exclamation mr-1"></i>{it.mhz} MHz goes outside 5725–5850 MHz, the 5.8 GHz band in Australia's class licence (LIPD). Pick another channel or a narrower bandwidth.</div> : null; })()}
+                                {it.plan === 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">FCC mode channels: 40 MHz CH1 5735 / CH2 5795 / CH3 5855; 60 MHz taken as the same centres. Confirm the channel and frequency in the goggles.</div>}
+                                {it.note && it.plan !== 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">{it.note}</div>}
                               </div>
                             );
                             return (<>
