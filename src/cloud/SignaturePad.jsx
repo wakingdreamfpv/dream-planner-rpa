@@ -1,8 +1,8 @@
 // Signature: draw with a finger / mouse, or type your name. Value: { image } or { typed }, plus { name }.
 import React, { useEffect, useRef, useState } from 'react';
 
-export default function SignaturePad({ name, value, onChange, testid = 'sig' }) {
-  const [mode, setMode] = useState(value && value.typed ? 'type' : 'draw');
+export default function SignaturePad({ name, value, onChange, testid = 'sig', fixedMode }) {
+  const [mode, setMode] = useState(fixedMode || (value && value.typed ? 'type' : 'draw'));
   const cv = useRef(null), drawing = useRef(false), dirty = useRef(false);
   useEffect(() => {
     const c = cv.current; if (!c) return;
@@ -18,11 +18,11 @@ export default function SignaturePad({ name, value, onChange, testid = 'sig' }) 
   const clear = () => { const c = cv.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); dirty.current = false; onChange(null); };
   return (
     <div data-testid={testid}>
-      <div className="flex gap-1 text-xs mb-2">
+      {!fixedMode && <div className="flex gap-1 text-xs mb-2">
         {[['draw', 'Draw'], ['type', 'Type my name']].map(([k, l]) => (
           <button key={k} type="button" onClick={() => { setMode(k); onChange(null); }} className={`px-2.5 py-1 rounded-full border ${mode === k ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300 text-slate-600'}`}>{l}</button>
         ))}
-      </div>
+      </div>}
       {mode === 'draw' ? (
         <div>
           <canvas ref={cv} data-sig-canvas="1" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}
