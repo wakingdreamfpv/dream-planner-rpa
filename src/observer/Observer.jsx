@@ -1,6 +1,7 @@
 // Chunk 4 (v7.7): EVLOS Class 1 observer sign-off.
 // Three ways in: a one-time QR / link on the observer's own phone (no login), on the CRP's device (works offline,
 // synced later), or a logged-in observer on the job (after reviewing the full plan). The CRP countersigns.
+import { kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer } from '../opsmap/geo.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import qrcode from 'qrcode-generator';
 import SignaturePad, { SignatureView } from '../cloud/SignaturePad.jsx';
@@ -65,6 +66,20 @@ export function JobMap({ s }) {
     const dot = (p, color, label) => { const q = ll(p); if (!q) return; L.circleMarker(q, { radius: 7, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).bindTooltip(label).addTo(m); pts.push(q); };
     (md.launches || []).forEach((p, i) => dot(p, '#16a34a', p.label || 'Launch ' + (i + 1))); (md.recoveries || []).forEach((p, i) => dot(p, '#dc2626', p.label || 'Landing ' + (i + 1)));
     (md.signage || []).forEach(p => dot(p, '#f59e0b', p.label || 'Sign'));
+    // v7.9 advanced ops map (outdoor): zones with their limits, buffers, flight paths, TLZ / E-LZ and cautions
+    const om = s.opsMap;
+    if (om && om.mode !== 'plan') {
+      const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      [...(om.zones || [])].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).forEach(z => {
+        const k = opsKindStyle(z.kind, om.settings), st = { color: k.stroke, weight: 2, fillColor: k.color, fillOpacity: k.fill, dashArray: z.kind === 'near' ? '8 6' : null };
+        const b = opsZoneBuffer(z);
+        if (z.shape === 'circle' && z.c) { if (b > 0) L.circle(z.c, { radius: z.r + b, color: '#d97706', weight: 1.5, dashArray: '8 6', fill: false }).addTo(m); L.circle(z.c, { radius: z.r, ...st }).bindTooltip(esc(z.name) + '<br>' + esc(opsZoneTag(z, om.settings))).addTo(m); pts.push(z.c); }
+        else if ((z.pts || []).length > 2) { L.polygon(z.pts, st).bindTooltip(esc(z.name) + '<br>' + esc(opsZoneTag(z, om.settings))).addTo(m); pts.push(...z.pts); }
+      });
+      (om.paths || []).forEach(p => { const q = (p.pts || []).map(x => [x[0], x[1]]); if (q.length > 1) { L.polyline(q, { color: '#fff', weight: 6 }).addTo(m); L.polyline(q, { color: '#0f172a', weight: 3 }).bindTooltip(esc(p.name)).addTo(m); pts.push(...q); } });
+      (om.points || []).forEach(p => { const c = p.kind === 'tlz' ? '#0f172a' : p.kind === 'elz' ? '#ea580c' : p.kind === 'poi' ? '#facc15' : '#ffffff';
+        L.circleMarker([p.lat, p.lng], { radius: 8, color: '#0f172a', weight: 2, fillColor: c, fillOpacity: 1 }).bindTooltip('<b>' + esc(p.title) + '</b>' + (p.text ? '<br>' + esc(p.text) : '')).addTo(m); pts.push([p.lat, p.lng]); });
+    }
     const ov = s.overview || {}; [...(ov.launchSites || []).map(x => [parse(x.coords), x.name || 'Launch']), ...(ov.recoverySites || []).map(x => [parse(x.coords), x.name || 'Landing'])].forEach(([q, n]) => { if (q && !pts.some(p => Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6)) { L.circleMarker(q, { radius: 6, color: '#fff', weight: 2, fillColor: '#7c3aed', fillOpacity: 1 }).bindTooltip(n).addTo(m); pts.push(q); } });
     if (pts.length > 1) m.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 19 }); else if (pts.length === 1) m.setView(pts[0], 17); else { m.remove(); d.dataset.empty = '1'; return; }
     setTimeout(() => m.invalidateSize(), 150);
@@ -85,7 +100,12 @@ export function JobSummary({ s }) {
     <div className="space-y-3" data-obs-summary="1">
       <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm">{rows.map(([k, v]) => <React.Fragment key={k}><dt className="text-slate-500">{k}</dt><dd className="text-slate-800 font-medium">{v}</dd></React.Fragment>)}</dl>
       {s.overview && s.overview.taskOverview ? <p className="text-sm text-slate-700 whitespace-pre-line" data-obs-task="1">{s.overview.taskOverview}</p> : null}
-      {(s.mapData || (s.overview && (s.overview.launchSites || []).length)) && typeof window !== 'undefined' && window.L ? <JobMap s={s} /> : null}
+      {(s.mapData || s.opsMap || (s.overview && (s.overview.launchSites || []).length)) && typeof window !== 'undefined' && window.L ? <JobMap s={s} /> : null}
+      {s.opsMap && ((s.opsMap.zones || []).length > 0 || (s.opsMap.points || []).some(p => p.text || p.kind === 'poi')) && <div className="rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-2 text-sm" data-obs-opsmap="1">
+        <div className="text-xs font-bold uppercase tracking-wide text-violet-900 mb-1">Zones and cautions</div>
+        <ul className="space-y-1">{(s.opsMap.zones || []).map((z, i) => <li key={'z' + i} className="flex gap-2"><span className="w-3 h-3 mt-1 rounded-sm shrink-0" style={{ background: opsKindStyle(z.kind, s.opsMap.settings).color }}></span><span><b>{z.name}</b> <span className="text-slate-600">{opsZoneTag(z, s.opsMap.settings)}</span>{z.note ? <span className="block text-xs text-slate-600">{z.note}</span> : null}</span></li>)}
+          {(s.opsMap.points || []).filter(p => p.text || p.kind === 'poi').map((p, i) => <li key={'p' + i} className="flex gap-2"><span className="w-3 text-center font-black text-amber-600 shrink-0">{p.kind === 'poi' ? '!' : '•'}</span><span><b>{p.title}</b>{p.text ? <span className="text-slate-600"> · {p.text}</span> : null}</span></li>)}</ul>
+      </div>}
       {risks.length > 0 && <details className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2" open={risks.length <= 6}>
         <summary className="text-sm font-semibold text-amber-900 cursor-pointer">Hazards for this job ({risks.length})</summary>
         <ul className="mt-2 space-y-1.5 text-sm" data-obs-hazards="1">{risks.map((r, i) => <li key={i}><b className="text-slate-800">{r.hazard}</b>{r.risk ? <span className="block text-xs text-slate-600">{r.risk}</span> : null}{r.controls ? <span className="block text-xs text-slate-600 whitespace-pre-line">{r.controls}</span> : null}</li>)}</ul>
@@ -402,7 +422,7 @@ export function ObserverRegister({ crpName }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null), [err, setErr] = useState(''), [q, setQ] = useState(''), [qr, setQr] = useState(null), [device, setDevice] = useState(null), [review, setReview] = useState(null), [msg, setMsg] = useState('');
   const manual = useManualInfo();
-  const load = async () => { const { data, error } = await sb.rpc('observer_register'); if (error) setErr(error.message); else { setErr(''); setRows(data || []); } };
+  const load = async () => { try { const { data, error } = await sb.rpc('observer_register'); if (error) setErr(error.message); else { setErr(''); setRows(data || []); } } catch (e) { setErr(String(e.message || e)); } };
   useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-cloud-refresh', h); return () => window.removeEventListener('wd-cloud-refresh', h); }, []); // eslint-disable-line
   const today = Date.now();
   const stOf = (r) => r.status === 'awaiting_crp' ? ['Waiting for you', 'bg-amber-100 text-amber-900', 'waiting'] : r.status === 'not_yet_competent' ? ['Not yet competent', 'bg-rose-100 text-rose-800', 'nyc']

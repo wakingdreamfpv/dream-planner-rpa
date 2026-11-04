@@ -6,6 +6,9 @@ import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
 import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister } from '../observer/Observer.jsx';
 import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
+import OpsMap from '../opsmap/OpsMap.jsx';
+import { hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
+import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
@@ -1431,12 +1434,15 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           if (lg.serviceableAtEnd === false && !String(lg.defects || '').trim()) lg.serviceableAtEnd = null; lg.yn60 = 1; return lg; };
         // v5.55: the CRP's own review answers (SOP mitigates / JSA correct) are left out, so answering them after the
         // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
-        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, legacy) => {
+        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy) => {
           const ap = { ...(approval || {}) };
           ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
-          return { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
+          const out = { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
+          // v7.9: the advanced ops map is signed too, but only when there is one (older plans keep their fingerprint)
+          const om = opsSignable(opsMap); if (om) out.opsMap = om;
+          return out;
         };
         const cyrbHex = (str, seed) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
           h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
@@ -5578,6 +5584,14 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const pdfSignage   = (mapData.signage    ||[]).filter(m=>m.lat!=null).map(m=>({lat:m.lat,lng:m.lng}));
             const pdfPolygon   = (mapData.areaPolygon||[]).filter(p=>p.lat!=null).map(p=>([p.lat,p.lng]));
             const pdfExclZones = (mapData.exclusionZones||[]).filter(z => z.geo).map(z => ({ type: z.type, geo: z.geo }));
+            // v7.9 advanced ops map for the print page (styles worked out here so the print script stays simple)
+            const opsHas = hasOpsContent(opsMap), opsChk = opsHas ? opsChecks : null;
+            const opsPrintData = !opsHas ? null : { mode: opsMap.mode,
+              zones: [...(opsMap.zones || [])].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).filter(z => z.shape === 'circle' ? z.r > 0 : (z.pts || []).length > 2).map(z => { const k = opsKindStyle(z.kind, opsMap.settings);
+                return { shape: z.shape, pts: z.pts, c: z.c, r: z.r, color: k.color, stroke: k.stroke, fill: k.fill, dash: z.kind === 'near' ? '8 6' : null, name: esc(z.name || k.label), tag: esc(opsZoneTag(z, opsMap.settings)), buffer: opsZoneBuffer(z) }; }),
+              paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { pts: p.pts, legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
+              points: (opsMap.points || []).map(p => ({ kind: p.kind, lat: p.lat, lng: p.lng, title: p.title || '', text: p.text || '', size: p.size })),
+              overlay: opsMap.overlay ? { src: opsMap.overlay.src, center: opsMap.overlay.center, widthM: opsMap.overlay.widthM, rot: opsMap.overlay.rot || 0, opacity: opsMap.overlay.opacity, aspect: opsMap.overlay.aspect } : null };
 
             const hasMap = true;
             const mapCtrJ = JSON.stringify([pdfMapCtr.lat, pdfMapCtr.lng]);
@@ -5594,7 +5608,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // ── Build map init script with exact view + all overlays ──────────
             const mapInitFn = 'var MC='+mapCtrJ+';var MZ='+mapZoomJ+';'
               +'var HD='+heatJ+';var HZ='+heatZJ+';var MX='+exclJ+';'
-              +drawHeatDabs.toString()+heatMpp.toString()
+              +drawHeatDabs.toString()+heatMpp.toString()+opsAdvPrint.toString()+';var OM='+JSON.stringify(opsPrintData).replace(/</g,'\\u003c')+';'
               +'var MB='+mapBoundsJ+';var ML='+mapLJ+';var MR='+mapRJ+';var MS='+mapSJ+';var MP='+mapPolyJ+';'
               +'var done=false,need=0,got=0;'
               +'function go(){if(!done){done=true;setTimeout(window.print,800);}}'
@@ -5628,7 +5642,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +'var CP=[];(MP||[]).forEach(function(p){CP.push(p);});ML.forEach(function(x){CP.push([x.lat,x.lng]);});MR.forEach(function(x){CP.push([x.lat,x.lng]);});MS.forEach(function(x){CP.push([x.lat,x.lng]);});'
               +'MX.forEach(function(z){if(z.type==="circle"){var c=L.latLng(z.geo.c);var b=c.toBounds(z.geo.rM*2);CP.push(b.getSouthWest(),b.getNorthEast());}else if(z.type==="rect"){CP.push(z.geo.a,z.geo.b);}else if(z.geo.pts){z.geo.pts.forEach(function(p){CP.push(p);});}});'
               +'if(CP.length>1){m.fitBounds(L.latLngBounds(CP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){m.fitBounds(MB,{padding:[0,0],animate:false});}else{m.setView(MC,MZ);}'
-              +'imagery(m);opsLayers(m);'
+              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);}'
               // Heatmap page: same view underneath the painted overlay
               +'if(document.getElementById("heatmapbase")){var hm=L.map("heatmapbase",mo);var HP=CP.slice();HD.forEach(function(d){if(!d.e)HP.push([d.lat,d.lng]);});if(HP.length>1){hm.fitBounds(L.latLngBounds(HP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){hm.fitBounds(MB,{padding:[0,0],animate:false});}else{hm.setView(MC,MZ);}imagery(hm);opsLayers(hm);'
               // crowd paint on a canvas sized to the map, projected from GPS
@@ -5724,6 +5738,36 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               } else {
                 P.push('<div style="margin-bottom:10pt;"></div>');
               }
+              P.push('</div>');
+            }
+
+            // v7.9 advanced ops map: its own page with the zones, paths and markers, then the zone limits and checks
+            if (opsPrintData) {
+              const mo = opsMap, chk = opsChk;
+              P.push('<div style="break-before:page;page-break-before:always;">');
+              P.push(sub('Advanced Operations Map' + (mo.mode === 'plan' ? ' — Floor Plan' : '') + (mo.overlay ? ' · overlay: ' + esc(mo.overlay.name || '') : '')));
+              P.push('<div id="opsadv" style="width:182mm;height:200mm;border:1px solid '+S2+';border-radius:4pt;overflow:hidden;margin-bottom:4pt;background:#f8fafc;"></div>');
+              const sw = (bg, bd, rad) => '<span style="display:inline-block;width:9pt;height:9pt;background:'+bg+';border:1.5px '+(bd||'solid transparent')+';border-radius:'+(rad||'2pt')+';vertical-align:-1pt;margin-right:3pt;"></span>';
+              P.push('<div style="display:flex;flex-wrap:wrap;gap:4pt 12pt;font-size:7pt;margin-bottom:8pt;">'
+                + sw('#dc2626') + 'Exclusion &nbsp;' + sw(opsKindStyle('oonp', mo.settings).color) + 'Over people (direct) &nbsp;' + sw('#fff7e6', 'dashed #b45309') + 'Near people &nbsp;' + sw('#b9a6f2') + 'Clear of people &nbsp;' + sw('transparent', 'dashed #d97706') + 'Buffer &nbsp;' + sw('#ea580c', null, '50%') + 'Emergency LZ &nbsp;' + sw('#0f172a') + 'TLZ &nbsp;' + sw('#facc15') + 'Caution &nbsp;<span style="color:#d97706;font-weight:700">- -</span> path to check &nbsp;<span style="color:#dc2626;font-weight:700">—</span> path to fix</div>');
+              const th = 'padding:3pt 5pt;text-align:left;background:'+PU+';color:#fff;font-size:7pt;', td = 'padding:3pt 5pt;border-bottom:1px solid '+S2+';font-size:7.5pt;vertical-align:top;';
+              if ((mo.zones || []).length) {
+                P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Zone</th><th style="'+th+'">Type</th><th style="'+th+'">Drone · energy</th><th style="'+th+'">Max height</th><th style="'+th+'">Max speed</th><th style="'+th+'">Buffer / ground</th><th style="'+th+'">Notes</th></tr>');
+                mo.zones.forEach(z => { const lim = OPS_KINDS[z.kind] && OPS_KINDS[z.kind].limits;
+                  const buf = z.kind === 'exclusion' ? (z.shielded ? 'Shielded: ' + opsZoneBuffer(z) + ' m (' + esc(z.shieldNote || 'not stated') + ')' : opsZoneBuffer(z) + ' m') : ((Number(z.ground) || 0) ? 'ground +' + z.ground + ' m' : '—');
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? z.v + ' m/s' : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
+                P.push('</table>');
+              }
+              if ((mo.paths || []).length) {
+                P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Path</th><th style="'+th+'">Drone</th><th style="'+th+'">Speed</th><th style="'+th+'">Length</th><th style="'+th+'">Heights (m above take-off)</th><th style="'+th+'">Result</th></tr>');
+                mo.paths.forEach(p => { const r = chk && chk.paths[p.id], st = r ? (r.legs.some(l => l.status === 'stop') ? 'To fix' : r.legs.some(l => l.status === 'warn') ? 'To check' : 'Clear') : '—';
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+(p.speed || 0)+' m/s</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
+                P.push('</table>');
+              }
+              const notes = (mo.points || []).filter(p => p.text || p.kind === 'poi' || p.kind === 'note');
+              if (notes.length) { P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'width:28%;">Marker</th><th style="'+th+'">Note</th></tr>');
+                notes.forEach(p => P.push('<tr><td style="'+td+'font-weight:700;">'+esc((OPS_POINT_KINDS[p.kind] || {}).label || p.kind)+': '+esc(p.title || '')+'</td><td style="'+td+'white-space:pre-wrap;">'+esc(p.text || '')+'</td></tr>')); P.push('</table>'); }
+              if (chk && chk.issues.length) { P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;"><b>Map checks</b><br>' + chk.issues.map(q => (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
               P.push('</div>');
             }
 
@@ -6031,6 +6075,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (Array.isArray(plan.oonpSections)) setOonpSections([...plan.oonpSections]);
             setLog(plan.log ? migrateYesNoLog({ ...getInitialLog(), ...clone(plan.log) }) : getInitialLog());
             setMapData(md);
+            setOpsMap(plan.opsMap ? clone(plan.opsMap) : null); setOpsMapOpen(false);
             setSiteAttachments(clone(plan.siteAttachments) || []);
             setBallistic(plan.ballistic ? clone(plan.ballistic) : { enabled: false, height: 5.0, speed: 5.0 });
             setKeData(plan.keData ? { enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05, ...clone(plan.keData) }
@@ -6195,6 +6240,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
           const [mapInteraction, setMapInteraction] = useState('pan');
           const [mapData, setMapData] = useState({ launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] });
+          const [opsMap, setOpsMap] = useState(null); // v7.9 advanced ops map
+          const [opsMapOpen, setOpsMapOpen] = useState(false);
           const [selectedMarker, setSelectedMarker] = useState(null);
           const [draggingMarker, setDraggingMarker] = useState(null);
           const opsMapRef = React.useRef(null);
@@ -6438,6 +6485,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [apiAirportData, setApiAirportData] = useState(null);
 
           const [keData, setKeData] = useState({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
+          // v7.9 advanced ops map: KE per drone (same physics and drag setting as the KE chart) and the map's checks
+          const opsKeFor = React.useCallback((d) => { const f = (db.fleet || {})[d]; const w = f && parseFloat(f.weight); if (!(w > 0)) return null;
+            const L = computeKeLimits({ weight: w, useAero: keData.useAero, rho: keData.rho, cd: f.cd || 1.2, area: f.area || 0.05 }); return L ? { w: L.w, energy: L.energy, h15: L.h15, h34: L.h34 } : opsSimpleKe(w); }, [db.fleet, keData.useAero, keData.rho]);
+          const opsChecks = React.useMemo(() => (hasOpsContent(opsMap) ? checkOps(opsMap, opsKeFor) : null), [opsMap, opsKeFor]);
+          const saveDroneLimits = (drone, lim) => { if (!drone) return; const f = { ...(db.fleet || {}) }; f[drone] = { ...(f[drone] || {}), oonpLimits: lim }; updateDb('fleet', f); };
           const [keEnabledPerRpa, setKeEnabledPerRpa] = useState({});
           const toggleKeForRpa = (rpa) => setKeEnabledPerRpa(prev => ({...prev, [rpa]: !prev[rpa]}));
           // Extra KE calculator instances
@@ -7434,6 +7486,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               oonpMode,
               oonpSections:    safeClone(oonpSections),
               mapData:         safeClone(mapData),
+              ...(hasOpsContent(opsMap) ? { opsMap: safeClone(opsMap) } : {}),
               siteAttachments: safeClone(siteAttachments || []),
               ballistic:       safeClone(ballistic),
               keData:          safeClone(keData),
@@ -7554,6 +7607,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if ([o.operationName, o.clientName, o.location, o.taskOverview, j.airspaceHazards, j.groundHazards, j.notams].some(v => String(v || '').trim())) return true;
             if ((snap.risks || []).some(r => r && (r.hazard || r.riskDescription || r.additionalControls))) return true;
             const md = snap.mapData || {}; if (['launches', 'recoveries', 'areaPolygon', 'signage', 'exclusionZones', 'crowdZones'].some(k => (md[k] || []).length)) return true;
+            if (hasOpsContent(snap.opsMap)) return true;
             return Object.values(((snap.log || {}).rpaLogs) || {}).some(x => (x.flights || []).some(f => parseInt(f.duration) > 0 || f.telemetry));
           };
           const saveRecoveryNow = () => {
@@ -7570,7 +7624,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             setDirty(true);
             if (workingTimer.current) clearTimeout(workingTimer.current);
             workingTimer.current = setTimeout(() => saveRecoveryRef.current(), 2500);
-          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments]); // eslint-disable-line
+          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments, opsMap]); // eslint-disable-line
           useEffect(() => {
             const warn = (e) => { if (dirty) { saveRecoveryRef.current(); e.preventDefault(); e.returnValue = 'You have unsaved changes.'; return e.returnValue; } };
             window.addEventListener('beforeunload', warn);
@@ -8079,16 +8133,16 @@ View in the Database & Settings tab.`);
           const [planFp, setPlanFp] = useState('');
           const [planFpLegacy, setPlanFpLegacy] = useState('');
           useEffect(() => {
-            const t = setTimeout(() => { const st = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic };
+            const t = setTimeout(() => { const st = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap };
               planFingerprint(st).then(setPlanFp).catch(() => {}); planFingerprint(st, true).then(setPlanFpLegacy).catch(() => {}); }, 400);
             return () => clearTimeout(t);
-          }, [overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic]); // eslint-disable-line
+          }, [overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap]); // eslint-disable-line
           const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp && approval.rpRemote.fingerprint !== planFpLegacy);
           const RPIC_DECLARATION = 'I have read and understood this Flight Record — the operation details, the job safety assessment and the risk assessment — and I accept the role of Remote Pilot in Command for this operation. I will conduct the operation in accordance with the operations manual, this plan and any conditions of the approval, and I will tell the CRP before flight if anything changes or if I have any concerns.';
           const sendForRpicSign = async () => {
             if (!approval.rpName) { alert('Choose the RPIC in the Remote Pilot in Command block first.'); return; }
             if (!risks.some(r => String(r.hazard || '').trim())) { if (!window.confirm('The risk register is empty. Send for signing anyway?')) return; }
-            const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
+            const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap });
             let pdfHtml = ''; try { pdfHtml = generatePDF({ capture: true }) || ''; } catch (e) {}
             const co = companyFor(overview);
             const ops = (jsa.operationTypes || []).join(', ') + (oonpMode && jsa.oonpPathway ? ' · OONP ' + jsa.oonpPathway : '');
@@ -8120,8 +8174,8 @@ View in the Database & Settings tab.`);
               if (!d || d._type !== 'wdfpv_rpic_signoff') { alert('This is not an RPIC sign-off reply file.'); return; }
               if (d.operationId !== overview.identifier && (!d.planUid || d.planUid !== overview.uid)) { alert(`This reply is for ${d.operationId} ("${d.title}"), not the job that's open (${overview.identifier}). Open that job first.`); return; }
               if (!d.signatureImage && !d.typedSignature) { alert('The reply has no signature.'); return; }
-              const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic });
-              const fpOld = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }, true);
+              const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap });
+              const fpOld = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, true);
               if (d.fingerprint !== fp && d.fingerprint !== fpOld) {
                 alert(`⚠ Not signed: the plan has changed since this was sent for signing.\n\n${d.name} signed plan version ${fpShort(d.fingerprint)}; the plan is now version ${fpShort(fp)}.\n\nSend it for signing again so the RPIC signs what will actually be flown.`);
                 return;
@@ -9043,7 +9097,7 @@ View in the Database & Settings tab.`);
                   clearMap();
                   setHeatStrokes([]); setHeatExclZones([]); amendmentsRef.current = [];
                   // v6.0: these used to carry over from the previous job (OONP set-up, KE/ballistic, attachments)
-                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]);
+                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]); setOpsMap(null);
                   setBallistic({ enabled: false, height: 5.0, speed: 5.0 });
                   setKeData({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
                   setExtraKe([]); setOonpToolsOpen(false);
@@ -9402,7 +9456,8 @@ View in the Database & Settings tab.`);
           const obsSummary = () => ({ job: { title: getOpTitle(overview), op_id: overview.identifier, start_date: overview.operationDate || '' },
             overview: { location: overview.location, operationDate: overview.operationDate, startTime: overview.startTime, endTime: overview.endTime, rpaTypes: overview.rpaTypes, rpic: approval.rpName || overview.rpic, maxHeight: jsa.maxOperatingHeightAgl || overview.maxHeightPlanned },
             jsa: { operationTypes: jsa.operationTypes, emergencyContacts: getEmergency(jsa) },
-            risks: (risks || []).filter(r => String(r.hazard || '').trim()).map(r => ({ hazard: r.hazard, risk: r.riskDescription, controls: [r.existingControls, r.additionalControls].filter(x => String(x || '').trim()).join('\n') })) });
+            risks: (risks || []).filter(r => String(r.hazard || '').trim()).map(r => ({ hazard: r.hazard, risk: r.riskDescription, controls: [r.existingControls, r.additionalControls].filter(x => String(x || '').trim()).join('\n') })),
+            mapData, ...(hasOpsContent(opsMap) ? { opsMap: { ...opsMap, overlay: null } } : {}) });
           const [obsWaiting, setObsWaiting] = useState(() => window.wdObsWaiting || []);
           useEffect(() => { const h = () => setObsWaiting(window.wdObsWaiting || []); window.addEventListener('wd-obs-waiting', h); return () => window.removeEventListener('wd-obs-waiting', h); }, []);
           const [obsReview, setObsReview] = useState(null);
@@ -9499,11 +9554,11 @@ View in the Database & Settings tab.`);
           }); // eslint-disable-line
           // v7.5.2: a crew member's RPIC signature on a company job goes to the CRP (in the cloud, with an email)
           // latest plan state, for code that runs after a job has just been opened (a closure would still hold the old job)
-          const fpStateRef = useRef(null); fpStateRef.current = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic };
+          const fpStateRef = useRef(null); fpStateRef.current = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap };
           if (typeof window !== 'undefined') window.__wdSignable = () => rpicSignable(fpStateRef.current); // for tests
           const pushRpicSignature = async (sig) => {
             if (!(isCrewRole && cloudJob && overview.uid && cloudJob.uid === overview.uid)) return;
-            let fp = ''; try { fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic }); } catch (e) {}
+            let fp = ''; try { fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }); } catch (e) {}
             window.dispatchEvent(new CustomEvent('wd-push-signature', { detail: { jobId: cloudJob.id, sig: { kind: 'rpic_signature', ...sig, fingerprint: fp, title: getOpTitle(overview), opId: overview.identifier } } }));
           };
           useEffect(() => {
@@ -9979,6 +10034,9 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
+                center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
@@ -10752,6 +10810,10 @@ View in the Database & Settings tab.`);
                               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors -mb-px ${opsMapSubTab === 'heatmap' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                               <i className="fa-solid fa-people-group text-[13px]"></i> Crowd Heatmap
                             </button>
+                            <button data-allow-locked="1" type="button" data-open-opsmap="1" onClick={() => setOpsMapOpen(true)}
+                              className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent -mb-px text-violet-700 hover:text-violet-900">
+                              <i className="fa-solid fa-layer-group text-[13px]"></i> Advanced ops map{hasOpsContent(opsMap) ? <span className="ml-1 text-[10px] font-bold bg-violet-100 text-violet-800 rounded-full px-2 py-0.5">{(opsMap.zones || []).length + (opsMap.paths || []).length + (opsMap.points || []).length}</span> : null}
+                            </button>
                             <button data-allow-locked="1" onClick={() => setMapSize(v => v === 'tall' ? 'large' : 'tall')}
                               title="Change map height"
                               className="ml-auto mb-1 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-50">
@@ -10760,6 +10822,10 @@ View in the Database & Settings tab.`);
                             </button>
                           </div>
 
+                          {hasOpsContent(opsMap) && <div className="mb-3 flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 text-sm print:hidden" data-opsmap-summary="1">
+                            <i className="fa-solid fa-layer-group text-violet-700"></i><b className="text-violet-900">Advanced ops map</b><span className="text-slate-600">{opsSummary(opsMap, opsChecks)}</span>
+                            <button data-allow-locked="1" type="button" onClick={() => setOpsMapOpen(true)} className="ml-auto text-xs font-semibold text-violet-700 underline">Open</button>
+                          </div>}
                           <div className="flex gap-2 mb-1">
                             <input type="text" name="location" value={overview.location} onChange={handleOverviewChange}
                               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); geocodeLocation(overview.location); } }}
