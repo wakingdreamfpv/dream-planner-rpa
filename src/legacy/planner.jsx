@@ -178,7 +178,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.9';
+        const APP_VERSION = '7.10';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -2637,6 +2637,47 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const aero = ck.aerodromes.map(a => a.name + (a.icao ? ' (' + a.icao + ')' : '') + ' ' + fmtBrg(a.brg) + '/' + fmtDistM(a.dist) + (a.dist <= 5500 && !a.heli ? ' (within 5.5 km)' : ''));
           const radio = ck.aerodromes.filter(a => a.freqs.length).slice(0, 4).map(a => (a.icao || a.name) + ' ' + a.freqs.slice(0, 3).map(f => (f.type || f.name || 'Freq') + ' ' + f.value).join(', '));
           return { airspace: parts.join('; '), aerodromes: aero.join('; '), radio: radio.join('; ') };
+        };
+        // ── v7.10: airspace across the whole operating area, at the planned height ──
+        // Every point we know for the job (ops area corners, launch / recovery, advanced ops map zones, paths and markers)
+        // is checked. An airspace counts if its floor is at or below the planned height: AGL floors against the max height
+        // AGL, AMSL / FL floors against the max altitude AMSL (or the AGL height if the ground height isn't known).
+        const AS_OPTION = { A: 'Class A', B: 'Class B', C: 'Class C (ATC Auth)', D: 'Class D (ATC Auth)', E: 'Class E', F: 'Class F', G: 'Class G' };
+        const AS_RANK = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6 };
+        const buildAreaAirspace = (pts, asItems, opts) => {
+          const top = (opts && opts.maxAgl) || 400, topAmsl = opts && opts.maxAmsl != null && isFinite(opts.maxAmsl) ? Number(opts.maxAmsl) : null;
+          const seen = new Map();
+          (asItems || []).forEach((a, ai) => {
+            if (!a || !a.geometry || [10, 11, 27, 33].includes(a.type)) return;
+            const ip = []; pts.forEach((p, i) => { if (geoInside(p.lat, p.lng, a.geometry)) ip.push(i); });
+            if (!ip.length) return;
+            const k = a._id || (a.name + '|' + a.type + '|' + ai); if (!seen.has(k)) seen.set(k, { a, ip });
+          });
+          const rows = [...seen.values()].map(({ a, ip }) => {
+            const ll = a.lowerLimit || {}, lowerFt = oaipLimitFt(ll);
+            const agl = ll.referenceDatum === 0 || ll.referenceDatum === 'GND';
+            const reaches = lowerFt <= (agl ? top : (topAmsl != null ? topAmsl : top)) + 0.5;
+            const type = OAIP_AS_TYPE[a.type] != null ? OAIP_AS_TYPE[a.type] : (typeof a.type === 'string' ? a.type : 'Airspace');
+            return { name: a.name || type, type, cls: OAIP_CLASS[a.icaoClass] || null, lower: oaipLimit(a.lowerLimit), upper: oaipLimit(a.upperLimit), lowerFt, agl,
+              reaches, special: [1, 2, 3, 31, 17, 18, 19].includes(a.type), pts: ip, all: ip.length === pts.length };
+          }).sort((x, y) => x.lowerFt - y.lowerFt);
+          const atHeight = rows.filter(r => r.reaches);
+          const controlled = atHeight.filter(r => r.cls && r.cls !== 'G' && !r.special);
+          const special = atHeight.filter(r => r.special);
+          const above = rows.filter(r => !r.reaches && r.cls && r.cls !== 'G' && !r.special);
+          const ptCls = pts.map((p, i) => controlled.filter(r => r.pts.includes(i)).map(r => r.cls).sort((x, y) => AS_RANK[x] - AS_RANK[y])[0] || 'G');
+          const classes = [...new Set(ptCls)].sort((x, y) => AS_RANK[x] - AS_RANK[y]);
+          const worst = classes[0] || 'G';
+          return { rows, controlled, special, above, ptCls, classes, worst, mixed: classes.length > 1, option: AS_OPTION[worst] || ('Class ' + worst), top, topAmsl, n: pts.length };
+        };
+        const areaAirspaceText = (ar, when) => {
+          const lim = (r) => r.lower + '–' + r.upper;
+          const bits = [];
+          bits.push(ar.mixed ? 'Class ' + ar.classes.join(' / ') + ' across the area' : 'Class ' + ar.worst + ' from the surface to ' + ar.top + ' ft AGL');
+          ar.controlled.forEach(r => bits.push('Class ' + r.cls + ' ' + r.name + ' ' + lim(r) + (r.all ? '' : ' (part of the area)')));
+          ar.special.forEach(r => bits.push(r.type + ' ' + r.name + ' ' + lim(r)));
+          if (ar.above.length) bits.push('above: ' + ar.above.slice(0, 2).map(r => 'Class ' + r.cls + ' ' + r.name + ' from ' + r.lower).join('; '));
+          return 'openAIP lookup ' + when + ', ' + ar.n + ' point' + (ar.n === 1 ? '' : 's') + ' checked: ' + bits.join('; ') + '. Check against the VTC / VNC.';
         };
         // ── Log dump: work out which aircraft a radio log belongs to (v5.29) ──
         // 1) EdgeTX names logs "<radio model>-YYYY-MM-DD-HHMMSS.csv": match the model name to an aircraft's
@@ -6481,6 +6522,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [isFetchingElevation, setIsFetchingElevation] = useState(false);
 
           const [openAipKey, setOpenAipKey] = useState(() => localStorage.getItem('openAipKey') || '');
+          // v7.10: the CRP's OpenAIP key is shared with the company (crew and the CRP's other devices use it too)
+          const [cloudAipKey, setCloudAipKey] = useState(() => { try { return ((window.wdCrew || {}).company || {}).openAipKey || ''; } catch (e) { return ''; } });
+          useEffect(() => { const h = () => { try { setCloudAipKey(((window.wdCrew || {}).company || {}).openAipKey || ''); } catch (e) {} }; window.addEventListener('wd-crew', h); return () => window.removeEventListener('wd-crew', h); }, []);
+          const aipKey = openAipKey || cloudAipKey;
           const [apiAirspaceData, setApiAirspaceData] = useState(null);
           const [apiAirportData, setApiAirportData] = useState(null);
 
@@ -6488,6 +6533,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           // v7.9 advanced ops map: KE per drone (same physics and drag setting as the KE chart) and the map's checks
           const opsKeFor = React.useCallback((d) => { const f = (db.fleet || {})[d]; const w = f && parseFloat(f.weight); if (!(w > 0)) return null;
             const L = computeKeLimits({ weight: w, useAero: keData.useAero, rho: keData.rho, cd: f.cd || 1.2, area: f.area || 0.05 }); return L ? { w: L.w, energy: L.energy, h15: L.h15, h34: L.h34 } : opsSimpleKe(w); }, [db.fleet, keData.useAero, keData.rho]);
+          const opsAirspace = React.useMemo(() => ((apiAirspaceData && apiAirspaceData.items) || []).filter(a => a && a.geometry && ![10, 11, 27, 33].includes(a.type)).map(a => ({
+            name: a.name || '', cls: OAIP_CLASS[a.icaoClass] || null, type: OAIP_AS_TYPE[a.type] != null ? OAIP_AS_TYPE[a.type] : 'Airspace', lower: oaipLimit(a.lowerLimit), upper: oaipLimit(a.upperLimit),
+            special: [1, 2, 3, 31, 17, 18, 19].includes(a.type), geometry: a.geometry })), [apiAirspaceData]);
           const opsChecks = React.useMemo(() => (hasOpsContent(opsMap) ? checkOps(opsMap, opsKeFor) : null), [opsMap, opsKeFor]);
           const saveDroneLimits = (drone, lim) => { if (!drone) return; const f = { ...(db.fleet || {}) }; f[drone] = { ...(f[drone] || {}), oonpLimits: lim }; updateDb('fleet', f); };
           const [keEnabledPerRpa, setKeEnabledPerRpa] = useState({});
@@ -8323,10 +8371,10 @@ View in the Database & Settings tab.`);
               const [lat, lng] = aeroKey.split(',').map(Number);
               const results = searchAerodromesByCoords(lat, lng);
               setSuggestedAirports(results.map(a => ({ name: `${a.name} (${a.icao}) — ${a.dist.toFixed(1)} nm`, freqs: '', dist: a.dist })));
-              if (openAipKey) handleAirspaceFetch({ silent: true });
+              if (aipKey) handleAirspaceFetch({ silent: true });
             }, 700);
             return () => clearTimeout(t);
-          }, [aeroKey, openAipKey]); // eslint-disable-line
+          }, [aeroKey, aipKey]); // eslint-disable-line
 
           // ── Leaflet map coordinate helpers ──────────────────────────────────
           // Convert a Leaflet LatLng to {x,y} percentages of the map container
@@ -8794,9 +8842,27 @@ View in the Database & Settings tab.`);
           };
 
           const [airspaceCheck, setAirspaceCheck] = useState(null); // result of the OpenAIP check (v5.35)
+          const airspacePoints = () => {
+            const pts = [], add = (lat, lng, label) => { lat = Number(lat); lng = Number(lng); if (!isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) return;
+              if (pts.some(p => Math.abs(p.lat - lat) < 2e-5 && Math.abs(p.lng - lng) < 2e-5)) return; pts.push({ lat, lng, label }); };
+            const md = mapData || {}, rx = /(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/;
+            (md.areaPolygon || []).forEach((p, i) => add(p.lat, p.lng, 'Ops area corner ' + (i + 1)));
+            (md.launches || []).forEach(p => add(p.lat, p.lng, p.label || 'Launch'));
+            (md.recoveries || []).forEach(p => add(p.lat, p.lng, p.label || 'Recovery'));
+            [...(overview.launchSites || []), ...(overview.recoverySites || [])].forEach(st => { const m = rx.exec(st.coords || ''); if (m) add(m[1], m[2], st.name || 'Site'); });
+            if (opsMap && opsMap.mode !== 'plan') {
+              (opsMap.zones || []).forEach(z => { if (z.shape === 'circle' && z.c) { const k = (z.r || 0) / 111320, kx = k / Math.cos(z.c[0] * Math.PI / 180); add(z.c[0], z.c[1], z.name); add(z.c[0] + k, z.c[1], z.name); add(z.c[0] - k, z.c[1], z.name); add(z.c[0], z.c[1] + kx, z.name); add(z.c[0], z.c[1] - kx, z.name); }
+                else (z.pts || []).forEach((q, i) => add(q[0], q[1], (z.name || 'Zone') + ' corner ' + (i + 1))); });
+              (opsMap.paths || []).forEach(pa => (pa.pts || []).forEach((q, i) => add(q[0], q[1], (pa.name || 'Path') + ' point ' + (i + 1))));
+              (opsMap.points || []).forEach(q => add(q.lat, q.lng, q.title || 'Marker'));
+            }
+            const t = ok2flyTarget(); if (t && t.src === 'ops area centre') add(t.lat, t.lng, 'Ops area centre');
+            if (!pts.length) { const c = getCurrentCoords(); if (c) add(c.lat, c.lng, 'job location'); }
+            return pts.slice(0, 80);
+          };
           const handleAirspaceFetch = async (opts = {}) => {
             const silent = !!(opts && opts.silent);
-            if (!openAipKey) {
+            if (!aipKey) {
                 if (!silent) setAirspaceCheck({ needKey: true });
                 return;
             }
@@ -8805,12 +8871,22 @@ View in the Database & Settings tab.`);
             const lat = tgt.lat, lng = tgt.lng, src = tgt.src || 'job location';
             setIsFetchingNaips(true);
             try {
-                const d = 0.15, bbox = `${lng - d},${lat - d},${lng + d},${lat + d}`;
-                const hdr = { headers: { 'x-openaip-client-id': openAipKey } };
-                // OpenAIP takes bbox as minLon,minLat,maxLon,maxLat; fall back to a position search if a bbox query fails
+                // v7.10: every point we know for the job, so the answer covers the whole area, not just its centre
+                const pts = airspacePoints(); if (!pts.length) pts.push({ lat, lng, label: src });
+                const d = 0.15, la = pts.map(p => p.lat), lo = pts.map(p => p.lng);
+                const bbox = `${Math.min(...lo) - d},${Math.min(...la) - d},${Math.max(...lo) + d},${Math.max(...la) + d}`;
+                // OpenAIP takes bbox as minLon,minLat,maxLon,maxLat; fall back to a position search if a bbox query fails.
+                // The key goes as ?apiKey= (no preflight); older keys / proxies may want it as a header instead.
+                const call = async (u) => {
+                  let r = await fetch(u + '&apiKey=' + encodeURIComponent(aipKey));
+                  if (r.status === 401 || r.status === 403) r = await fetch(u, { headers: { 'x-openaip-api-key': aipKey } });
+                  if (r.status === 401 || r.status === 403) r = await fetch(u, { headers: { 'x-openaip-client-id': aipKey } });
+                  return r;
+                };
                 const get = async (kind) => {
-                  let r = await fetch(`https://api.core.openaip.net/api/${kind}?bbox=${bbox}&limit=200`, hdr);
-                  if (!r.ok) r = await fetch(`https://api.core.openaip.net/api/${kind}?pos=${lat},${lng}&dist=20000&limit=200`, hdr);
+                  let r = await call(`https://api.core.openaip.net/api/${kind}?bbox=${bbox}&limit=500`);
+                  if (!r.ok && r.status !== 401 && r.status !== 403) r = await call(`https://api.core.openaip.net/api/${kind}?pos=${lat},${lng}&dist=25000&limit=500`);
+                  if (r.status === 401 || r.status === 403) throw new Error('OpenAIP refused the key (' + r.status + '). Check it in Database & Settings');
                   if (!r.ok) throw new Error(`${kind} ${r.status} ${r.statusText}`);
                   return r.json();
                 };
@@ -8818,7 +8894,9 @@ View in the Database & Settings tab.`);
                 setApiAirspaceData(airspaceData);
                 setApiAirportData(airportData);
                 const ck = buildAirspaceCheck(lat, lng, airspaceData && airspaceData.items, airportData && airportData.items);
-                setAirspaceCheck({ ...ck, src, at: new Date().toISOString() });
+                const maxAgl = parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 400, maxAmsl = parseFloat(jsa.suaMaxAltitudeAmsl);
+                const area = buildAreaAirspace(pts, airspaceData && airspaceData.items, { maxAgl, maxAmsl: isFinite(maxAmsl) ? maxAmsl : null });
+                setAirspaceCheck({ ...ck, src, at: new Date().toISOString(), area, pts });
                 setSuggestedAirports(ck.aerodromes.map(a => ({ name: `${a.name}${a.icao ? ' (' + a.icao + ')' : ''} ${fmtBrg(a.brg)}/${fmtDistM(a.dist)}`, freqs: a.freqs.length ? `${a.icao || a.name}: ${a.freqs.map(f => (f.type || f.name) + ' ' + f.value).join(', ')}` : '', dist: a.dist / 1852 })));
             } catch (err) {
                 setAirspaceCheck({ error: err.message });
@@ -9382,6 +9460,7 @@ View in the Database & Settings tab.`);
             if (!isCrpCloud || !cloudReady || !dbReady) return;
             const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
             const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
+            if (openAipKey) company.openAipKey = openAipKey; // v7.10: one airspace key for the whole company
             const all = loggedTimeStats(db.completedFlights);
             const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
               return { name, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', flights: x.flights, sec: x.sec + (Number(f.priorMinutes) || 0) * 60 }; });
@@ -9393,7 +9472,7 @@ View in the Database & Settings tab.`);
             const per = {}; (db.completedFlights || []).forEach(r => { const st = loggedTimeStats([r]); Object.keys(st.pil).forEach(pn => Object.entries(st.acft).forEach(([rpa, x]) => {
               const k = pn + '\u0000' + rpa, o = per[k] = per[k] || { name: pn, rpa, flights: 0, seconds: 0, last: 0 }; o.flights += x.flights; o.seconds += x.sec; o.last = Math.max(o.last, x.last || 0); })); });
             window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
-          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights]); // eslint-disable-line
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
           useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
             h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
@@ -10036,7 +10115,7 @@ View in the Database & Settings tab.`);
               })()}
               {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
                 center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
-                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
@@ -11658,21 +11737,25 @@ View in the Database & Settings tab.`);
                           <div className="md:col-span-2 print:hidden" data-testid="airspace-check">
                             {(() => {
                               const ck = airspaceCheck;
-                              if (!openAipKey || (ck && ck.needKey)) return (
+                              if (!aipKey || (ck && ck.needKey)) return (
                                 <details className="text-xs text-slate-500 border border-slate-200 rounded-lg px-3 py-2" data-openaip-setup="1">
-                                  <summary className="cursor-pointer"><i className="fa-solid fa-tower-broadcast mr-1.5 text-sky-600"></i>Fill airspace, aerodromes and radio frequencies automatically: <span className="underline">set up OpenAIP (free, one-time)</span></summary>
+                                  <summary className="cursor-pointer"><i className="fa-solid fa-tower-broadcast mr-1.5 text-sky-600"></i>Work out the airspace class for the whole area automatically: <span className="underline">set up OpenAIP (free, one-time)</span></summary>
+                                  {isCrewRole ? <p className="mt-1.5 text-slate-600">Your CRP sets this up once for the company. Ask them to add their OpenAIP key in Database &amp; Settings.</p> :
                                   <ol className="list-decimal ml-5 mt-1.5 space-y-0.5 text-slate-600">
                                     <li>Create a free account at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="underline font-semibold">openaip.net</a>.</li>
-                                    <li>In your account, open the API / client ID page and create a client ID.</li>
-                                    <li>Paste it into Database &amp; Settings › API Integration Settings › OpenAIP Client ID, then press Fetch Live here.</li>
-                                  </ol>
+                                    <li>In your account, open the API page and create an API key (client ID).</li>
+                                    <li>Paste it into Database &amp; Settings › API Integration Settings › OpenAIP, then press Fetch Live here. Once you're signed in it's shared with your crew and your other devices.</li>
+                                  </ol>}
                                 </details>
                               );
                               if (!ck) return <div className="text-xs text-slate-500 border border-slate-200 rounded-lg px-3 py-2"><i className="fa-solid fa-tower-broadcast mr-1.5"></i>Press <b>Fetch Live</b> to check airspace, nearby aerodromes and radio frequencies for this job.</div>;
                               if (ck.error) return <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><i className="fa-solid fa-triangle-exclamation mr-1.5"></i>Airspace check couldn't reach OpenAIP ({ck.error}). Needs internet; check the client ID in Database &amp; Settings.</div>;
                               const t = airspaceCheckText(ck);
                               const when = new Date(ck.at).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                              const apply = () => setJsa(prev => ({ ...prev, airspaceClass: t.airspace, nearbyAerodromes: t.aerodromes || prev.nearbyAerodromes, radioFrequencies: t.radio || prev.radioFrequencies, airspaceSource: 'OpenAIP, checked ' + when + ' at the ' + ck.src + ' (' + ck.lat.toFixed(5) + ', ' + ck.lng.toFixed(5) + ')' }));
+                              const ar = ck.area;
+                              const applyClass = () => { if (!ar) return; const opt = ar.option; if (!(db.airspaceClasses || []).includes(opt)) updateDb('airspaceClasses', [...(db.airspaceClasses || []), opt]); setJsa(prev => ({ ...prev, airspaceClass: opt, airspaceSource: areaAirspaceText(ar, when) })); };
+                              const apply = () => setJsa(prev => ({ ...prev, airspaceClass: ar ? ar.option : t.airspace, nearbyAerodromes: t.aerodromes || prev.nearbyAerodromes, radioFrequencies: t.radio || prev.radioFrequencies, airspaceSource: ar ? areaAirspaceText(ar, when) : 'OpenAIP, checked ' + when + ' at the ' + ck.src + ' (' + ck.lat.toFixed(5) + ', ' + ck.lng.toFixed(5) + ')' }));
+                              const tone = !ar ? null : ar.special.length ? 'red' : ar.worst !== 'G' ? 'amber' : 'green';
                               const th = "text-left text-[10px] uppercase font-bold text-slate-500 px-2 py-1 border-b border-slate-200", td = "px-2 py-1.5 border-b border-slate-100 align-top";
                               return (
                                 <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
@@ -11682,9 +11765,25 @@ View in the Database & Settings tab.`);
                                     <span className="text-xs text-slate-300 font-mono">{ck.lat.toFixed(5)}, {ck.lng.toFixed(5)}</span>
                                     <button onClick={apply} data-airspace-apply="1" className="ml-auto text-xs font-semibold px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-600 text-white"><i className="fa-solid fa-file-import mr-1"></i>Add to JSA</button>
                                   </div>
+                                  {ar && <div data-airspace-headline={ar.worst} className={`px-4 py-3 border-b ${tone === 'red' ? 'bg-red-50 border-red-200' : tone === 'amber' ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                    <div className="flex items-start gap-3 flex-wrap">
+                                      <div className="flex-1 min-w-[220px]">
+                                        <div className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Airspace class for this job</div>
+                                        <div className={`text-2xl font-extrabold ${tone === 'red' ? 'text-red-800' : tone === 'amber' ? 'text-amber-900' : 'text-emerald-800'}`} data-airspace-class="1">{ar.mixed ? 'Class ' + ar.classes.join(' and ') : 'Class ' + ar.worst}</div>
+                                        <div className="text-xs text-slate-700">{ar.mixed ? 'Different over different parts of the area' : 'From the surface'} up to your planned {ar.top} ft AGL{ar.topAmsl != null ? ' (' + ar.topAmsl + ' ft AMSL)' : ''}, across {ar.n} point{ar.n === 1 ? '' : 's'} of the job (ops area, sites{opsMap ? ', ops map' : ''}).</div>
+                                      </div>
+                                      <button type="button" onClick={applyClass} data-airspace-use="1" className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-700"><i className="fa-solid fa-check mr-1"></i>Use {ar.option} in the JSA</button>
+                                    </div>
+                                    {ar.controlled.length > 0 && <ul className="mt-2 text-xs space-y-0.5" data-airspace-controlled="1">{ar.controlled.map((r, i) => <li key={i}><b>Class {r.cls}</b> {r.name} · {r.lower} to {r.upper}{r.all ? '' : <span className="text-amber-800"> · over {r.pts.length} of {ar.n} points: {r.pts.slice(0, 3).map(k => (ck.pts[k] || {}).label).join(', ')}{r.pts.length > 3 ? '…' : ''}</span>}</li>)}</ul>}
+                                    {ar.special.length > 0 && <ul className="mt-2 text-xs space-y-0.5 text-red-900 font-semibold" data-airspace-special="1">{ar.special.map((r, i) => <li key={i}><i className="fa-solid fa-ban mr-1"></i>{r.type}: {r.name} · {r.lower} to {r.upper}. Check NOTAMs for activation and get approval before flying.</li>)}</ul>}
+                                    {ar.controlled.length > 0 && <p className="mt-2 text-xs text-amber-900">Controlled airspace: you need an ATC authorisation (or to stay outside it) for this job.</p>}
+                                    {ar.above.length > 0 && <p className="mt-1 text-xs text-slate-600" data-airspace-above="1">Above you: {ar.above.slice(0, 3).map(r => 'Class ' + r.cls + ' ' + r.name + ' from ' + r.lower).join(' · ')}. Keep below it.</p>}
+                                    {ar.rows.some(r => !r.agl) && ar.topAmsl == null && <p className="mt-1 text-[11px] text-slate-500">Some floors are AMSL; ground height is taken as sea level. Press Calc AMSL for an exact answer on high ground.</p>}
+                                    <p className="mt-2 text-[11px] text-slate-500">Check it: <button type="button" onClick={openOk2fly} className="underline">OK2FLY</button> · <a href="https://airservices.gov.au/aip/aip.asp?pg=10" target="_blank" rel="noopener noreferrer" className="underline">Airservices AIP (Designated Airspace Handbook, ERSA)</a> · your VTC / VNC or EFB (OzRunways, AvPlan).</p>
+                                  </div>}
                                   <div className="p-3 space-y-3 text-xs">
                                     <div>
-                                      <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Airspace at this point</div>
+                                      <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Airspace at the {ck.src}</div>
                                       {ck.inside.length === 0 ? <div className="text-emerald-700 font-semibold"><i className="fa-solid fa-circle-check mr-1"></i>Class G: no controlled or special-use airspace found at this point.</div> : (
                                         <table className="w-full"><thead><tr><th className={th}>Airspace</th><th className={th}>Type / class</th><th className={th}>Lower</th><th className={th}>Upper</th></tr></thead>
                                           <tbody>{ck.inside.map((a, i) => (
@@ -11707,7 +11806,7 @@ View in the Database & Settings tab.`);
                                       )}
                                     </div>
                                     <div className="text-[11px] text-slate-500 border-t border-slate-100 pt-2">
-                                      Source: OpenAIP (community data), checked {when}. Not an official source: confirm against the ERSA, the Designated Airspace Handbook and NAIPS (including temporary restricted areas by NOTAM) before flight.
+                                      Source: © openAIP (openaip.net, CC BY-NC 4.0, community data), checked {when}. Not an official source: confirm against the ERSA, the Designated Airspace Handbook and NAIPS (including temporary restricted areas by NOTAM) before flight.
                                       {jsa.airspaceSource && <div className="mt-0.5 text-emerald-700">In the JSA: {jsa.airspaceSource}</div>}
                                     </div>
                                   </div>
@@ -12859,7 +12958,7 @@ View in the Database & Settings tab.`);
                               lng={getCurrentCoords().lng}
                               airspaceData={apiAirspaceData}
                               airportData={apiAirportData}
-                              openAipKey={openAipKey}
+                              openAipKey={aipKey}
                             />
                           </div>
                         )}
@@ -15026,18 +15125,18 @@ View in the Database & Settings tab.`);
                             <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-key text-slate-400"></i> API Integration Settings</h3>
                             <div className="space-y-3">
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">OpenAIP Client ID <span className="text-slate-400 font-normal normal-case">(for live airspace data in JSA section)</span></label>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">OpenAIP API key <span className="text-slate-400 font-normal normal-case">(works out the airspace class in the JSA, draws airspace on the ops map)</span></label>
                                     <div className="flex gap-2 items-center">
                                         <input
-                                            type="password"
+                                            type="password" data-openaip-key="1"
                                             value={openAipKey}
                                             onChange={handleOpenAipKeyChange}
-                                            placeholder="Paste your OpenAIP Client ID here..."
+                                            placeholder={cloudAipKey ? 'Using the company key' : 'Paste your OpenAIP API key (client ID) here...'}
                                             className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
                                         />
-                                        {openAipKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
+                                        {aipKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
                                     </div>
-                                    <p className="text-xs text-slate-400 mt-1">Get your free key at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">openaip.net</a>. Stored locally in your browser only.</p>
+                                    <p className="text-xs text-slate-400 mt-1">Get your free key at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">openaip.net</a> (account › API). When you're signed in as CRP it's shared with your crew and your other devices, so you only enter it once.{!openAipKey && cloudAipKey ? ' This device is using the company key.' : ''}</p>
                                 </div>
                             </div>
                         </div>
