@@ -2,8 +2,8 @@
 // inside the print page, so it must not use anything from this module: only its arguments and Leaflet (L).
 // OM: { mode, zones:[{shape,pts,c,r,color,stroke,fill,dash,tag,name,buffer}], paths:[{legs:[{a,b,color,dash}],pts:[[lat,lng,alt]]}],
 //       points:[{kind,lat,lng,title,text,size}], overlay:{src,center,widthM,rot,opacity,aspect}|null }
-export function opsAdvPrint(OM, imagery) {
-  var el = document.getElementById('opsadv'); if (!el || typeof L === 'undefined') return;
+export function opsAdvPrint(OM, imagery, elId, fit) {
+  var el = document.getElementById(elId || 'opsadv'); if (!el || typeof L === 'undefined') return;
   var plan = OM.mode === 'plan';
   var mo = { zoomControl: false, attributionControl: !plan, zoomSnap: 0, fadeAnimation: false, zoomAnimation: false, dragging: false, scrollWheelZoom: false };
   if (plan) mo.crs = L.CRS.Simple;
@@ -15,7 +15,8 @@ export function opsAdvPrint(OM, imagery) {
   OM.paths.forEach(function (p) { p.pts.forEach(function (q) { all.push([q[0], q[1]]); }); });
   OM.points.forEach(function (p) { all.push([p.lat, p.lng]); });
   if (OM.overlay) { var o = OM.overlay, hw = o.widthM / 2, hh = o.widthM * (o.aspect || 1) / 2; all.push(north(east(o.center, -hw), -hh), north(east(o.center, hw), hh)); }
-  if (all.length > 1) m.fitBounds(L.latLngBounds(all).pad(0.08), { animate: false, maxZoom: plan ? 6 : 21 }); else if (all.length) m.setView(all[0], plan ? 2 : 19); else m.setView([0, 0], 2);
+  if (fit) m.fitBounds(fit, { animate: false, padding: [0, 0] });
+  else if (all.length > 1) m.fitBounds(L.latLngBounds(all).pad(0.08), { animate: false, maxZoom: plan ? 6 : 21 }); else if (all.length) m.setView(all[0], plan ? 2 : 19); else m.setView([0, 0], 2);
   if (!plan && imagery) imagery(m);
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(m);
   if (OM.overlay && OM.overlay.src) {

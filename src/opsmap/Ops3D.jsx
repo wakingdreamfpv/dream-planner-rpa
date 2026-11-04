@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed } from './geo.js';
 
 let threeP = null;
 const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
@@ -14,12 +14,13 @@ const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
 }));
 const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
-export default function Ops3D({ doc, checks }) {
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp }) {
+  const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
   const host = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
   }, [doc, checks]);
   return (
@@ -48,7 +49,7 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   return sp;
 }
 
-function build(THREE, el, doc, checks) {
+function build(THREE, el, doc, checks, camRef, apiRef) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -100,7 +101,7 @@ function build(THREE, el, doc, checks) {
     if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = new THREE.Mesh(keep(new THREE.RingGeometry(z.r, z.r + b, 64)), keep(new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, 0.03, c.z); scene.add(ring); } }
     // label at the zone's top
     const cen = z.shape === 'circle' ? P(z.c) : (() => { const q = z.pts.map(P); return { x: q.reduce((t, p) => t + p.x, 0) / q.length, z: q.reduce((t, p) => t + p.z, 0) / q.length }; })();
-    const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + z.v + ' m/s' : '') : '');
+    const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
     const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, ground + h + lblScale * 0.3, cen.z); scene.add(sp); disposables.push(sp.material.map, sp.material);
   });
 
@@ -138,7 +139,9 @@ function build(THREE, el, doc, checks) {
   const cam = new THREE.PerspectiveCamera(45, W / H, 0.1, span * 40);
   const target = new THREE.Vector3(cx, maxAlt / 3, cz);
   let theta = -Math.PI / 4, phi = 1.0, dist = span * 1.25;
-  const place = () => { cam.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta)); cam.lookAt(target); };
+  const saved = camRef && camRef.current;
+  if (saved && isFinite(saved.dist)) { theta = saved.theta; phi = saved.phi; dist = saved.dist; target.set(saved.tx, saved.ty, saved.tz); }
+  const place = () => { cam.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta)); cam.lookAt(target); if (camRef) camRef.current = { theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }; };
   place();
   let raf = 0; const draw = () => { raf = 0; renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
   const cv = renderer.domElement; cv.style.touchAction = 'none';
@@ -160,9 +163,18 @@ function build(THREE, el, doc, checks) {
   ro.observe(el);
   // textures load asynchronously: redraw a few times
   req(); const t1 = setTimeout(req, 300), t2 = setTimeout(req, 1200);
+  // v7.12: the planner takes a picture of this view for the plan and the PDF
+  if (apiRef) apiRef.current = {
+    capture: (maxW = 1800) => { renderer.render(scene, cam); const src = renderer.domElement; const k = Math.min(1, maxW / src.width);
+      const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+      const x = c.getContext('2d'); x.fillStyle = '#e2e8f0'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.85); },
+    camera: () => ({ theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }),
+    setCamera: (cv) => { if (!cv) return; theta = cv.theta; phi = cv.phi; dist = cv.dist; target.set(cv.tx, cv.ty, cv.tz); place(); req(); },
+  };
   return () => {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
+    if (apiRef) apiRef.current = null;
     disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }

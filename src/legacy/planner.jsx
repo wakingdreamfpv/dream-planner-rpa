@@ -7,7 +7,10 @@ import qrcode from 'qrcode-generator';
 import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister } from '../observer/Observer.jsx';
 import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import OpsMap from '../opsmap/OpsMap.jsx';
-import { hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
+import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
+import Registers from '../compliance/Registers.jsx';
+import NotificationSettings from '../compliance/NotificationSettings.jsx';
+import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
@@ -178,7 +181,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.10';
+        const APP_VERSION = '7.12';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -341,6 +344,9 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         // Channel plans (v5.47). bws: { bandwidthMHz: { channel: centreMHz } }. Sources: DJI O4 Air Unit specs page; DJI O3 published table.
         const RF_PLANS = {
           o4: { name: 'DJI O4 5.8 GHz', bws: { 60: { 1: 5794.5 }, 40: { 1: 5794.5 }, 20: { 1: 5768.5, 2: 5789.5, 3: 5814.5 }, 10: { 1: 5768.5, 2: 5789.5, 3: 5814.5 } } },
+          // v7.12: O4 with FCC mode unlocked: 3 channels at 40 and 60 MHz, 7 at 20 MHz (published FPV frequency guides; DJI's manual only lists stock).
+          // The 60 MHz centres are taken as the 40 MHz ones: confirm in the goggles.
+          o4fcc: { name: 'DJI O4 5.8 GHz (FCC mode)', fcc: true, bws: { 60: { 1: 5735, 2: 5795, 3: 5855 }, 40: { 1: 5735, 2: 5795, 3: 5855 }, 20: { 1: 5669, 2: 5705, 3: 5741, 4: 5769, 5: 5790, 6: 5815, 7: 5876 } } },
           o3: { name: 'DJI O3 / Avatar 5.8 GHz', bws: { 20: RF_DJI_CH, 40: { 1: 5695, 2: 5770, 3: 5878, 8: 5839 } } },
           uhfcb: { name: 'UHF CB (AU)', bws: { 0.0125: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [i + 1, Math.round((476.425 + i * 0.025) * 10000) / 10000])) } },
         };
@@ -414,7 +420,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             ? `${c.a.label} and ${c.b.label} share ${Math.round(c.ov[0])}–${Math.round(c.ov[1])} MHz. Both hop or spread across the band, so they normally coexist, but expect reduced range in a busy 2.4 GHz environment — do a range check with everything on.`
             : `${c.a.label} overlaps ${c.b.label} at ${Math.round(c.ov[0])}–${Math.round(c.ov[1])} MHz — move a channel or agree a split before flight.`;
         // SVG string (used inline in the app and in the PDF)
-        const rfChartSvg = (items) => {
+        const rfChartSvg = (items, forPdf) => { // v7.12: the AU class-licence bands are a planner aid only, not printed
           const L = (items || []).map(i => ({ ...i, r: rfRanges(i.mhz) })).filter(i => i.r.length);
           const groups = [
             { name: 'VHF (airband)', lo: 100, hi: 180 }, { name: 'UHF (433 / CB / radios / mics)', lo: 400, hi: 700 }, { name: '868 / 915 MHz', lo: 850, hi: 960 },
@@ -439,8 +445,8 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             const h = 18 + Math.max(1, rows.length) * rowH + 16;
             body += `<rect x="0" y="${y}" width="${W}" height="${h}" fill="#f8fafc" stroke="#e2e8f0"/>`;
             body += `<text x="6" y="${y + 12}" font-size="10" font-weight="700" fill="#0f172a">${esc2(g.name)}</text>`;
-            RF_LIPD.forEach(([a, b]) => { if (b > g.lo && a < g.hi) body += `<rect x="${X(a)}" y="${y + 16}" width="${Math.max(1, X(b) - X(a))}" height="${h - 32}" fill="#dbeafe" opacity="0.55"/>`; });
-            conf.forEach(c => { if (c.ov[1] > g.lo && c.ov[0] < g.hi) body += `<rect x="${X(c.ov[0])}" y="${y + 16}" width="${Math.max(2, X(c.ov[1]) - X(c.ov[0]))}" height="${h - 32}" fill="${c.sev === 'clash' ? '#fecaca' : '#fde68a'}" opacity="0.85"/>`; });
+            if (!forPdf) RF_LIPD.forEach(([a, b]) => { if (b > g.lo && a < g.hi) body += `<rect x="${X(a)}" y="${y + 16}" width="${Math.max(1, X(b) - X(a))}" height="${h - 32}" fill="#dbeafe" opacity="0.55"/>`; });
+            conf.forEach(c => { if (c.ov[1] > g.lo && c.ov[0] < g.hi) body += `<rect x="${X(c.ov[0])}" y="${y + 16}" width="${Math.max(2, X(c.ov[1]) - X(c.ov[0]))}" height="${h - 32}" fill="${c.sev === 'clash' || c.sev === 'pyro' ? '#fcd34d' : '#fef3c7'}" opacity="0.85"/>`; });
             rows.forEach((it, k) => {
               const ry = y + 18 + k * rowH, us = it.side === 'us';
               const col = it.kind === 'pyro' ? '#dc2626' : us ? (it.kind === 'video' ? '#0e7490' : it.kind === 'control' ? '#2563eb' : it.kind === 'comms' ? '#7c3aed' : '#64748b') : (it.kind === 'video' ? '#c2410c' : it.kind === 'control' ? '#d97706' : it.kind === 'comms' ? '#9333ea' : '#a16207');
@@ -451,7 +457,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             for (let f = Math.ceil(g.lo / step) * step; f <= g.hi; f += step) body += `<line x1="${X(f)}" x2="${X(f)}" y1="${y + 16}" y2="${y + h - 14}" stroke="#cbd5e1" stroke-width="0.5"/><text x="${X(f)}" y="${ty}" font-size="7.5" text-anchor="middle" fill="#64748b">${f}</text>`;
             y += h + 6;
           });
-          body += `<text x="6" y="${y + 8}" font-size="8" fill="#64748b">MHz · ● ours  ○ others · <tspan fill="#2563eb">■</tspan> control  <tspan fill="#0e7490">■</tspan> video  <tspan fill="#7c3aed">■</tspan> comms  <tspan fill="#dc2626">■</tspan> pyro · red = overlap to resolve · amber = shared hopping band · pale blue = AU class-licence band</text>`;
+          body += `<text x="6" y="${y + 8}" font-size="8" fill="#64748b">MHz · ● ours  ○ others · <tspan fill="#2563eb">■</tspan> control  <tspan fill="#0e7490">■</tspan> video  <tspan fill="#7c3aed">■</tspan> comms  <tspan fill="#dc2626">■</tspan> pyro · yellow = overlap to look at · pale yellow = shared hopping band${forPdf ? '' : ' · pale blue = AU class-licence band (planner only)'}</text>`;
           return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${y + 14}" width="100%" style="display:block;font-family:Inter,Arial,sans-serif">${body}</svg>`;
         };
         const rfSummaryText = (items, who) => {
@@ -1824,6 +1830,24 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           { id: 'weightUnder2kg',       label: 'RPA MTOW ≤ 2 kg' },
         ];
 
+        // v7.12: Event Logistics & Key Personnel fields can be renamed, hidden, removed, added and reordered (per job, with
+        // a company default for new jobs). The five original fields keep their values where they always were (oonp.callTime,
+        // oonp.venueContact / venueContactPhone …) so older plans, the PDF and signatures are unchanged.
+        const DEFAULT_LOGISTICS = [
+          { id: 'callTime', label: 'Call Time', kind: 'text', builtin: true, ph: 'e.g. 4:00 PM 21AUG2026' },
+          { id: 'venueContact', label: 'Venue Point of Contact', kind: 'contact', builtin: true },
+          { id: 'rfCoordinator', label: 'RF / Comms Coordinator', kind: 'contact', builtin: true },
+          { id: 'mediaLead', label: 'Media / Broadcast Lead', kind: 'contact', builtin: true },
+          { id: 'pyroCoordinator', label: 'Pyro / Fireworks Coordinator', kind: 'contact', builtin: true },
+        ];
+        const logisticsRows = (oonp, tmpl) => {
+          if (Array.isArray(oonp && oonp.logisticsRows)) return oonp.logisticsRows;
+          const base = Array.isArray(tmpl) && tmpl.length ? tmpl : DEFAULT_LOGISTICS;
+          // a job filled in before a field was removed from the default still shows that field (nothing is lost)
+          const extra = DEFAULT_LOGISTICS.filter(d => !base.some(b => b.id === d.id) && oonp && (oonp[d.id] || oonp[d.id + 'Phone']));
+          return [...base.map(b => (b.off && oonp && (oonp[b.id] || oonp[b.id + 'Phone']) ? { ...b, off: false } : b)), ...extra];
+        };
+        const logisticsVal = (oonp, r) => (r.builtin ? { value: (oonp || {})[r.id] || '', name: (oonp || {})[r.id] || '', phone: (oonp || {})[r.id + 'Phone'] || '' } : { value: r.value || '', name: r.name || '', phone: r.phone || '' });
         const DEFAULT_OONP_CHECKLISTS = {
           consent: [
             { id: 'venueApproval',            label: 'Venue Approval — formal permission obtained for indoor/outdoor OONP flight' },
@@ -4619,6 +4643,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [oonp, setOonp] = useState(getInitialOonp);
           const handleOonpChange = (e) => { const {name, value, type, checked} = e.target; setOonp(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value })); };
           const handleOonpToggle = (name) => setOonp(prev => ({ ...prev, [name]: !prev[name] }));
+          const [logisticsEdit, setLogisticsEdit] = useState(false), [logisticsMsg, setLogisticsMsg] = useState('');
 
           // ── Dynamic OONP checklist helpers ──────────────────────────────────
           // Which section header's edit pencil is active; null = none
@@ -4914,6 +4939,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             return () => { window.removeEventListener('wd-auth', h); if (t) clearTimeout(t); };
           }, []); // eslint-disable-line
           const signedIn = auth.state === 'in';
+          // v7.11: crew currency from the cloud (CRP): certifications, the 3-flights rule and logged hours
+          const [currency, setCurrency] = useState(() => (typeof window !== 'undefined' && window.wdCurrency) || null);
+          useEffect(() => { const h = () => setCurrency(window.wdCurrency || null); window.addEventListener('wd-currency', h); return () => window.removeEventListener('wd-currency', h); }, []);
           const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && editionPick === 'free');
           const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
           const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
@@ -5352,13 +5380,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const oonpHtml=oonpMode?(
               '<div style="border-left:4px solid #f59e0b;background:#fffbeb;border-radius:0 4pt 4pt 0;padding:10pt;margin:10pt 0;break-inside:avoid;">'
               +'<div style="font-weight:700;font-size:10pt;color:#78350f;margin-bottom:6pt;">⚡ OONP'+(jsa.oonpPathway?' — '+esc(jsa.oonpPathway==='Custom'&&jsa.oonpCustomPathway?jsa.oonpCustomPathway:jsa.oonpPathway):' — pathway not selected')+'</div>'
-              +grid(r2('Venue Contact',oonp.venueContact,'Contact Phone',oonp.venueContactPhone),
+              +grid(...(() => { // v7.12: the job's own logistics fields (hidden ones left out)
+                      const cells = []; logisticsRows(oonp, db.oonpLogisticsTemplate).filter(r => !r.off).forEach(r => { const v = logisticsVal(oonp, r);
+                        if (r.kind === 'contact') cells.push([r.label, v.name], [r.label.length > 18 ? 'Phone' : r.label + ' Phone', v.phone]); else cells.push([r.label, v.value]); });
+                      const out = []; for (let i = 0; i < cells.length; i += 2) out.push(r2(cells[i][0], cells[i][1], cells[i + 1] ? cells[i + 1][0] : '', cells[i + 1] ? cells[i + 1][1] : '')); return out; })(),
                     r2('RC Link',oonp.rcLink,'RC Freq',oonp.rcFreq),
                     r2('Video TX',oonp.videoTx,'Video Freq',oonp.videoFreq),
-                    r2('Call Time',oonp.callTime,'Media Format',oonp.mediaFormat),
-                    r2('RF Coordinator',oonp.rfCoordinator,'RF Phone',oonp.rfCoordinatorPhone),
-                    r2('Pyro Coordinator',oonp.pyroCoordinator,'Pyro Phone',oonp.pyroCoordinatorPhone),
-                    ...((oonp.mediaLead||oonp.mediaLeadPhone)?[r2('Media Lead',oonp.mediaLead,'Media Phone',oonp.mediaLeadPhone)]:[]))
+                    r2('Media Format',oonp.mediaFormat,'',''))
               +'<div style="font-size:7.5pt;font-weight:700;color:#92400e;margin:8pt 0 4pt;">INFORMED CONSENT</div>'
               +'<div style="display:grid;grid-template-columns:1fr 1fr;">'
               +( () => {
@@ -5632,6 +5660,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 return { shape: z.shape, pts: z.pts, c: z.c, r: z.r, color: k.color, stroke: k.stroke, fill: k.fill, dash: z.kind === 'near' ? '8 6' : null, name: esc(z.name || k.label), tag: esc(opsZoneTag(z, opsMap.settings)), buffer: opsZoneBuffer(z) }; }),
               paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { pts: p.pts, legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
               points: (opsMap.points || []).map(p => ({ kind: p.kind, lat: p.lat, lng: p.lng, title: p.title || '', text: p.text || '', size: p.size })),
+              views: (opsMap.views || []).map(v => ({ kind: v.kind, title: v.title, bounds: v.bounds || null })),
               overlay: opsMap.overlay ? { src: opsMap.overlay.src, center: opsMap.overlay.center, widthM: opsMap.overlay.widthM, rot: opsMap.overlay.rot || 0, opacity: opsMap.overlay.opacity, aspect: opsMap.overlay.aspect } : null };
 
             const hasMap = true;
@@ -5683,7 +5712,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +'var CP=[];(MP||[]).forEach(function(p){CP.push(p);});ML.forEach(function(x){CP.push([x.lat,x.lng]);});MR.forEach(function(x){CP.push([x.lat,x.lng]);});MS.forEach(function(x){CP.push([x.lat,x.lng]);});'
               +'MX.forEach(function(z){if(z.type==="circle"){var c=L.latLng(z.geo.c);var b=c.toBounds(z.geo.rM*2);CP.push(b.getSouthWest(),b.getNorthEast());}else if(z.type==="rect"){CP.push(z.geo.a,z.geo.b);}else if(z.geo.pts){z.geo.pts.forEach(function(p){CP.push(p);});}});'
               +'if(CP.length>1){m.fitBounds(L.latLngBounds(CP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){m.fitBounds(MB,{padding:[0,0],animate:false});}else{m.setView(MC,MZ);}'
-              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);}'
+              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);(OM.views||[]).forEach(function(v,i){if(v.kind==="2d"&&v.bounds)opsAdvPrint(OM,imagery,"opsv"+i,v.bounds);});}'
               // Heatmap page: same view underneath the painted overlay
               +'if(document.getElementById("heatmapbase")){var hm=L.map("heatmapbase",mo);var HP=CP.slice();HD.forEach(function(d){if(!d.e)HP.push([d.lat,d.lng]);});if(HP.length>1){hm.fitBounds(L.latLngBounds(HP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){hm.fitBounds(MB,{padding:[0,0],animate:false});}else{hm.setView(MC,MZ);}imagery(hm);opsLayers(hm);'
               // crowd paint on a canvas sized to the map, projected from GPS
@@ -5796,19 +5825,31 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Zone</th><th style="'+th+'">Type</th><th style="'+th+'">Drone · energy</th><th style="'+th+'">Max height</th><th style="'+th+'">Max speed</th><th style="'+th+'">Buffer / ground</th><th style="'+th+'">Notes</th></tr>');
                 mo.zones.forEach(z => { const lim = OPS_KINDS[z.kind] && OPS_KINDS[z.kind].limits;
                   const buf = z.kind === 'exclusion' ? (z.shielded ? 'Shielded: ' + opsZoneBuffer(z) + ' m (' + esc(z.shieldNote || 'not stated') + ')' : opsZoneBuffer(z) + ' m') : ((Number(z.ground) || 0) ? 'ground +' + z.ground + ' m' : '—');
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? z.v + ' m/s' : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' + (z.autoLimit ? '<div style="font-size:6.5pt;color:'+S6+';">from the '+(z.autoLimit.energy||34)+' J table'+(z.limitReviewed ? ', reviewed by '+esc(z.limitReviewed.by || 'pilot') : ', not yet reviewed')+'</div>' : '') : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? opsFmtSpeed(z.v) : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
                 P.push('</table>');
               }
               if ((mo.paths || []).length) {
                 P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Path</th><th style="'+th+'">Drone</th><th style="'+th+'">Speed</th><th style="'+th+'">Length</th><th style="'+th+'">Heights (m above take-off)</th><th style="'+th+'">Result</th></tr>');
                 mo.paths.forEach(p => { const r = chk && chk.paths[p.id], st = r ? (r.legs.some(l => l.status === 'stop') ? 'To fix' : r.legs.some(l => l.status === 'warn') ? 'To check' : 'Clear') : '—';
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+(p.speed || 0)+' m/s</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+opsFmtSpeed(p.speed || 0)+'</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
                 P.push('</table>');
               }
               const notes = (mo.points || []).filter(p => p.text || p.kind === 'poi' || p.kind === 'note');
               if (notes.length) { P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'width:28%;">Marker</th><th style="'+th+'">Note</th></tr>');
                 notes.forEach(p => P.push('<tr><td style="'+td+'font-weight:700;">'+esc((OPS_POINT_KINDS[p.kind] || {}).label || p.kind)+': '+esc(p.title || '')+'</td><td style="'+td+'white-space:pre-wrap;">'+esc(p.text || '')+'</td></tr>')); P.push('</table>'); }
-              if (chk && chk.issues.length) { P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;"><b>Map checks</b><br>' + chk.issues.map(q => (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
+              // v7.12: the views kept for the plan (2D map areas re-drawn here, 3D as the picture taken)
+              (mo.views || []).forEach((v, i) => {
+                P.push('<div style="break-inside:avoid;margin:10pt 0 8pt;"><div style="font-size:9pt;font-weight:800;color:'+PU+';margin-bottom:3pt;">'+esc(v.title || ('View ' + (i + 1)))+' <span style="font-weight:400;color:'+S6+';font-size:7pt;">'+(v.kind === '3d' ? '3D view' : 'map view')+'</span></div>');
+                if (v.kind === '2d' && v.bounds) P.push('<div id="opsv'+i+'" style="width:182mm;height:120mm;border:1px solid '+S2+';border-radius:4pt;overflow:hidden;background:#f8fafc;"></div>');
+                else if (opsViewImages[v.id]) P.push('<img src="'+opsViewImages[v.id]+'" style="width:182mm;max-height:130mm;object-fit:contain;border:1px solid '+S2+';border-radius:4pt;background:#e2e8f0;" alt="">');
+                else P.push('<div style="font-size:7.5pt;color:'+S6+';">(picture not saved on this device)</div>');
+                P.push('</div>');
+              });
+              // v7.12: the CRP / pilot chooses whether the checks print (all, only open ones, or none); acknowledged ones show their note
+              { const mode = ((mo.settings || {}).pdfChecks) || 'all', list = chk ? chk.issues.filter(q => mode === 'all' || (mode === 'open' && !q.ack)) : [];
+                if (mode !== 'none' && list.length) P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;break-inside:avoid;"><b>Map checks</b><br>' + list.map(q => q.ack
+                  ? '<b style="color:#475569">Acknowledged:</b> ' + esc(q.text) + ' <i style="color:#475569">— “' + esc(q.ack.note || 'OK') + '”' + (q.ack.by ? ', ' + esc(q.ack.by) : '') + '</i>'
+                  : (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
               P.push('</div>');
             }
 
@@ -5836,11 +5877,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               const rf=jsa.rfPlan||{};
               if(rf.enabled!==false&&(rf.items||[]).some(i=>rfRanges(i.mhz).length)){
                 P.push('<div style="break-inside:avoid;">'+sub('RF Coordination — Radio & Video Bands'));
-                P.push('<div style="border:1px solid '+S2+';border-radius:3pt;padding:3pt;">'+rfChartSvg(rf.items)+'</div>');
+                P.push('<div style="border:1px solid '+S2+';border-radius:3pt;padding:3pt;">'+rfChartSvg(rf.items, true)+'</div>');
                 P.push('<table style="width:100%;border-collapse:collapse;font-size:7pt;margin-top:3pt;">'+rf.items.filter(i=>rfRanges(i.mhz).length).map(i=>'<tr><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';color:'+(i.side==='us'?'#0e7490':'#b45309')+';font-weight:700;width:12%;">'+(i.side==='us'?'OURS':'OTHERS')+'</td><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';">'+esc(i.label)+(i.ch!=null?' (CH'+i.ch+(i.bw&&i.plan!=='uhfcb'?', '+i.bw+' MHz':'')+')':'')+(i.power?' · '+esc(i.power):'')+(i.who?' <span style="color:'+S6+';">· '+esc(i.who)+'</span>':'')+'</td><td style="padding:2pt 4pt;border-bottom:1px solid '+S2+';font-family:monospace;white-space:nowrap;text-align:right;">'+esc(rfFmt(rfRanges(i.mhz)))+'</td></tr>').join('')+'</table>');
                 const cf=rfConflicts(rf.items);
-                P.push('<div style="font-size:6.8pt;margin-top:3pt;">'+(cf.length?cf.map(c=>'<div style="color:'+(c.sev==='clash'||c.sev==='pyro'?'#b91c1c':'#b45309')+';font-weight:700;">'+(c.sev==='clash'?'&#9940; ':c.sev==='pyro'?'&#128293; ':'&#9888; ')+esc(rfConflictText(c))+'</div>').join(''):'<div style="color:#15803d;font-weight:700;">&#10003; No overlaps between our systems and the others listed.</div>')+'</div>');
-                if(rf.notes) P.push('<div style="font-size:7pt;color:'+S8+';margin-top:3pt;white-space:pre-wrap;"><b>Agreements:</b> '+esc(rf.notes)+'</div>');
+                P.push('<div style="font-size:6.8pt;margin-top:3pt;">'+(cf.length?cf.map(c=>'<div style="color:#854d0e;background:#fefce8;border-left:3px solid #eab308;padding:1.5pt 4pt;margin-bottom:1.5pt;font-weight:700;">'+(c.sev==='clash'?'&#9888; ':c.sev==='pyro'?'&#128293; ':'&#9888; ')+esc(rfConflictText(c))+'</div>').join(''):'<div style="color:#15803d;font-weight:700;">&#10003; No overlaps between our systems and the others listed.</div>')+'</div>');
+                if(String(rf.notes||'').trim()) P.push('<div style="margin-top:5pt;border:2px solid #16a34a;background:#f0fdf4;border-radius:5pt;padding:6pt 9pt;color:#14532d;"><div style="font-size:9pt;font-weight:900;text-transform:uppercase;letter-spacing:.5pt;">&#10004; RF plan agreed</div><div style="font-size:9.5pt;font-weight:700;white-space:pre-wrap;margin-top:2pt;">'+esc(rf.notes)+'</div></div>');
                 P.push('</div>');
               }
             }
@@ -6116,7 +6157,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (Array.isArray(plan.oonpSections)) setOonpSections([...plan.oonpSections]);
             setLog(plan.log ? migrateYesNoLog({ ...getInitialLog(), ...clone(plan.log) }) : getInitialLog());
             setMapData(md);
-            setOpsMap(plan.opsMap ? clone(plan.opsMap) : null); setOpsMapOpen(false);
+            setOpsMap(plan.opsMap ? clone(plan.opsMap) : null); setOpsMapOpen(false); setOpsViewImages(clone(plan.opsViewImages) || {});
             setSiteAttachments(clone(plan.siteAttachments) || []);
             setBallistic(plan.ballistic ? clone(plan.ballistic) : { enabled: false, height: 5.0, speed: 5.0 });
             setKeData(plan.keData ? { enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05, ...clone(plan.keData) }
@@ -6283,6 +6324,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [mapData, setMapData] = useState({ launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] });
           const [opsMap, setOpsMap] = useState(null); // v7.9 advanced ops map
           const [opsMapOpen, setOpsMapOpen] = useState(false);
+          const [opsViewImages, setOpsViewImages] = useState({}); // v7.12: pictures of the 3D views kept for the plan / PDF (by view id)
           const [selectedMarker, setSelectedMarker] = useState(null);
           const [draggingMarker, setDraggingMarker] = useState(null);
           const opsMapRef = React.useRef(null);
@@ -7536,6 +7578,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               oonpSections:    safeClone(oonpSections),
               mapData:         safeClone(mapData),
               ...(hasOpsContent(opsMap) ? { opsMap: safeClone(opsMap) } : {}),
+              ...((() => { const ids = ((opsMap && opsMap.views) || []).filter(v => v.kind === '3d').map(v => v.id); const o = {}; ids.forEach(id => { if (opsViewImages[id]) o[id] = opsViewImages[id]; }); return Object.keys(o).length ? { opsViewImages: o } : {}; })()),
               siteAttachments: safeClone(siteAttachments || []),
               ballistic:       safeClone(ballistic),
               keData:          safeClone(keData),
@@ -7673,7 +7716,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             setDirty(true);
             if (workingTimer.current) clearTimeout(workingTimer.current);
             workingTimer.current = setTimeout(() => saveRecoveryRef.current(), 2500);
-          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments, opsMap]); // eslint-disable-line
+          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments, opsMap, opsViewImages]); // eslint-disable-line
           useEffect(() => {
             const warn = (e) => { if (dirty) { saveRecoveryRef.current(); e.preventDefault(); e.returnValue = 'You have unsaved changes.'; return e.returnValue; } };
             window.addEventListener('beforeunload', warn);
@@ -8029,6 +8072,15 @@ View in the Database & Settings tab.`);
             if (!sp || !fields.length || planLoadingRef.current || approval.rpSigned || approval.crpSigned) return; // never touch a job being opened or already signed
             setJsa(prev => { let ch = false; const n = { ...prev }; fields.forEach(k => { const v = String(prev[k] || '').trim(); if (!v || v === old) { if (v !== sp) { n[k] = sp; ch = true; } } }); return ch ? n : prev; });
           }, [overview.supportPersonnel, (jsa.operationTypes || []).join(',')]); // eslint-disable-line
+          // v7.11 (Chunk 8): the Flight Record's "Observer / crew" comes from the job's observers unless it's been typed in
+          const jobObserverNames = () => [...new Set([jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel].flatMap(n => String(n || '').split(/[,;\n]/)).map(x => x.trim()).filter(Boolean))].join(', ');
+          const prevObs = useRef('');
+          useEffect(() => {
+            const names = jobObserverNames();
+            const old = prevObs.current; prevObs.current = names;
+            if (!names || planLoadingRef.current || approval.crpSigned) return;
+            setLog(prev => { const v = String(prev.crewObserver || '').trim(); return (!v || v === old) && v !== names ? { ...prev, crewObserver: names } : prev; });
+          }, [jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel]); // eslint-disable-line
           const toggleOperationType = (op) => {
             setJsa(prev => {
                 const current = prev.operationTypes || [];
@@ -9176,7 +9228,7 @@ View in the Database & Settings tab.`);
                   clearMap();
                   setHeatStrokes([]); setHeatExclZones([]); amendmentsRef.current = [];
                   // v6.0: these used to carry over from the previous job (OONP set-up, KE/ballistic, attachments)
-                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]); setOpsMap(null);
+                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]); setOpsMap(null); setOpsViewImages({});
                   setBallistic({ enabled: false, height: 5.0, speed: 5.0 });
                   setKeData({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
                   setExtraKe([]); setOonpToolsOpen(false);
@@ -9228,6 +9280,8 @@ View in the Database & Settings tab.`);
               I('log', 'serviceableAtEnd', 'RPA serviceable at end? (Yes, or No + defects)', log.serviceableAtEnd === true || (log.serviceableAtEnd === false && t(log.defects)), '__M5__: whether the RPA became unserviceable', 'log'),
               I('log', 'crewRP', 'Remote pilot who flew', t(log.crewRP), 'CASA MOS 10.06 (remote pilot log)', 'log'),
               I('log', 'flights', 'Each flight with its length and height AGL', flown.length && withHeight.length === flown.length, '__M5__ and 10.06: each flight segment, its height AGL, and its length', 'log'),
+              // v7.11 (Chunk 8): everyone on the job must be current for this job's operation and aircraft (CRP can override with a reason)
+              ...((signedIn && auth.role === 'crp' && currency && !currency.error) ? checkJobCrew({ overview, jsa, approval, log }, currency).map(c => ({ ...I('approval', c.id, c.name + ' (' + (c.role === 'rpic' ? 'RPIC' : c.role) + '): ' + c.label + ' — ' + (CUR_STATUS[c.status] || (c.status === 'hours' ? 'not enough hours on type' : c.status)), crewItemOk(c), 'Ops manual: crew currency (12 months, or 24 months with 3 flights in each 12-month period)'), crpOnly: true, crew: c })) : []),
             ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }))
               // v7.5.5: an item the RPIC has declared not needed (with a reason) counts as recorded, and is flagged
               .map(x => { const o = (approval.reqOverrides || {})[x.id]; return !x.ok && o && String(o.reason || '').trim() ? { ...x, ok: true, overridden: o } : x; });
@@ -9240,7 +9294,8 @@ View in the Database & Settings tab.`);
           const saveBypass = () => {
             const b = reqBypass; if (!b || !b.ids.size || !b.declared || String(b.reason || '').trim().length < 10) return;
             const by = { name: (signedIn && auth.name) || rpicName || '', email: signedIn ? auth.email : '', role: signedIn ? auth.role : 'rpic', at: new Date().toISOString() };
-            setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; b.ids.forEach(id => { const it = reqItems.find(x => x.id === id); o[id] = { reason: b.reason.trim(), label: it ? it.label : id, by }; }); return { ...prev, reqOverrides: o }; });
+            const crpOk = !signedIn || auth.role === 'crp';
+            setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; b.ids.forEach(id => { const it = reqItems.find(x => x.id === id); if (it && it.crpOnly && !crpOk) return; o[id] = { reason: b.reason.trim(), label: it ? it.label : id, by }; }); return { ...prev, reqOverrides: o }; });
             setReqBypass(null);
           };
           const undoBypass = (id) => setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; delete o[id]; return { ...prev, reqOverrides: o }; });
@@ -9301,7 +9356,7 @@ View in the Database & Settings tab.`);
           const setAllFolds = (v) => setDbOpen(() => { const next = { '*': v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           const setFold = (id, v) => setDbOpen(prev => { const next = { ...prev, [id]: v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           // v7.5.4: a pilot or observer sees their own jobs, drafts and records, their account and hours; the company's settings stay with the CRP
-          const CREW_DB_OK = ['dbsec-ops-manual', 'dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
+          const CREW_DB_OK = ['dbsec-notifications', 'dbsec-ops-manual', 'dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
           const dbFold = (id, title, icon, preview, body) => {
             if (isCrewRole && !CREW_DB_OK.includes(id)) return null;
             if (isCrewRole && id === 'dbsec-company') {
@@ -9472,8 +9527,23 @@ View in the Database & Settings tab.`);
                 flights: Object.values(st).reduce((t, x) => t + x.flights, 0), sec: Object.values(st).reduce((t, x) => t + x.sec, 0) }; });
             const per = {}; (db.completedFlights || []).forEach(r => { const st = loggedTimeStats([r]); Object.keys(st.pil).forEach(pn => Object.entries(st.acft).forEach(([rpa, x]) => {
               const k = pn + '\u0000' + rpa, o = per[k] = per[k] || { name: pn, rpa, flights: 0, seconds: 0, last: 0 }; o.flights += x.flights; o.seconds += x.sec; o.last = Math.max(o.last, x.last || 0); })); });
-            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
-          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey]); // eslint-disable-line
+            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per), flightCounts: flightCountRows(db.completedFlights), compliance: (() => {
+              // v7.11: what the weekly / fortnightly digest reports from the compliance calendar, plus setup still to do
+              const items = [];
+              COMPLIANCE_TASKS.forEach(t => { const st = cTaskStatus(t, ((db.compliance || {}).done || {})[t.id]); if (!st.done && st.due) items.push({ label: t.title, date: cYmd(st.due), kind: 'Task' }); });
+              ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).forEach(e => { const st = cExpiryStatus(e); items.push({ label: e.label, date: st.d ? cYmd(st.d) : '', kind: 'Expiry' }); });
+              Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && f.registrationExpiry).forEach(([n, f]) => items.push({ label: n + ': CASA registration', date: f.registrationExpiry, kind: 'Aircraft' }));
+              officialAuthList(db).filter(x => x.expiry).forEach(x => items.push({ label: (x.code + ' ' + (x.title || '')).trim(), date: x.expiry, kind: 'Authorisation' }));
+              const setup = [];
+              if (!String(cp.name || '').trim()) setup.push('Company name (Database & Settings › Company profile)');
+              if (!String(cp.reocNumber || '').trim()) setup.push('ReOC number (Company profile)');
+              if (!openAipKey) setup.push('OpenAIP key for the airspace lookup (Database & Settings › API Integration Settings)');
+              const usedTypes = [...new Set((db.completedFlights || []).concat(db.savedPlans || []).flatMap(r => ((r.overview || {}).rpaTypes || [])))].filter(t => t && t !== 'Custom');
+              usedTypes.filter(t => !(parseFloat(((db.fleet || {})[t] || {}).weight) > 0)).forEach(t => setup.push(t + ': weight in the fleet database (needed for 15 / 34 J limits)'));
+              ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).filter(e => ['exp-reoc', 'exp-insurance'].includes(e.id) && !e.date).forEach(e => setup.push(e.label + ': expiry date (Compliance calendar)'));
+              return { items, setup, at };
+            })() } }));
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
           useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
             h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
@@ -10116,7 +10186,7 @@ View in the Database & Settings tab.`);
               })()}
               {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
                 center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
-                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
@@ -12681,8 +12751,8 @@ View in the Database & Settings tab.`);
                             const add = (side, p) => setRf(r => ({ ...r, items: [...r.items, { id: Date.now() + Math.random(), side, label: p ? p.label : '', who: side === 'us' ? (db.companyProfile && db.companyProfile.name) || 'Our team' : '', mhz: p ? p.mhz : '', kind: p ? p.kind : 'other', note: p && p.note || '', ch: p && p.ch, bw: p && p.bw, plan: p && p.plan, powers: p && p.powers, power: p && p.power || '' }] }));
                             const presetGroups = (side) => { const g = {}; RF_PRESETS[side].forEach(p => { (g[p.group || 'Other'] = g[p.group || 'Other'] || []).push(p); }); return Object.entries(g); };
                             const conf = rfConflicts(rf.items);
-                            const setCh = (it, ch, bw) => {
-                              const plan = it.plan || 'o3', bws = RF_PLANS[plan].bws, b = bws[bw] ? bw : +Object.keys(bws)[0];
+                            const setCh = (it, ch, bw, planOverride) => {
+                              const plan = planOverride || it.plan || 'o3', bws = RF_PLANS[plan].bws, b = bws[bw] ? bw : +Object.keys(bws)[0];
                               const c = bws[b][ch] ? ch : +Object.keys(bws[b])[0];
                               upd(it.id, { plan, ch: c, bw: b, mhz: rfPlanMhz(plan, c, b) || it.mhz });
                             };
@@ -12708,7 +12778,15 @@ View in the Database & Settings tab.`);
                                     </select>
                                   </div>
                                 )}
-                                {it.note && <div className="col-span-12 text-[10px] text-slate-500">{it.note}</div>}
+                                {(it.plan === 'o4' || it.plan === 'o4fcc') && <div className="col-span-12 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                                  <span>Channels</span>
+                                  <select value={it.plan} data-rf-mode="1" onChange={e => setCh(it, it.ch, it.bw, e.target.value)} className="px-1 py-0.5 text-xs border border-gray-300 rounded bg-white" title="Stock: what DJI's manual lists (1 channel at 40 / 60 MHz). FCC mode: 3 channels at 40 / 60 MHz, 7 at 20 MHz.">
+                                    <option value="o4">Stock (1 channel at 40 / 60 MHz)</option><option value="o4fcc">FCC mode (CH1–3 at 40 / 60 MHz)</option></select>
+                                </div>}
+                                {(() => { const rs = rfRanges(it.mhz || ''), five = rs.filter(r => r[1] > 5600 && r[0] < 6000); const lip = RF_LIPD.find(b => b[0] > 5600 && b[0] < 6000) || [5725, 5875]; const out = five.some(r => r[0] < lip[0] || r[1] > lip[1]);
+                                  return out ? <div className="col-span-12 text-[10px] font-semibold text-yellow-800 bg-yellow-50 border-l-4 border-yellow-400 rounded px-1.5 py-0.5" data-rf-outside="1"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Check: {it.mhz} MHz goes outside {lip[0]}–{lip[1]} MHz, the 5.8 GHz band in Australia's class licence (LIPD). Planner note only (not printed).</div> : null; })()}
+                                {it.plan === 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">FCC mode channels: 40 MHz CH1 5735 / CH2 5795 / CH3 5855; 60 MHz taken as the same centres. Confirm the channel and frequency in the goggles.</div>}
+                                {it.note && it.plan !== 'o4fcc' && <div className="col-span-12 text-[10px] text-slate-500">{it.note}</div>}
                               </div>
                             );
                             return (<>
@@ -12752,10 +12830,11 @@ View in the Database & Settings tab.`);
                                 <div className="mt-4 bg-white border border-slate-200 rounded-lg p-2" data-rf-chart="1" dangerouslySetInnerHTML={{ __html: rfChartSvg(rf.items) }}></div>
                                 <div className="mt-2 space-y-1" data-rf-conflicts="1">
                                   {conf.length === 0 ? <div className="text-xs text-emerald-700 font-semibold"><i className="fa-solid fa-circle-check mr-1"></i>No overlaps between our systems and the others listed.</div>
-                                    : conf.map((c, k) => <div key={k} className={`text-xs font-semibold ${c.sev === 'clash' || c.sev === 'pyro' ? 'text-red-700' : 'text-amber-700'}`}>{c.sev === 'clash' ? '⛔' : c.sev === 'pyro' ? '🔥' : '⚠'} {rfConflictText(c)}</div>)}
+                                    : conf.map((c, k) => <div key={k} className={`text-xs font-semibold rounded px-2 py-1 ${c.sev === 'clash' || c.sev === 'pyro' ? 'bg-yellow-50 border-l-4 border-yellow-400 text-yellow-900' : 'text-amber-800'}`}>{c.sev === 'pyro' ? '🔥' : '⚠'} {rfConflictText(c)}</div>)}
                                 </div>
                               </>)}
-                              <textarea value={rf.notes || ''} onChange={e => setRf(r => ({ ...r, notes: e.target.value }))} rows="2" placeholder="Agreements / notes (e.g. Broadcast confirmed 7 GHz only; light sticks 2.4 GHz; we stay on DJI CH4; power-up test at 17:00)" className="mt-3 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md bg-white" />
+                              <textarea value={rf.notes || ''} onChange={e => setRf(r => ({ ...r, notes: e.target.value }))} rows="2" placeholder="Agreements / notes (e.g. Broadcast confirmed 7 GHz only; light sticks 2.4 GHz; we stay on DJI CH4; power-up test at 17:00)" data-rf-notes="1" className={`mt-3 w-full px-2 py-1.5 text-sm rounded-md ${String(rf.notes || '').trim() ? 'border-2 border-green-600 bg-green-50 font-bold text-green-900' : 'border border-gray-300 bg-white'}`} />
+                              {String(rf.notes || '').trim() && <div className="text-[11px] font-bold text-green-700 mt-0.5" data-rf-agreed="1"><i className="fa-solid fa-circle-check mr-1"></i>RF plan agreed: prints in a green box in the PDF.</div>}
                               </>)}
                             </>);
                           })()}
@@ -12966,40 +13045,46 @@ View in the Database & Settings tab.`);
 
                         {/* ── OONP: Event Logistics ── */}
                         <OonpSection label="Event Logistics & Key Personnel" icon="fa-calendar-star" oonpMode={oonpMode && isSectionVisible('logistics')}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Call Time</label>
-                              <input type="text" name="callTime" value={oonp.callTime} onChange={handleOonpChange} placeholder="e.g. 4:00 PM 21AUG2026" className="w-full px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Venue Point of Contact</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="venueContact" value={oonp.venueContact} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="venueContactPhone" value={oonp.venueContactPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                          {(() => {
+                            // v7.12: fields can be renamed, switched off, removed, added and reordered
+                            const rows = logisticsRows(oonp, db.oonpLogisticsTemplate);
+                            const setRows = (fn) => setOonp(prev => ({ ...prev, logisticsRows: fn(logisticsRows(prev, db.oonpLogisticsTemplate)).map(r => ({ ...r })) }));
+                            const upd = (id, ch) => setRows(rs => rs.map(r => r.id === id ? { ...r, ...ch } : r));
+                            const setVal = (r, key, v) => r.builtin ? setOonp(prev => ({ ...prev, [key === 'phone' ? r.id + 'Phone' : r.id]: v })) : upd(r.id, { [key]: v });
+                            const move = (i, d) => setRows(rs => { const n = [...rs], j = i + d; if (j < 0 || j >= n.length) return n; [n[i], n[j]] = [n[j], n[i]]; return n; });
+                            const fieldCls = 'px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white';
+                            const lab = 'block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider';
+                            const shown = logisticsEdit ? rows : rows.filter(r => !r.off);
+                            return (<div data-logistics="1">
+                              <div className="flex flex-wrap items-center justify-end gap-2 mb-3 print:hidden">
+                                {logisticsEdit && <button type="button" data-logistics-add="1" onClick={() => setRows(rs => [...rs, { id: 'lg' + Date.now().toString(36), label: 'New contact', kind: 'contact', name: '', phone: '' }])} className="text-xs font-semibold px-2.5 py-1 rounded-md border border-amber-300 bg-white text-amber-900"><i className="fa-solid fa-plus mr-1"></i>Add a field</button>}
+                                {logisticsEdit && <button type="button" data-logistics-default="1" onClick={() => { updateDb('oonpLogisticsTemplate', rows.map(({ id, label, kind, builtin, ph, off }) => ({ id, label, kind, builtin, ph, off }))); setLogisticsMsg('Saved: new jobs start with these fields.'); }} className="text-xs font-semibold px-2.5 py-1 rounded-md border border-amber-300 bg-white text-amber-900"><i className="fa-solid fa-bookmark mr-1"></i>Use for new jobs</button>}
+                                {logisticsEdit && Array.isArray(oonp.logisticsRows) && <button type="button" onClick={() => setOonp(prev => { const { logisticsRows: _drop, ...rest } = prev; return rest; })} className="text-xs underline text-amber-900">Reset to default</button>}
+                                <button type="button" data-logistics-edit="1" onClick={() => { setLogisticsEdit(v => !v); setLogisticsMsg(''); }} className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${logisticsEdit ? 'border-amber-600 bg-amber-500 text-white' : 'border-amber-300 bg-white text-amber-900'}`}><i className={`fa-solid ${logisticsEdit ? 'fa-check' : 'fa-pen'} mr-1`}></i>{logisticsEdit ? 'Done' : 'Edit fields'}</button>
                               </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">RF / Comms Coordinator</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="rfCoordinator" value={oonp.rfCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="rfCoordinatorPhone" value={oonp.rfCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
+                              {logisticsMsg && <p className="text-xs text-emerald-700 mb-2" data-logistics-msg="1">{logisticsMsg}</p>}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {shown.map(r => { const v = logisticsVal(oonp, r), i = rows.indexOf(r);
+                                  return (<div key={r.id} data-logistics-row={r.id} className={logisticsEdit ? `border border-dashed rounded-lg p-2 ${r.off ? 'border-slate-300 opacity-60' : 'border-amber-300'}` : ''}>
+                                    {logisticsEdit ? <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                                      <input aria-label="Field name" data-logistics-label={r.id} value={r.label} onChange={e => upd(r.id, { label: e.target.value })} className="flex-1 min-w-[120px] px-2 py-1 text-xs font-bold uppercase tracking-wider border border-amber-300 rounded bg-white" />
+                                      <select aria-label="Field type" data-logistics-kind={r.id} value={r.kind} onChange={e => upd(r.id, { kind: e.target.value })} className="px-1 py-1 text-xs border border-amber-300 rounded bg-white"><option value="contact">Name + phone</option><option value="text">Text</option></select>
+                                      <button type="button" title={r.off ? 'Show' : 'Hide (switch off)'} aria-label={r.off ? 'Show field' : 'Hide field'} data-logistics-toggle={r.id} onClick={() => upd(r.id, { off: !r.off })} className="px-1.5 text-slate-600"><i className={`fa-solid ${r.off ? 'fa-eye-slash' : 'fa-eye'}`}></i></button>
+                                      <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="px-1 text-slate-500 disabled:opacity-30"><i className="fa-solid fa-arrow-up"></i></button>
+                                      <button type="button" aria-label="Move down" disabled={i === rows.length - 1} onClick={() => move(i, 1)} className="px-1 text-slate-500 disabled:opacity-30"><i className="fa-solid fa-arrow-down"></i></button>
+                                      <button type="button" aria-label="Delete field" data-logistics-del={r.id} onClick={() => setRows(rs => rs.filter(x => x.id !== r.id))} className="px-1.5 text-red-600"><i className="fa-solid fa-trash-can"></i></button>
+                                    </div> : <label className={lab}>{r.label}</label>}
+                                    {r.kind === 'contact'
+                                      ? <div className="flex gap-2">
+                                          <input type="text" name={r.builtin ? r.id : undefined} data-logistics-name={r.id} value={v.name} onChange={e => setVal(r, 'name', e.target.value)} placeholder="Name" className={'flex-1 min-w-0 ' + fieldCls} />
+                                          <input type="tel" name={r.builtin ? r.id + 'Phone' : undefined} data-logistics-phone={r.id} value={v.phone} onChange={e => setVal(r, 'phone', e.target.value)} placeholder="Phone" className={'w-32 ' + fieldCls} />
+                                        </div>
+                                      : <input type="text" name={r.builtin ? r.id : undefined} data-logistics-value={r.id} value={v.value} onChange={e => setVal(r, 'value', e.target.value)} placeholder={r.ph || ''} className={'w-full ' + fieldCls} />}
+                                  </div>); })}
                               </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Media / Broadcast Lead</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="mediaLead" value={oonp.mediaLead} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="mediaLeadPhone" value={oonp.mediaLeadPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Pyro / Fireworks Coordinator</label>
-                              <div className="flex gap-2">
-                                <input type="text" name="pyroCoordinator" value={oonp.pyroCoordinator} onChange={handleOonpChange} placeholder="Name" className="flex-1 min-w-0 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                                <input type="tel" name="pyroCoordinatorPhone" value={oonp.pyroCoordinatorPhone} onChange={handleOonpChange} placeholder="Phone" className="w-32 px-3 py-2 text-sm border border-amber-200 rounded-md focus:ring-amber-400 focus:border-amber-400 bg-white" />
-                              </div>
-                            </div>
-                          </div>
+                              {!shown.length && <p className="text-xs text-amber-800">No fields. Press Edit fields to add one.</p>}
+                            </div>);
+                          })()}
                         </OonpSection>
 
                         {/* ── OONP: Equipment & Frequencies ── */}
@@ -13132,6 +13217,30 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation</h2>
                       </div>
                       <ReqStrip tab="approval" />
+                      {isCrpCloud && (() => {
+                        const items = reqItems.filter(x => x.crew);
+                        if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
+                        if (currency.error) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 print:hidden" data-crew-currency="error">Crew currency couldn't load ({currency.error}). Run the latest Supabase migration (0008).</div>;
+                        if (!items.length) return null;
+                        const tone = (st) => st === 'current' ? 'bg-emerald-100 text-emerald-800' : st === 'due_soon' ? 'bg-amber-100 text-amber-900' : st === 'unknown' ? 'bg-slate-100 text-slate-700' : 'bg-red-100 text-red-800';
+                        const bad = items.filter(x => !x.ok);
+                        return (
+                          <div className="mx-4 sm:mx-6 mt-4 border border-slate-200 rounded-xl overflow-hidden print:hidden" data-crew-currency={bad.length ? 'issues' : 'ok'} data-req-box="1">
+                            <div className={`px-4 py-2 flex items-center gap-2 text-sm font-semibold ${bad.length ? 'bg-red-50 text-red-900' : 'bg-emerald-50 text-emerald-900'}`}>
+                              <i className={`fa-solid ${bad.length ? 'fa-user-xmark' : 'fa-user-check'}`}></i>
+                              <span className="flex-1">Crew currency for this job{bad.length ? ': ' + bad.length + ' to sort out' : ': everyone is current'}</span>
+                              <button type="button" data-allow-locked="1" onClick={() => window.dispatchEvent(new Event('wd-currency-refresh'))} className="text-xs font-normal underline">Refresh</button>
+                            </div>
+                            <div className="divide-y divide-slate-100">{items.map(x => (
+                              <div key={x.id} data-req-anchor={x.id} data-crew-item={x.crew.status} className="px-4 py-2 flex items-start gap-3 text-sm">
+                                <span className="w-40 shrink-0 font-semibold text-slate-800 truncate">{x.crew.name}<span className="block text-[10px] uppercase text-slate-500 font-bold">{x.crew.role === 'rpic' ? 'RPIC' : x.crew.role}</span></span>
+                                <span className="flex-1 min-w-0"><span className="font-medium">{x.crew.label}</span><span className="block text-xs text-slate-500">{x.crew.detail}</span>
+                                  {x.overridden && <span className="block text-xs text-amber-800">Overridden by {(x.overridden.by && x.overridden.by.name) || 'the CRP'}: “{x.overridden.reason}”</span>}</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${x.overridden ? 'bg-amber-100 text-amber-900' : tone(x.crew.status)}`}>{x.overridden ? 'Overridden' : (CUR_STATUS[x.crew.status] || 'Not enough hours')}</span>
+                              </div>))}</div>
+                            {bad.length > 0 && <p className="px-4 py-2 text-[11px] text-slate-500 bg-slate-50 border-t border-slate-100">Record a check in Database &amp; Settings › Registers, put someone current on the job, or use “Bypass” in the list above with a reason (it's kept in the plan's record).</p>}
+                          </div>);
+                      })()}
                       {isCrpCloud && (jsa.operationTypes || []).includes('EVLOS') && <div className="mx-4 sm:mx-6 mt-4"><ObserverPanel jobUid={overview.uid} jobId={(((cloudJobsAll || []).find(j => j.plan_uid === overview.uid)) || {}).id || null} jobTitle={getOpTitle(overview)} summary={obsSummary()} crpName={auth.name || approval.crpName || ''} /></div>}
                       {onCloudJob && (jsa.operationTypes || []).includes('EVLOS') && isObserverOnJob && <CrewObserverBar jobId={cloudJob.id} jobTitle={cloudJob.title || getOpTitle(overview)} summary={obsSummary()} name={auth.name || ''} onOpenPlan={() => setActiveTab('preliminary')} />}
 
@@ -13964,6 +14073,7 @@ View in the Database & Settings tab.`);
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Observer/Crew</label>
                               <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              {!String(log.crewObserver || '').trim() && jobObserverNames() && <button type="button" data-fill-observers="1" onClick={() => setLog(prev => ({ ...prev, crewObserver: jobObserverNames() }))} className="mt-1 text-[11px] text-violet-700 underline print:hidden">Use the job's crew: {jobObserverNames()}</button>}
                             </div>
                           </div>
                           
@@ -14449,6 +14559,8 @@ View in the Database & Settings tab.`);
                           ? <ManualAdmin />
                           : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · CSV</span>, (<Registers crpName={auth.name || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
+                        {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
                         {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
                             {/* Official authorisations (v5.30) */}

@@ -21,6 +21,10 @@ export const POINT_KINDS = {
   note: { label: 'Text note' },
 };
 export const DEFAULT_BUFFER = 30;
+// v7.12: speeds are kept in m/s and always shown in both units
+export const toKph = (ms) => Math.round(Number(ms) * 3.6 * 10) / 10;
+export const fromKph = (k) => Math.round((Number(k) / 3.6) * 100) / 100;
+export const fmtSpeed = (ms) => (ms == null || ms === '' || !isFinite(Number(ms)) ? '—' : Math.round(Number(ms) * 10) / 10 + ' m/s (' + toKph(ms) + ' kph)');
 export const G = 9.81;
 
 export const emptyOpsMap = (mode = 'geo') => ({ v: 1, mode, zones: [], paths: [], points: [], overlay: null, settings: { oonpColour: 'green' } });
@@ -96,6 +100,17 @@ export const presetLimits = (K, E) => {
   const hs = [0.25, 0.5, 0.8].map((f) => Math.max(0.5, Math.floor(top * f * 2) / 2));
   return hs.filter((h, i) => hs.indexOf(h) === i).map((h) => ({ id: 'p' + E + '-' + h, h, v: speedAt(K, E, h), e: E, preset: true })).filter((p) => p.v);
 };
+// v7.12: fill a zone's height and speed from the drone's energy table: the job's planned height (if it fits under the
+// energy limit), else half the highest allowed height, with the top speed allowed at that height. The pilot reviews it.
+export const autoZoneLimit = (K, E, plannedM) => {
+  if (!K) return null;
+  const hMax = E === 15 ? K.h15 : K.h34; if (!isFinite(hMax) || hMax <= 0) return null;
+  const cap = Math.floor(Math.min(hMax, 120) * 0.8 * 2) / 2;
+  let h = plannedM > 0 ? Math.min(Math.floor(plannedM * 2) / 2, cap) : Math.max(0.5, Math.floor(Math.min(hMax, 120) * 0.5 * 2) / 2);
+  if (!(h > 0)) h = 0.5;
+  const v = speedAt(K, E, h); if (!v) return null;
+  return { h, v, energy: E, from: plannedM > 0 && h === Math.floor(plannedM * 2) / 2 ? 'planned height' : 'energy table' };
+};
 export const limitOk = (K, l) => K && keAt(K, l.h, l.v) <= (l.e || 34) + 0.05;
 
 // the limits a zone imposes: ceiling (height above the zone's ground) and speed
@@ -113,7 +128,7 @@ export const zoneBuffer = (z) => {
 export const zoneTag = (z, settings) => {
   const k = kindStyle(z.kind, settings), L = zoneLimits(z), parts = [k.short];
   if (L.h != null) parts.push('≤ ' + L.h + ' m');
-  if (L.v != null) parts.push(L.v + ' m/s');
+  if (L.v != null) parts.push(fmtSpeed(L.v));
   if (z.kind === 'exclusion') { const b = zoneBuffer(z); parts.push(z.shielded ? 'shielded ' + b + ' m' : b + ' m buffer'); }
   return parts.join(' · ');
 };
@@ -141,7 +156,7 @@ export const checkOps = (m, keFor) => {
       const a = proj.to(A), b = proj.to(B), len = Math.hypot(b.x - a.x, b.y - a.y);
       const n = Math.max(2, Math.min(240, Math.ceil(len / 1)));
       const msgs = new Map(); let status = 'ok';
-      const add = (lvl, key, text) => { if (!msgs.has(key)) msgs.set(key, { lvl, text }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
+      const add = (lvl, key, text) => { if (!msgs.has(key)) msgs.set(key, { lvl, text, key }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
       for (let s = 0; s <= n; s++) {
         const t = s / n, p = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
         const alt = (Number(A[2]) || 0) + t * ((Number(B[2]) || 0) - (Number(A[2]) || 0));
@@ -158,7 +173,7 @@ export const checkOps = (m, keFor) => {
           const g = Number(z.ground) || 0; ground = Math.max(ground, g);
           const agl = alt - g;
           if (lim.h != null) { ceil = ceil == null ? g + lim.h : Math.min(ceil, g + lim.h); if (agl > lim.h + 0.01) add('stop', 'h' + z.id, 'is ' + agl.toFixed(1) + ' m above ground in "' + (z.name || KINDS[z.kind].label) + '" (limit ' + lim.h + ' m)'); }
-          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + speed + ' m/s is over ' + lim.v + ' m/s in "' + (z.name || KINDS[z.kind].label) + '"');
+          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + fmtSpeed(speed) + ' is over ' + fmtSpeed(lim.v) + ' in "' + (z.name || KINDS[z.kind].label) + '"');
           if ((z.kind === 'oonp' || z.kind === 'near') && K && speed > 0) {
             const E = Number(z.energy) || 34, ke = keAt(K, agl, speed);
             if (ke > E + 0.05) add('stop', 'ke' + z.id, 'impact energy ' + ke.toFixed(1) + ' J is over ' + E + ' J in "' + (z.name || KINDS[z.kind].label) + '" (' + (path.drone || 'drone') + ')');
@@ -170,19 +185,25 @@ export const checkOps = (m, keFor) => {
       dist0 += len;
       const list = [...msgs.values()];
       res.legs.push({ i, status, msgs: list, len });
-      list.forEach((q) => { out.issues.push({ lvl: q.lvl, path: path.id, leg: i, text: (path.name || 'Path') + ', leg ' + (i + 1) + '→' + (i + 2) + ' ' + q.text }); out.counts[q.lvl]++; });
+      list.forEach((q) => { out.issues.push({ lvl: q.lvl, path: path.id, leg: i, key: path.id + ':' + i + ':' + q.key, text: (path.name || 'Path') + ', leg ' + (i + 1) + '→' + (i + 2) + ' ' + q.text }); });
     });
     res.length = dist0;
     out.paths[path.id] = res;
   });
   zones.forEach(({ z }) => {
     if ((z.kind === 'oonp' || z.kind === 'near') && (z.h == null || z.h === '')) {
-      out.issues.push({ lvl: 'warn', zone: z.id, text: '"' + (z.name || KINDS[z.kind].label) + '" has no height / speed limit yet' }); out.counts.warn++;
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':nolimit', text: '"' + (z.name || KINDS[z.kind].label) + '" has no height / speed limit yet' });
+    } else if ((z.kind === 'oonp' || z.kind === 'near') && z.autoLimit && !z.limitReviewed) {
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':review', review: true, text: '"' + (z.name || KINDS[z.kind].label) + '": height and speed filled in from the ' + (z.autoLimit.energy || 34) + ' J energy table, pilot to review' });
     }
     if (z.kind === 'exclusion' && z.shielded && !String(z.shieldNote || '').trim()) {
-      out.issues.push({ lvl: 'warn', zone: z.id, text: '"' + (z.name || 'Exclusion') + '" is shielded: add what shields it' }); out.counts.warn++;
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':shield', text: '"' + (z.name || 'Exclusion') + '" is shielded: add what shields it' });
     }
   });
+  // v7.12: a check can be acknowledged (with a note) in the editor; it then no longer counts as open
+  const acks = m.acks || {};
+  out.issues.forEach((q) => { const a = q.key && acks[q.key]; if (a) q.ack = a; else out.counts[q.lvl]++; });
+  out.counts.acked = out.issues.filter((q) => q.ack).length;
   return out;
 };
 
@@ -193,6 +214,7 @@ export const opsSummary = (m, chk) => {
   const z = m.zones || [], p = m.paths || [], pts = m.points || [];
   const bits = [n(z, 'zone'), n(p, 'path'), n(pts, 'marker')];
   if (m.overlay) bits.push('plan overlay');
+  if ((m.views || []).length) bits.push(n(m.views, 'view') + ' for the PDF');
   if (chk) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
   return bits.join(' · ');
 };
@@ -202,4 +224,42 @@ export const opsSignable = (m) => {
   if (!hasOpsContent(m)) return undefined;
   const { overlay, ...rest } = m;
   return { ...rest, overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
+};
+
+// ── v7.12: freehand flight paths ──
+// A drawn stroke is simplified (Ramer–Douglas–Peucker), rounded off (Chaikin corner cutting) and thinned again, so a
+// shaky hand-drawn line becomes a smooth path with a sensible number of points. Works on {x, y[, z]} in any units.
+export const rdp = (pts, eps) => {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Array(pts.length).fill(false); keep[0] = keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop(); let idx = -1, max = 0;
+    for (let i = a + 1; i < b; i++) { const d = segPointDist(pts[i], pts[a], pts[b]); if (d > max) { max = d; idx = i; } }
+    if (idx > 0 && max > eps) { keep[idx] = true; stack.push([a, idx], [idx, b]); }
+  }
+  return pts.filter((p, i) => keep[i]);
+};
+export const chaikin = (pts, iter = 2) => {
+  let p = pts.slice();
+  for (let k = 0; k < iter && p.length > 2; k++) {
+    const out = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const a = p[i], b = p[i + 1], q = {}, r = {};
+      Object.keys(a).forEach((key) => { if (typeof a[key] === 'number') { q[key] = 0.75 * a[key] + 0.25 * b[key]; r[key] = 0.25 * a[key] + 0.75 * b[key]; } });
+      out.push(q, r);
+    }
+    out.push(p[p.length - 1]); p = out;
+  }
+  return p;
+};
+// stroke in screen pixels → smooth path in screen pixels (tolerance grows with the smoothing level 0–3)
+export const smoothStroke = (pts, level = 2, maxPts = 60) => {
+  if (pts.length < 2) return pts.slice();
+  const tol = [1.5, 3, 5, 8][Math.max(0, Math.min(3, level))];
+  let p = rdp(pts, tol);
+  if (level > 0) p = chaikin(p, level >= 2 ? 2 : 1);
+  p = rdp(p, Math.max(0.6, tol / 5));
+  let e = tol / 5; while (p.length > maxPts && e < 200) { e *= 1.5; p = rdp(p, e); }
+  return p;
 };

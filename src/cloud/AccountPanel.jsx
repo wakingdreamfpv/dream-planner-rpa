@@ -278,7 +278,7 @@ function AccountPanel() {
   // v6.8: the planner routes first-time users by sign-in state and role
   useEffect(() => {
     const v = loading ? { state: 'loading' } : !session ? { state: 'out' }
-      : { state: 'in', email: session.user.email, name: (me && me.full_name) || '', role: (me && me.active && me.role) || null, ready: !!me };
+      : { state: 'in', userId: session.user.id, email: session.user.email, name: (me && me.full_name) || '', role: (me && me.active && me.role) || null, ready: !!me };
     window.wdAuth = v; window.dispatchEvent(new Event('wd-auth'));
     if (session) { try { localStorage.removeItem('wd_edition'); } catch (e) {} }
   }, [loading, session, me]);
