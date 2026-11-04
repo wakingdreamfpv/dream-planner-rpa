@@ -122,6 +122,9 @@ export function useCloudJobs(sb, me) {
     const onDecide = async (e) => { const d = e.detail || {}; try { await sb.rpc('decide_access', { p_id: d.id, p_status: d.status }); } catch (err) {} refreshInbox(); };
     window.addEventListener('wd-job-saved', onSaved); window.addEventListener('wd-cloud-publish', onPublish); window.addEventListener('wd-decide-access', onDecide);
     window.addEventListener('wd-cloud-refresh', refreshInbox);
+    // v7.10: the company's shared settings (e.g. the OpenAIP key) for the CRP's other devices
+    const loadCompany = async () => { try { const { data } = await sb.from('shared_data').select('data').eq('area', 'company').maybeSingle(); if (!dead) publish('wdCompanyShared', (data && data.data) || null, 'wd-company-shared'); } catch (e) {} };
+    loadCompany();
     loadPeople().then(refreshInbox); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
     return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish);

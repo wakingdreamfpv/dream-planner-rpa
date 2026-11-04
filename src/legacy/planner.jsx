@@ -6523,8 +6523,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
           const [openAipKey, setOpenAipKey] = useState(() => localStorage.getItem('openAipKey') || '');
           // v7.10: the CRP's OpenAIP key is shared with the company (crew and the CRP's other devices use it too)
-          const [cloudAipKey, setCloudAipKey] = useState(() => { try { return ((window.wdCrew || {}).company || {}).openAipKey || ''; } catch (e) { return ''; } });
-          useEffect(() => { const h = () => { try { setCloudAipKey(((window.wdCrew || {}).company || {}).openAipKey || ''); } catch (e) {} }; window.addEventListener('wd-crew', h); return () => window.removeEventListener('wd-crew', h); }, []);
+          const sharedAipKey = () => { try { return ((window.wdCrew || {}).company || {}).openAipKey || (window.wdCompanyShared || {}).openAipKey || ''; } catch (e) { return ''; } };
+          const [cloudAipKey, setCloudAipKey] = useState(sharedAipKey);
+          useEffect(() => { const h = () => setCloudAipKey(sharedAipKey()); window.addEventListener('wd-crew', h); window.addEventListener('wd-company-shared', h); return () => { window.removeEventListener('wd-crew', h); window.removeEventListener('wd-company-shared', h); }; }, []); // eslint-disable-line
           const aipKey = openAipKey || cloudAipKey;
           const [apiAirspaceData, setApiAirspaceData] = useState(null);
           const [apiAirportData, setApiAirportData] = useState(null);
