@@ -48,6 +48,16 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const event = String(body.event || '');
+    // v7.11: people can turn each kind of email off (Database & Settings › Email notifications)
+    const keep = async (emails: string[], key: string) => {
+      if (!emails.length) return emails;
+      const { data: ps } = await admin.from('profiles').select('id, email').in('email', emails.map((e) => String(e).toLowerCase()));
+      const ids = (ps || []).map((p: any) => p.id); if (!ids.length) return emails;
+      const { data: pf } = await admin.from('notification_prefs').select('user_id, events').in('user_id', ids);
+      const off = new Set((pf || []).filter((x: any) => x.events && x.events[key] === false).map((x: any) => x.user_id));
+      const offEmails = new Set((ps || []).filter((p: any) => off.has(p.id)).map((p: any) => String(p.email).toLowerCase()));
+      return emails.filter((e) => !offEmails.has(String(e).toLowerCase()));
+    };
 
     // v7.8: the CRP emails a job link / training link to someone without a login
     if (event === 'observer_link') {
@@ -77,7 +87,7 @@ Deno.serve(async (req) => {
       const { data: crew } = await admin.from('job_crew').select('job_role, people:person_id (full_name, email)').eq('job_id', job.id);
       const onJob: Record<string, any> = {}; (crew || []).forEach((c: any) => { if (c.people?.email) onJob[String(c.people.email).toLowerCase()] = c; });
       const { data: crpP } = await admin.from('profiles').select('full_name').eq('id', who.user.id).single();
-      const send = emails.filter((e: string) => onJob[e]), skipped = emails.filter((e: string) => !onJob[e]);
+      const send = await keep(emails.filter((e: string) => onJob[e]), 'log_request'), skipped = emails.filter((e: string) => !onJob[e]);
       if (!send.length) return json({ ok: true, sent: 0, skipped, message: 'Nobody selected is on this job in the cloud.' });
       if (!resendKey) return json({ ok: true, sent: 0, skipped, message: 'Email not set up (RESEND_API_KEY missing)' });
       const note = String(body.note || '').slice(0, 500);
@@ -104,7 +114,7 @@ Deno.serve(async (req) => {
       const sig = (row?.flight || {}) as any, who2 = (row as any)?.people || {}, job = (row as any)?.jobs || {};
       if (!row || sig.kind !== 'rpic_signature' || who2.user_id !== who.user.id) return json({ error: 'Signature not found' }, 404);
       const { data: crps } = await admin.from('profiles').select('email').eq('role', 'crp').eq('active', true);
-      const to2 = (crps || []).map((c: any) => c.email).filter(Boolean);
+      const to2 = await keep((crps || []).map((c: any) => c.email).filter(Boolean), 'rpic_signed');
       const subject2 = `${who2.full_name || 'Your RPIC'} has signed ${job.title || 'a job'} as RPIC`;
       const html2 = page(subject2,
         P(`<b>${esc(who2.full_name)}</b> (${esc(who2.email)}) has reviewed and signed the flight plan as Remote Pilot in Command.`) +
@@ -155,6 +165,7 @@ Deno.serve(async (req) => {
       }
     } else return json({ error: 'Unknown event' }, 400);
 
+    to = await keep(to, 'induction');
     if (!to.length) return json({ ok: true, sent: 0, message: 'No one to email' });
     if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing); shown in the planner only' });
     const r = await fetch('https://api.resend.com/emails', {

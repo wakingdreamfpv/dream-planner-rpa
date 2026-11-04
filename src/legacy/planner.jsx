@@ -7,6 +7,9 @@ import qrcode from 'qrcode-generator';
 import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister } from '../observer/Observer.jsx';
 import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import OpsMap from '../opsmap/OpsMap.jsx';
+import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
+import Registers from '../compliance/Registers.jsx';
+import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
@@ -4914,6 +4917,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             return () => { window.removeEventListener('wd-auth', h); if (t) clearTimeout(t); };
           }, []); // eslint-disable-line
           const signedIn = auth.state === 'in';
+          // v7.11: crew currency from the cloud (CRP): certifications, the 3-flights rule and logged hours
+          const [currency, setCurrency] = useState(() => (typeof window !== 'undefined' && window.wdCurrency) || null);
+          useEffect(() => { const h = () => setCurrency(window.wdCurrency || null); window.addEventListener('wd-currency', h); return () => window.removeEventListener('wd-currency', h); }, []);
           const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && editionPick === 'free');
           const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
           const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
@@ -8029,6 +8035,15 @@ View in the Database & Settings tab.`);
             if (!sp || !fields.length || planLoadingRef.current || approval.rpSigned || approval.crpSigned) return; // never touch a job being opened or already signed
             setJsa(prev => { let ch = false; const n = { ...prev }; fields.forEach(k => { const v = String(prev[k] || '').trim(); if (!v || v === old) { if (v !== sp) { n[k] = sp; ch = true; } } }); return ch ? n : prev; });
           }, [overview.supportPersonnel, (jsa.operationTypes || []).join(',')]); // eslint-disable-line
+          // v7.11 (Chunk 8): the Flight Record's "Observer / crew" comes from the job's observers unless it's been typed in
+          const jobObserverNames = () => [...new Set([jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel].flatMap(n => String(n || '').split(/[,;\n]/)).map(x => x.trim()).filter(Boolean))].join(', ');
+          const prevObs = useRef('');
+          useEffect(() => {
+            const names = jobObserverNames();
+            const old = prevObs.current; prevObs.current = names;
+            if (!names || planLoadingRef.current || approval.crpSigned) return;
+            setLog(prev => { const v = String(prev.crewObserver || '').trim(); return (!v || v === old) && v !== names ? { ...prev, crewObserver: names } : prev; });
+          }, [jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel]); // eslint-disable-line
           const toggleOperationType = (op) => {
             setJsa(prev => {
                 const current = prev.operationTypes || [];
@@ -9228,6 +9243,8 @@ View in the Database & Settings tab.`);
               I('log', 'serviceableAtEnd', 'RPA serviceable at end? (Yes, or No + defects)', log.serviceableAtEnd === true || (log.serviceableAtEnd === false && t(log.defects)), '__M5__: whether the RPA became unserviceable', 'log'),
               I('log', 'crewRP', 'Remote pilot who flew', t(log.crewRP), 'CASA MOS 10.06 (remote pilot log)', 'log'),
               I('log', 'flights', 'Each flight with its length and height AGL', flown.length && withHeight.length === flown.length, '__M5__ and 10.06: each flight segment, its height AGL, and its length', 'log'),
+              // v7.11 (Chunk 8): everyone on the job must be current for this job's operation and aircraft (CRP can override with a reason)
+              ...((signedIn && auth.role === 'crp' && currency && !currency.error) ? checkJobCrew({ overview, jsa, approval, log }, currency).map(c => ({ ...I('approval', c.id, c.name + ' (' + (c.role === 'rpic' ? 'RPIC' : c.role) + '): ' + c.label + ' — ' + (CUR_STATUS[c.status] || (c.status === 'hours' ? 'not enough hours on type' : c.status)), crewItemOk(c), 'Ops manual: crew currency (12 months, or 24 months with 3 flights in each 12-month period)'), crpOnly: true, crew: c })) : []),
             ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }))
               // v7.5.5: an item the RPIC has declared not needed (with a reason) counts as recorded, and is flagged
               .map(x => { const o = (approval.reqOverrides || {})[x.id]; return !x.ok && o && String(o.reason || '').trim() ? { ...x, ok: true, overridden: o } : x; });
@@ -9240,7 +9257,8 @@ View in the Database & Settings tab.`);
           const saveBypass = () => {
             const b = reqBypass; if (!b || !b.ids.size || !b.declared || String(b.reason || '').trim().length < 10) return;
             const by = { name: (signedIn && auth.name) || rpicName || '', email: signedIn ? auth.email : '', role: signedIn ? auth.role : 'rpic', at: new Date().toISOString() };
-            setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; b.ids.forEach(id => { const it = reqItems.find(x => x.id === id); o[id] = { reason: b.reason.trim(), label: it ? it.label : id, by }; }); return { ...prev, reqOverrides: o }; });
+            const crpOk = !signedIn || auth.role === 'crp';
+            setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; b.ids.forEach(id => { const it = reqItems.find(x => x.id === id); if (it && it.crpOnly && !crpOk) return; o[id] = { reason: b.reason.trim(), label: it ? it.label : id, by }; }); return { ...prev, reqOverrides: o }; });
             setReqBypass(null);
           };
           const undoBypass = (id) => setApproval(prev => { const o = { ...(prev.reqOverrides || {}) }; delete o[id]; return { ...prev, reqOverrides: o }; });
@@ -9301,7 +9319,7 @@ View in the Database & Settings tab.`);
           const setAllFolds = (v) => setDbOpen(() => { const next = { '*': v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           const setFold = (id, v) => setDbOpen(prev => { const next = { ...prev, [id]: v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           // v7.5.4: a pilot or observer sees their own jobs, drafts and records, their account and hours; the company's settings stay with the CRP
-          const CREW_DB_OK = ['dbsec-ops-manual', 'dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
+          const CREW_DB_OK = ['dbsec-notifications', 'dbsec-ops-manual', 'dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
           const dbFold = (id, title, icon, preview, body) => {
             if (isCrewRole && !CREW_DB_OK.includes(id)) return null;
             if (isCrewRole && id === 'dbsec-company') {
@@ -9472,8 +9490,23 @@ View in the Database & Settings tab.`);
                 flights: Object.values(st).reduce((t, x) => t + x.flights, 0), sec: Object.values(st).reduce((t, x) => t + x.sec, 0) }; });
             const per = {}; (db.completedFlights || []).forEach(r => { const st = loggedTimeStats([r]); Object.keys(st.pil).forEach(pn => Object.entries(st.acft).forEach(([rpa, x]) => {
               const k = pn + '\u0000' + rpa, o = per[k] = per[k] || { name: pn, rpa, flights: 0, seconds: 0, last: 0 }; o.flights += x.flights; o.seconds += x.sec; o.last = Math.max(o.last, x.last || 0); })); });
-            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per) } }));
-          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey]); // eslint-disable-line
+            window.dispatchEvent(new CustomEvent('wd-cloud-publish', { detail: { company: { ...company, at }, fleet: { rows: fleet, at }, batteries: { rows: batteries, at }, records: { rows: records, at }, hours: Object.values(per), flightCounts: flightCountRows(db.completedFlights), compliance: (() => {
+              // v7.11: what the weekly / fortnightly digest reports from the compliance calendar, plus setup still to do
+              const items = [];
+              COMPLIANCE_TASKS.forEach(t => { const st = cTaskStatus(t, ((db.compliance || {}).done || {})[t.id]); if (!st.done && st.due) items.push({ label: t.title, date: cYmd(st.due), kind: 'Task' }); });
+              ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).forEach(e => { const st = cExpiryStatus(e); items.push({ label: e.label, date: st.d ? cYmd(st.d) : '', kind: 'Expiry' }); });
+              Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && f.registrationExpiry).forEach(([n, f]) => items.push({ label: n + ': CASA registration', date: f.registrationExpiry, kind: 'Aircraft' }));
+              officialAuthList(db).filter(x => x.expiry).forEach(x => items.push({ label: (x.code + ' ' + (x.title || '')).trim(), date: x.expiry, kind: 'Authorisation' }));
+              const setup = [];
+              if (!String(cp.name || '').trim()) setup.push('Company name (Database & Settings › Company profile)');
+              if (!String(cp.reocNumber || '').trim()) setup.push('ReOC number (Company profile)');
+              if (!openAipKey) setup.push('OpenAIP key for the airspace lookup (Database & Settings › API Integration Settings)');
+              const usedTypes = [...new Set((db.completedFlights || []).concat(db.savedPlans || []).flatMap(r => ((r.overview || {}).rpaTypes || [])))].filter(t => t && t !== 'Custom');
+              usedTypes.filter(t => !(parseFloat(((db.fleet || {})[t] || {}).weight) > 0)).forEach(t => setup.push(t + ': weight in the fleet database (needed for 15 / 34 J limits)'));
+              ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).filter(e => ['exp-reoc', 'exp-insurance'].includes(e.id) && !e.date).forEach(e => setup.push(e.label + ': expiry date (Compliance calendar)'));
+              return { items, setup, at };
+            })() } }));
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
           useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
             h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
@@ -13132,6 +13165,30 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation</h2>
                       </div>
                       <ReqStrip tab="approval" />
+                      {isCrpCloud && (() => {
+                        const items = reqItems.filter(x => x.crew);
+                        if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
+                        if (currency.error) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 print:hidden" data-crew-currency="error">Crew currency couldn't load ({currency.error}). Run the latest Supabase migration (0008).</div>;
+                        if (!items.length) return null;
+                        const tone = (st) => st === 'current' ? 'bg-emerald-100 text-emerald-800' : st === 'due_soon' ? 'bg-amber-100 text-amber-900' : st === 'unknown' ? 'bg-slate-100 text-slate-700' : 'bg-red-100 text-red-800';
+                        const bad = items.filter(x => !x.ok);
+                        return (
+                          <div className="mx-4 sm:mx-6 mt-4 border border-slate-200 rounded-xl overflow-hidden print:hidden" data-crew-currency={bad.length ? 'issues' : 'ok'} data-req-box="1">
+                            <div className={`px-4 py-2 flex items-center gap-2 text-sm font-semibold ${bad.length ? 'bg-red-50 text-red-900' : 'bg-emerald-50 text-emerald-900'}`}>
+                              <i className={`fa-solid ${bad.length ? 'fa-user-xmark' : 'fa-user-check'}`}></i>
+                              <span className="flex-1">Crew currency for this job{bad.length ? ': ' + bad.length + ' to sort out' : ': everyone is current'}</span>
+                              <button type="button" data-allow-locked="1" onClick={() => window.dispatchEvent(new Event('wd-currency-refresh'))} className="text-xs font-normal underline">Refresh</button>
+                            </div>
+                            <div className="divide-y divide-slate-100">{items.map(x => (
+                              <div key={x.id} data-req-anchor={x.id} data-crew-item={x.crew.status} className="px-4 py-2 flex items-start gap-3 text-sm">
+                                <span className="w-40 shrink-0 font-semibold text-slate-800 truncate">{x.crew.name}<span className="block text-[10px] uppercase text-slate-500 font-bold">{x.crew.role === 'rpic' ? 'RPIC' : x.crew.role}</span></span>
+                                <span className="flex-1 min-w-0"><span className="font-medium">{x.crew.label}</span><span className="block text-xs text-slate-500">{x.crew.detail}</span>
+                                  {x.overridden && <span className="block text-xs text-amber-800">Overridden by {(x.overridden.by && x.overridden.by.name) || 'the CRP'}: “{x.overridden.reason}”</span>}</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${x.overridden ? 'bg-amber-100 text-amber-900' : tone(x.crew.status)}`}>{x.overridden ? 'Overridden' : (CUR_STATUS[x.crew.status] || 'Not enough hours')}</span>
+                              </div>))}</div>
+                            {bad.length > 0 && <p className="px-4 py-2 text-[11px] text-slate-500 bg-slate-50 border-t border-slate-100">Record a check in Database &amp; Settings › Registers, put someone current on the job, or use “Bypass” in the list above with a reason (it's kept in the plan's record).</p>}
+                          </div>);
+                      })()}
                       {isCrpCloud && (jsa.operationTypes || []).includes('EVLOS') && <div className="mx-4 sm:mx-6 mt-4"><ObserverPanel jobUid={overview.uid} jobId={(((cloudJobsAll || []).find(j => j.plan_uid === overview.uid)) || {}).id || null} jobTitle={getOpTitle(overview)} summary={obsSummary()} crpName={auth.name || approval.crpName || ''} /></div>}
                       {onCloudJob && (jsa.operationTypes || []).includes('EVLOS') && isObserverOnJob && <CrewObserverBar jobId={cloudJob.id} jobTitle={cloudJob.title || getOpTitle(overview)} summary={obsSummary()} name={auth.name || ''} onOpenPlan={() => setActiveTab('preliminary')} />}
 
@@ -13964,6 +14021,7 @@ View in the Database & Settings tab.`);
                             <div className="bg-white p-3 rounded border border-slate-200 shadow-sm print:shadow-none print:border-slate-300">
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">Observer/Crew</label>
                               <ComboBox name="crewObserver" value={log.crewObserver} onChange={handleLogChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Name / Initials" className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 print:border-slate-300" />
+                              {!String(log.crewObserver || '').trim() && jobObserverNames() && <button type="button" data-fill-observers="1" onClick={() => setLog(prev => ({ ...prev, crewObserver: jobObserverNames() }))} className="mt-1 text-[11px] text-violet-700 underline print:hidden">Use the job's crew: {jobObserverNames()}</button>}
                             </div>
                           </div>
                           
@@ -14449,6 +14507,8 @@ View in the Database & Settings tab.`);
                           ? <ManualAdmin />
                           : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · CSV</span>, (<Registers crpName={auth.name || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
+                        {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
                         {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
                             {/* Official authorisations (v5.30) */}

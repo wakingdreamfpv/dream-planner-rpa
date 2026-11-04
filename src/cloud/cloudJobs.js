@@ -37,7 +37,7 @@ export function useCloudJobs(sb, me) {
   useEffect(() => {
     if (!isCrp) { publish('wdCrewFlights', null, 'wd-crew-flights'); publish('wdAccessRequests', null, 'wd-access-requests'); return; }
     let dead = false;
-    const loadPeople = async () => { const { data } = await sb.from('people').select('id,user_id,full_name,email,role,active'); peopleRef.current = data || []; return peopleRef.current; };
+    const loadPeople = async () => { const { data } = await sb.from('people').select('id,user_id,full_name,email,role,active,total_hours'); peopleRef.current = data || []; return peopleRef.current; };
     const findPerson = (name, email) => {
       const ppl = peopleRef.current;
       return (email && ppl.find(p => low(p.email) === low(email))) || (name && ppl.find(p => low(p.full_name) === low(name))) || null;
@@ -88,11 +88,14 @@ export function useCloudJobs(sb, me) {
         const sig = JSON.stringify(d); if (sig === lastPub.current) return; lastPub.current = sig;
         try {
           const now = new Date().toISOString();
-          await sb.from('shared_data').upsert(['company', 'fleet', 'batteries', 'records'].filter(k => d[k] !== undefined).map(area => ({ area, data: d[area], updated_at: now })), { onConflict: 'area' });
+          await sb.from('shared_data').upsert(['company', 'fleet', 'batteries', 'records', 'compliance'].filter(k => d[k] !== undefined).map(area => ({ area, data: d[area], updated_at: now })), { onConflict: 'area' });
           await loadPeople();
           const rows = [];
           (d.hours || []).forEach(h => { const p = findPerson(h.name, h.email); if (p) rows.push({ person_id: p.id, rpa_type: h.rpa || 'All', flights: h.flights || 0, seconds: Math.round(h.seconds || 0), last_flown: h.last ? new Date(h.last).toISOString() : null, updated_at: now }); });
           if (rows.length) await sb.from('pilot_hours').upsert(rows, { onConflict: 'person_id,rpa_type' });
+          // v7.11: each completed flight counts toward currency (stored once per flight; the database ignores repeats)
+          const fc = (d.flightCounts || []).map(r => { const p = findPerson(r.name, r.email); return p ? { person_id: p.id, competency: r.competency, flight_date: r.flight_date, flight_ref: r.flight_ref } : null; }).filter(Boolean);
+          if (fc.length) { const { data: added } = await sb.rpc('record_flight_counts', { p_rows: fc }); if (added) window.dispatchEvent(new Event('wd-currency-refresh')); }
         } catch (err) { lastPub.current = ''; }
       }, 2500);
     };
@@ -125,9 +128,19 @@ export function useCloudJobs(sb, me) {
     // v7.10: the company's shared settings (e.g. the OpenAIP key) for the CRP's other devices
     const loadCompany = async () => { try { const { data } = await sb.from('shared_data').select('data').eq('area', 'company').maybeSingle(); if (!dead) publish('wdCompanyShared', (data && data.data) || null, 'wd-company-shared'); } catch (e) {} };
     loadCompany();
-    loadPeople().then(refreshInbox); const iv = setInterval(refreshInbox, 60000);
+    // v7.11: crew currency (certifications + the 3-flights rule) and logged hours, for job checks and the registers
+    const loadCurrency = async () => {
+      try {
+        const [{ data: rows, error }, { data: hours }] = await Promise.all([sb.rpc('crew_currency'), sb.from('pilot_hours').select('person_id,rpa_type,flights,seconds')]);
+        if (error) throw error;
+        const ppl = peopleRef.current.length ? peopleRef.current : await loadPeople();
+        if (!dead) publish('wdCurrency', { rows: rows || [], hours: hours || [], people: ppl, at: Date.now() }, 'wd-currency');
+      } catch (e) { if (!dead) publish('wdCurrency', { rows: [], hours: [], people: peopleRef.current, error: String((e && e.message) || e), at: Date.now() }, 'wd-currency'); }
+    };
+    window.addEventListener('wd-currency-refresh', loadCurrency);
+    loadPeople().then(() => { refreshInbox(); loadCurrency(); }); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
-    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish);
+    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
       window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
 
