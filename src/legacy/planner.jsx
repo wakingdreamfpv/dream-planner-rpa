@@ -181,7 +181,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.14';
+        const APP_VERSION = '7.15';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1642,6 +1642,65 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         };
         const wdDownload = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type || 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
         const fileSafe = (s) => String(s || 'risk-assessment').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 80) || 'risk-assessment';
+        // v7.15: batteries and the fleet in from a CSV (Excel / Google Sheets). Blank cells leave what's there.
+        const csvTable = (text) => {
+          const rows = csvParse(String(text || '').replace(/^﻿/, '')); if (rows.length < 2) throw new Error('the CSV has no data rows');
+          const head = rows[0].map(h => String(h).toLowerCase().replace(/[^a-z0-9]/g, ''));
+          const col = (...keys) => head.findIndex(h => keys.some(k => h === k || h.includes(k)));
+          return { head, rows: rows.slice(1), col };
+        };
+        const csvDate = (v) => { const t = String(v == null ? '' : v).trim(); let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+          m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; } return ''; }; // Australian day/month/year
+        const csvYes = (v) => /^(y|yes|true|1|x|✓|✔|retired)$/i.test(String(v == null ? '' : v).trim());
+        const BATTERY_CSV_TEMPLATE = 'Battery,Aircraft,Prior cycles,Cycle limit,Retired\r\nAvata2-01,DJI Avata 2,12,200,\r\nAvata2-02,DJI Avata 2,40,,\r\nOld-Pack-07,DJI Mini 4 Pro,310,300,yes\r\n';
+        const FLEET_CSV_TEMPLATE = 'Aircraft,Weight (kg),Cells,CASA registration,Registration expiry,Serial number,Prior flight minutes\r\nDJI Avata 2,0.377,4,PO-123456,30/06/2027,1581F6Z9C23AB00XXXX,600\r\n5" FPV,0.65,6,,,,\r\n';
+        const importBatteryCsv = (text, db) => {
+          let { rows, col, head } = csvTable(text);
+          let iB = col('battery', 'pack', 'assetnumber', 'asset'), iA = col('aircraft', 'associatedrpa', 'rpa', 'drone', 'model'), iP = col('prior', 'existingcycles', 'cyclesbefore', 'cycles'),
+            iL = col('limit', 'maxcycles'), iR = col('retired', 'retire');
+          // no header: the older two-column layout "RPA Name, Battery Name"
+          if (iB < 0 && head.length === 2) { rows = csvParse(String(text || '').replace(/^\uFEFF/, '')); iA = 0; iB = 1; iP = iL = iR = -1; }
+          if (iB < 0) throw new Error('no "Battery" column found (expected: Battery, Aircraft, Prior cycles, Cycle limit, Retired)');
+          const batteries = [...(db.batteries || [])], rpaBatteries = { ...(db.rpaBatteries || {}) }, batteryInfo = { ...(db.batteryInfo || {}) };
+          const fleetKeys = Object.keys(db.fleet || {}), unknownRpa = new Set(); let added = 0, updated = 0;
+          rows.forEach(r => {
+            const b = String(r[iB] || '').trim(); if (!b) return;
+            const had = batteries.includes(b) || Object.values(rpaBatteries).some(l => (l || []).includes(b));
+            if (!batteries.includes(b)) batteries.push(b);
+            const a0 = iA >= 0 ? String(r[iA] || '').trim() : '';
+            if (a0) { const a = fleetKeys.find(k => k.toLowerCase() === a0.toLowerCase()) || a0; if (!fleetKeys.includes(a)) unknownRpa.add(a0);
+              if (!(rpaBatteries[a] || []).includes(b)) rpaBatteries[a] = [...(rpaBatteries[a] || []), b]; }
+            const inf = { ...(batteryInfo[b] || {}) };
+            if (iP >= 0 && String(r[iP] || '').trim() !== '' && !isNaN(parseInt(r[iP]))) inf.priorCycles = String(parseInt(r[iP]));
+            if (iL >= 0 && String(r[iL] || '').trim() !== '' && parseInt(r[iL]) > 0) inf.cycleLimit = String(parseInt(r[iL]));
+            if (iR >= 0 && String(r[iR] || '').trim() !== '') inf.retired = csvYes(r[iR]);
+            batteryInfo[b] = inf; had ? updated++ : added++;
+          });
+          return { batteries, rpaBatteries, batteryInfo, added, updated, unknownRpa: [...unknownRpa] };
+        };
+        const importFleetCsv = (text, fleet0) => {
+          const { rows, col, head } = csvTable(text);
+          const iN = col('aircraft', 'model', 'rpa', 'name', 'type'), iW = col('weight', 'mtow', 'kg'), iC = col('cells', 'cell'), 
+            iE = col('expir'), iS = head.findIndex(h => h.includes('serial') || h === 'sn'), iM = col('priorflightminutes', 'priorminutes', 'minutes'), iH = col('priorflighthours', 'priorhours', 'hours');
+          if (iN < 0) throw new Error('no "Aircraft" column found (expected: Aircraft, Weight (kg), Cells, CASA registration, Registration expiry, Serial number, Prior flight minutes)');
+          const regCol = head.findIndex(h => /registration|rego|casa/.test(h) && !/expir/.test(h)); // not "Registration expiry"
+          const fleet = { ...(fleet0 || {}) }; let added = 0, updated = 0; const bad = [];
+          rows.forEach((r, n) => {
+            const nm0 = String(r[iN] || '').trim(); if (!nm0) return;
+            const nm = Object.keys(fleet).find(k => k.toLowerCase() === nm0.toLowerCase()) || nm0;
+            const old = fleet[nm]; const x = old ? { ...old, sample: undefined } : { area: 0.05, cd: 1.2, totalFlightTime: 0, weight: 0 };
+            const v = (i) => (i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '');
+            if (v(iW) && !isNaN(parseFloat(v(iW)))) x.weight = parseFloat(v(iW));
+            if (v(iC)) x.cells = String(parseInt(v(iC)) || v(iC));
+            if (v(regCol)) x.registrationNo = v(regCol).toUpperCase();
+            if (v(iE)) { const d = csvDate(v(iE)); if (d) x.registrationExpiry = d; else bad.push(`${nm0}: registration expiry "${v(iE)}" not understood (use 30/06/2027)`); }
+            if (v(iS)) x.serial = v(iS);
+            if (v(iM) && !isNaN(parseFloat(v(iM)))) x.priorMinutes = String(parseFloat(v(iM)));
+            else if (v(iH) && !isNaN(parseFloat(v(iH)))) x.priorMinutes = String(Math.round(parseFloat(v(iH)) * 60));
+            fleet[nm] = x; old ? updated++ : added++;
+          });
+          return { fleet, added, updated, bad };
+        };
         // HTML so the planner, browser print and the PDF report all draw the identical graphic
         function riskMatrixHtml(risks, opts) {
           opts = opts || {};
@@ -8128,51 +8187,14 @@ View in the Database & Settings tab.`);
             });
           };
 
-          const handleImportBatteryCsv = (event) => {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            wdTrackReader(reader, file, 'Importing battery CSV');
-            reader.onload = (e) => {
-              try {
-                const lines = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-                const newRpaBatteries = { ...(db.rpaBatteries || {}) };
-                let imported = 0;
-                lines.forEach((line, idx) => {
-                  // Skip header row
-                  if (idx === 0 && line.toLowerCase().includes('asset number')) return;
-                  // Parse CSV — handle quoted fields
-                  const parts = [];
-                  let cur = '', inQ = false;
-                  for (const ch of line + ',') {
-                    if (ch === '"') { inQ = !inQ; }
-                    else if (ch === ',' && !inQ) { parts.push(cur.trim()); cur = ''; }
-                    else { cur += ch; }
-                  }
-                  // Col 1 = Asset Number (battery display name)
-                  // Col 9 = Associated RPA Identifier
-                  const assetNumber = parts[1] || '';
-                  const rpaId      = (parts[9] || '').trim();
-                  if (!assetNumber || !rpaId) return;
-                  // Fuzzy-match rpaId to fleet keys
-                  const fleetKeys = Object.keys(db.fleet || {});
-                  const match = fleetKeys.find(k => k.toLowerCase().includes(rpaId.toLowerCase()) || rpaId.toLowerCase().includes(k.toLowerCase().split(' ')[1] || k.toLowerCase().split(' ')[0])) || rpaId;
-                  if (!newRpaBatteries[match]) newRpaBatteries[match] = [];
-                  if (!newRpaBatteries[match].includes(assetNumber)) {
-                    newRpaBatteries[match].push(assetNumber);
-                    imported++;
-                  }
-                });
-                updateDb('rpaBatteries', newRpaBatteries);
-                alert(`Imported ${imported} battery entries.\n\nFormat used:\nCol 1 = Asset Number (battery name)\nCol 9 = Associated RPA Identifier`);
-              } catch (err) {
-                alert('CSV import failed: ' + err.message);
-              }
-            };
-            reader.readAsText(file);
-            event.target.value = '';
+          // v7.15: one battery CSV importer (Batteries heading + the Import batteries from CSV section)
+          const importBatteriesFromFile = async (e) => {
+            const f = (e.target.files || [])[0]; e.target.value = ''; if (!f) return;
+            try { const r = importBatteryCsv(await f.text(), db); if (!r.added && !r.updated) { alert('No batteries found in that CSV.'); return; }
+              updateDb('batteries', r.batteries); updateDb('rpaBatteries', r.rpaBatteries); updateDb('batteryInfo', r.batteryInfo);
+              alert(`✅ Batteries: ${r.added} added, ${r.updated} updated (prior cycles, limits and retired flags are in the Battery register).` + (r.unknownRpa.length ? `\n\n⚠ Not in your fleet yet: ${r.unknownRpa.join(', ')}. Add the aircraft (or import the fleet CSV) so these packs show under it.` : ''));
+            } catch (err) { alert('Couldn\'t read that CSV: ' + err.message); }
           };
-
           const handleCompanyProfileChange = (e) => {
             const { name, value } = e.target;
             updateDb('companyProfile', { ...(db.companyProfile || {}), [name]: value });
@@ -12926,6 +12948,31 @@ View in the Database & Settings tab.`);
                               <button data-allow-locked="1" onClick={() => setShowMatrix(!showMatrix)} className="flex items-center gap-1 text-sm bg-slate-200 text-slate-700 border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-300 transition-colors shadow-sm">
                                 <i className="fa-solid fa-table-cells"></i> {showMatrix ? 'Hide Matrix' : 'Show Matrix'}
                               </button>
+                              {/* v7.15: risk assessments in and out as CSV (Excel / Google Sheets) */}
+                              <label data-risk-csv-import="1" title="Add or replace this job's risks from a CSV file" className={`flex items-center gap-1 text-sm bg-white text-slate-700 border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-50 shadow-sm ${approval.flightAuthApproved ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                <i className="fa-solid fa-file-csv"></i> Import CSV
+                                <input type="file" accept=".csv,text/csv" className="hidden" disabled={!!approval.flightAuthApproved} data-risk-csv-file="1" onChange={async (e) => {
+                                  const f = (e.target.files || [])[0]; e.target.value = ''; if (!f) return;
+                                  if (approval.flightAuthApproved) { alert('This job is approved and locked. Amend the plan first (Authorisation tab) to change its risk register.'); return; }
+                                  let list = [];
+                                  try { const t = parseRiskImport(await f.text(), /\.csv$/i.test(f.name) ? f.name : f.name + '.csv')[0]; list = (t && t.risks) || []; }
+                                  catch (err) { alert('Couldn\'t read that CSV: ' + err.message); return; }
+                                  if (!list.length) { alert('No hazards found in that CSV. It needs a "Hazard" column (download the template to see the layout).'); return; }
+                                  const empty = risks.every(r => !String(r.hazard || '').trim());
+                                  const replace = empty || window.confirm(`Import ${list.length} risk${list.length === 1 ? '' : 's'} from "${f.name}"?\n\nOK: REPLACE the job's current ${risks.length} risk(s)\nCancel: ADD them to the end`);
+                                  const fresh = list.map((r, i) => ({ ...r, id: Date.now() + Math.random() + i, dateAdded: r.dateAdded || localISODate() }));
+                                  setRisks(replace ? fresh : [...risks, ...fresh.map((r, i) => ({ ...r, refNo: String(risks.length + i + 1).padStart(3, '0') }))]);
+                                  if (typeof showToast === 'function') showToast(`${list.length} risk${list.length === 1 ? '' : 's'} ${replace ? 'imported' : 'added'} from CSV`);
+                                }} />
+                              </label>
+                              <button data-allow-locked="1" data-risk-csv-export="1" onClick={() => wdDownload(fileSafe((getOpTitle(overview) || 'Risk register') + ' risks') + '.csv', '\ufeff' + risksToCsv(risks.filter(r => String(r.hazard || '').trim())), 'text/csv')} className="flex items-center gap-1 text-sm bg-white text-slate-700 border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-50 shadow-sm">
+                                <i className="fa-solid fa-file-export"></i> Export CSV
+                              </button>
+                              <button data-allow-locked="1" data-risk-csv-template="1" title="A blank CSV with the right columns, and two example rows" onClick={() => wdDownload('Risk register template.csv', '\ufeff' + risksToCsv([
+                                { refNo: '001', hazard: 'Loss of control link', riskDescription: 'Aircraft flies away or failsafes over people', existingControls: 'RTH set, link checked pre-flight', initL: '3', initC: 'B', additionalControls: 'Spectrum scan; spotter on RF', resL: '1', resC: 'B', riskOwner: 'RPIC' },
+                                { refNo: '002', hazard: 'Battery failure', riskDescription: 'Loss of power in flight', existingControls: 'Cycle limits; voltage checks', initL: '2', initC: 'B', additionalControls: 'Land at 30%', resL: '1', resC: 'C', riskOwner: 'RPIC' }]), 'text/csv')} className="flex items-center gap-1 text-sm text-violet-700 underline px-1 py-1.5">
+                                CSV template
+                              </button>
                             </div>
                           </div>
 
@@ -14598,7 +14645,7 @@ View in the Database & Settings tab.`);
                           ? <ManualAdmin />
                           : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
-                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · CSV</span>, (<Registers crpName={auth.name || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · Google Forms import · audit packs · CSV / PDF</span>, (<Registers crpName={auth.name || ''} company={(db.companyProfile && db.companyProfile.name) || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
                         {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
                         {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
@@ -14826,7 +14873,18 @@ View in the Database & Settings tab.`);
                         {dbFold('dbsec-fleet', 'RPAS fleet', 'fa-helicopter', <span>{Object.values(db.fleet || {}).filter(f => f && !f.sample).length} aircraft · {Object.values(db.fleet || {}).filter(f => f && !f.sample && String(f.registrationNo || '').trim()).length} with CASA rego</span>, (<>
                             {/* RPAS Fleet DB */}
                             <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-plane-departure text-slate-400"></i> RPAS Fleet (Aircraft Times)</h3>
+                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2 flex-wrap"><i className="fa-solid fa-plane-departure text-slate-400"></i> RPAS Fleet (Aircraft Times)
+                                  <span className="ml-auto flex items-center gap-2 text-xs font-normal">
+                                    <label data-fleet-csv-import="1" className="cursor-pointer font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Import CSV
+                                      <input type="file" accept=".csv,text/csv" className="hidden" data-fleet-csv-file="1" onChange={async (e) => {
+                                        const f = (e.target.files || [])[0]; e.target.value = ''; if (!f) return;
+                                        try { const r = importFleetCsv(await f.text(), db.fleet || {}); if (!r.added && !r.updated) { alert('No aircraft found in that CSV.'); return; }
+                                          updateDb('fleet', r.fleet);
+                                          alert(`✅ Fleet: ${r.added} aircraft added, ${r.updated} updated.` + (r.bad.length ? '\n\n⚠ ' + r.bad.join('\n⚠ ') : '') + '\n\nBlank cells in the CSV left the existing details as they were.');
+                                        } catch (err) { alert('Couldn\'t read that CSV: ' + err.message); }
+                                      }} /></label>
+                                    <button type="button" data-fleet-csv-template="1" onClick={() => wdDownload('Fleet template.csv', '\ufeff' + FLEET_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline">CSV template</button>
+                                  </span></h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4 max-h-[400px] overflow-y-auto pr-1">
                                     {Object.keys(db.fleet).map((rpa, i) => (
                                         <div key={i} className="flex flex-col text-sm bg-slate-50 border border-slate-200 px-3 py-2 rounded relative">
@@ -14947,7 +15005,12 @@ View in the Database & Settings tab.`);
                         {dbFold('dbsec-batteries', 'Batteries', 'fa-car-battery', <span>{(db.batteries || []).length} packs</span>, (<>
                             {/* Batteries DB */}
                             <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-database text-slate-400"></i> Batteries</h3>
+                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2 flex-wrap"><i className="fa-solid fa-database text-slate-400"></i> Batteries
+                                  <span className="ml-auto flex items-center gap-2 text-xs font-normal">
+                                    <label data-battery-csv-import="1" className="cursor-pointer font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Import CSV
+                                      <input type="file" accept=".csv,text/csv" className="hidden" data-battery-csv-file="1" onChange={importBatteriesFromFile} /></label>
+                                    <button type="button" data-battery-csv-template="1" onClick={() => wdDownload('Battery template.csv', '\ufeff' + BATTERY_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline">CSV template</button>
+                                  </span></h3>
                                 <ul className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
                                     {db.batteries && db.batteries.map((c, i) => (
                                         <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
@@ -15038,21 +15101,22 @@ View in the Database & Settings tab.`);
                               <i className="fa-solid fa-battery-full text-emerald-600"></i>
                               <div>
                                 <h3 className="font-semibold text-emerald-900 text-sm">Import Batteries from CSV</h3>
-                                <p className="text-xs text-emerald-700">Format: <code className="bg-emerald-100 px-1 rounded font-mono">RPA Name, Battery Name</code> — one battery per row</p>
+                                <p className="text-xs text-emerald-700">Columns: <code className="bg-emerald-100 px-1 rounded font-mono">Battery, Aircraft, Prior cycles, Cycle limit, Retired</code> — one pack per row. Blank cells leave what's there.</p>
                               </div>
                             </div>
                             <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 flex-shrink-0">
                               <i className="fa-solid fa-file-csv"></i> Import CSV
-                              <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportBatteryCsv} />
+                              <input type="file" accept=".csv,text/csv" className="hidden" data-battery-csv-file2="1" onChange={importBatteriesFromFile} />
                             </label>
                           </div>
                           <div className="px-4 py-3 text-xs text-slate-500">
                             <span className="font-medium">Example rows:</span>
                             <div className="mt-1 font-mono bg-slate-50 border border-slate-200 rounded p-2 space-y-0.5">
-                              <div className="text-slate-400">RPA Name, Battery Name</div>
-                              <div>DJI Mavic 4 Pro, Mavic 4 Pro Battery 01</div>
-                              <div>Cinelog 35 (FPV), 4S 650mAh LiPo 01</div>
+                              <div className="text-slate-400">Battery, Aircraft, Prior cycles, Cycle limit, Retired</div>
+                              <div>Mavic 4 Pro Battery 01, DJI Mavic 4 Pro, 12, 200,</div>
+                              <div>4S 650mAh LiPo 01, Cinelog 35 (FPV), 85, , yes</div>
                             </div>
+                            <p className="mt-2">Also reads the older two-column layout (RPA Name, Battery Name) and asset-register exports with "Asset Number" and "Associated RPA" columns. <button type="button" onClick={() => wdDownload('Battery template.csv', '\ufeff' + BATTERY_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline font-semibold">Download the template</button></p>
                           </div>
                         </div>
                         </>))}
