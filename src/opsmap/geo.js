@@ -100,6 +100,17 @@ export const presetLimits = (K, E) => {
   const hs = [0.25, 0.5, 0.8].map((f) => Math.max(0.5, Math.floor(top * f * 2) / 2));
   return hs.filter((h, i) => hs.indexOf(h) === i).map((h) => ({ id: 'p' + E + '-' + h, h, v: speedAt(K, E, h), e: E, preset: true })).filter((p) => p.v);
 };
+// v7.12: fill a zone's height and speed from the drone's energy table: the job's planned height (if it fits under the
+// energy limit), else half the highest allowed height, with the top speed allowed at that height. The pilot reviews it.
+export const autoZoneLimit = (K, E, plannedM) => {
+  if (!K) return null;
+  const hMax = E === 15 ? K.h15 : K.h34; if (!isFinite(hMax) || hMax <= 0) return null;
+  const cap = Math.floor(Math.min(hMax, 120) * 0.8 * 2) / 2;
+  let h = plannedM > 0 ? Math.min(Math.floor(plannedM * 2) / 2, cap) : Math.max(0.5, Math.floor(Math.min(hMax, 120) * 0.5 * 2) / 2);
+  if (!(h > 0)) h = 0.5;
+  const v = speedAt(K, E, h); if (!v) return null;
+  return { h, v, energy: E, from: plannedM > 0 && h === Math.floor(plannedM * 2) / 2 ? 'planned height' : 'energy table' };
+};
 export const limitOk = (K, l) => K && keAt(K, l.h, l.v) <= (l.e || 34) + 0.05;
 
 // the limits a zone imposes: ceiling (height above the zone's ground) and speed
@@ -145,7 +156,7 @@ export const checkOps = (m, keFor) => {
       const a = proj.to(A), b = proj.to(B), len = Math.hypot(b.x - a.x, b.y - a.y);
       const n = Math.max(2, Math.min(240, Math.ceil(len / 1)));
       const msgs = new Map(); let status = 'ok';
-      const add = (lvl, key, text) => { if (!msgs.has(key)) msgs.set(key, { lvl, text }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
+      const add = (lvl, key, text) => { if (!msgs.has(key)) msgs.set(key, { lvl, text, key }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
       for (let s = 0; s <= n; s++) {
         const t = s / n, p = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
         const alt = (Number(A[2]) || 0) + t * ((Number(B[2]) || 0) - (Number(A[2]) || 0));
@@ -174,19 +185,25 @@ export const checkOps = (m, keFor) => {
       dist0 += len;
       const list = [...msgs.values()];
       res.legs.push({ i, status, msgs: list, len });
-      list.forEach((q) => { out.issues.push({ lvl: q.lvl, path: path.id, leg: i, text: (path.name || 'Path') + ', leg ' + (i + 1) + '→' + (i + 2) + ' ' + q.text }); out.counts[q.lvl]++; });
+      list.forEach((q) => { out.issues.push({ lvl: q.lvl, path: path.id, leg: i, key: path.id + ':' + i + ':' + q.key, text: (path.name || 'Path') + ', leg ' + (i + 1) + '→' + (i + 2) + ' ' + q.text }); });
     });
     res.length = dist0;
     out.paths[path.id] = res;
   });
   zones.forEach(({ z }) => {
     if ((z.kind === 'oonp' || z.kind === 'near') && (z.h == null || z.h === '')) {
-      out.issues.push({ lvl: 'warn', zone: z.id, text: '"' + (z.name || KINDS[z.kind].label) + '" has no height / speed limit yet' }); out.counts.warn++;
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':nolimit', text: '"' + (z.name || KINDS[z.kind].label) + '" has no height / speed limit yet' });
+    } else if ((z.kind === 'oonp' || z.kind === 'near') && z.autoLimit && !z.limitReviewed) {
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':review', review: true, text: '"' + (z.name || KINDS[z.kind].label) + '": height and speed filled in from the ' + (z.autoLimit.energy || 34) + ' J energy table, pilot to review' });
     }
     if (z.kind === 'exclusion' && z.shielded && !String(z.shieldNote || '').trim()) {
-      out.issues.push({ lvl: 'warn', zone: z.id, text: '"' + (z.name || 'Exclusion') + '" is shielded: add what shields it' }); out.counts.warn++;
+      out.issues.push({ lvl: 'warn', zone: z.id, key: 'z:' + z.id + ':shield', text: '"' + (z.name || 'Exclusion') + '" is shielded: add what shields it' });
     }
   });
+  // v7.12: a check can be acknowledged (with a note) in the editor; it then no longer counts as open
+  const acks = m.acks || {};
+  out.issues.forEach((q) => { const a = q.key && acks[q.key]; if (a) q.ack = a; else out.counts[q.lvl]++; });
+  out.counts.acked = out.issues.filter((q) => q.ack).length;
   return out;
 };
 
@@ -197,6 +214,7 @@ export const opsSummary = (m, chk) => {
   const z = m.zones || [], p = m.paths || [], pts = m.points || [];
   const bits = [n(z, 'zone'), n(p, 'path'), n(pts, 'marker')];
   if (m.overlay) bits.push('plan overlay');
+  if ((m.views || []).length) bits.push(n(m.views, 'view') + ' for the PDF');
   if (chk) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
   return bits.join(' · ');
 };

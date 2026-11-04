@@ -5657,6 +5657,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 return { shape: z.shape, pts: z.pts, c: z.c, r: z.r, color: k.color, stroke: k.stroke, fill: k.fill, dash: z.kind === 'near' ? '8 6' : null, name: esc(z.name || k.label), tag: esc(opsZoneTag(z, opsMap.settings)), buffer: opsZoneBuffer(z) }; }),
               paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { pts: p.pts, legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
               points: (opsMap.points || []).map(p => ({ kind: p.kind, lat: p.lat, lng: p.lng, title: p.title || '', text: p.text || '', size: p.size })),
+              views: (opsMap.views || []).map(v => ({ kind: v.kind, title: v.title, bounds: v.bounds || null })),
               overlay: opsMap.overlay ? { src: opsMap.overlay.src, center: opsMap.overlay.center, widthM: opsMap.overlay.widthM, rot: opsMap.overlay.rot || 0, opacity: opsMap.overlay.opacity, aspect: opsMap.overlay.aspect } : null };
 
             const hasMap = true;
@@ -5708,7 +5709,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +'var CP=[];(MP||[]).forEach(function(p){CP.push(p);});ML.forEach(function(x){CP.push([x.lat,x.lng]);});MR.forEach(function(x){CP.push([x.lat,x.lng]);});MS.forEach(function(x){CP.push([x.lat,x.lng]);});'
               +'MX.forEach(function(z){if(z.type==="circle"){var c=L.latLng(z.geo.c);var b=c.toBounds(z.geo.rM*2);CP.push(b.getSouthWest(),b.getNorthEast());}else if(z.type==="rect"){CP.push(z.geo.a,z.geo.b);}else if(z.geo.pts){z.geo.pts.forEach(function(p){CP.push(p);});}});'
               +'if(CP.length>1){m.fitBounds(L.latLngBounds(CP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){m.fitBounds(MB,{padding:[0,0],animate:false});}else{m.setView(MC,MZ);}'
-              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);}'
+              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);(OM.views||[]).forEach(function(v,i){if(v.kind==="2d"&&v.bounds)opsAdvPrint(OM,imagery,"opsv"+i,v.bounds);});}'
               // Heatmap page: same view underneath the painted overlay
               +'if(document.getElementById("heatmapbase")){var hm=L.map("heatmapbase",mo);var HP=CP.slice();HD.forEach(function(d){if(!d.e)HP.push([d.lat,d.lng]);});if(HP.length>1){hm.fitBounds(L.latLngBounds(HP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){hm.fitBounds(MB,{padding:[0,0],animate:false});}else{hm.setView(MC,MZ);}imagery(hm);opsLayers(hm);'
               // crowd paint on a canvas sized to the map, projected from GPS
@@ -5821,7 +5822,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Zone</th><th style="'+th+'">Type</th><th style="'+th+'">Drone · energy</th><th style="'+th+'">Max height</th><th style="'+th+'">Max speed</th><th style="'+th+'">Buffer / ground</th><th style="'+th+'">Notes</th></tr>');
                 mo.zones.forEach(z => { const lim = OPS_KINDS[z.kind] && OPS_KINDS[z.kind].limits;
                   const buf = z.kind === 'exclusion' ? (z.shielded ? 'Shielded: ' + opsZoneBuffer(z) + ' m (' + esc(z.shieldNote || 'not stated') + ')' : opsZoneBuffer(z) + ' m') : ((Number(z.ground) || 0) ? 'ground +' + z.ground + ' m' : '—');
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? opsFmtSpeed(z.v) : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(z.name)+'</td><td style="'+td+'">'+esc(OPS_KINDS[z.kind] ? OPS_KINDS[z.kind].label : z.kind)+'</td><td style="'+td+'">'+(lim ? esc(z.drone || '—') + ' · ≤' + (Number(z.energy) === 15 ? 15 : 34) + ' J' : '—')+'</td><td style="'+td+'">'+(z.h != null && z.h !== '' ? z.h + ' m' + (z.autoLimit ? '<div style="font-size:6.5pt;color:'+S6+';">from the '+(z.autoLimit.energy||34)+' J table'+(z.limitReviewed ? ', reviewed by '+esc(z.limitReviewed.by || 'pilot') : ', not yet reviewed')+'</div>' : '') : '—')+'</td><td style="'+td+'">'+(z.v != null && z.v !== '' ? opsFmtSpeed(z.v) : '—')+'</td><td style="'+td+'">'+buf+'</td><td style="'+td+'">'+esc(z.note || '')+'</td></tr>'); });
                 P.push('</table>');
               }
               if ((mo.paths || []).length) {
@@ -5833,7 +5834,19 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               const notes = (mo.points || []).filter(p => p.text || p.kind === 'poi' || p.kind === 'note');
               if (notes.length) { P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'width:28%;">Marker</th><th style="'+th+'">Note</th></tr>');
                 notes.forEach(p => P.push('<tr><td style="'+td+'font-weight:700;">'+esc((OPS_POINT_KINDS[p.kind] || {}).label || p.kind)+': '+esc(p.title || '')+'</td><td style="'+td+'white-space:pre-wrap;">'+esc(p.text || '')+'</td></tr>')); P.push('</table>'); }
-              if (chk && chk.issues.length) { P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;"><b>Map checks</b><br>' + chk.issues.map(q => (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
+              // v7.12: the views kept for the plan (2D map areas re-drawn here, 3D as the picture taken)
+              (mo.views || []).forEach((v, i) => {
+                P.push('<div style="break-inside:avoid;margin:10pt 0 8pt;"><div style="font-size:9pt;font-weight:800;color:'+PU+';margin-bottom:3pt;">'+esc(v.title || ('View ' + (i + 1)))+' <span style="font-weight:400;color:'+S6+';font-size:7pt;">'+(v.kind === '3d' ? '3D view' : 'map view')+'</span></div>');
+                if (v.kind === '2d' && v.bounds) P.push('<div id="opsv'+i+'" style="width:182mm;height:120mm;border:1px solid '+S2+';border-radius:4pt;overflow:hidden;background:#f8fafc;"></div>');
+                else if (opsViewImages[v.id]) P.push('<img src="'+opsViewImages[v.id]+'" style="width:182mm;max-height:130mm;object-fit:contain;border:1px solid '+S2+';border-radius:4pt;background:#e2e8f0;" alt="">');
+                else P.push('<div style="font-size:7.5pt;color:'+S6+';">(picture not saved on this device)</div>');
+                P.push('</div>');
+              });
+              // v7.12: the CRP / pilot chooses whether the checks print (all, only open ones, or none); acknowledged ones show their note
+              { const mode = ((mo.settings || {}).pdfChecks) || 'all', list = chk ? chk.issues.filter(q => mode === 'all' || (mode === 'open' && !q.ack)) : [];
+                if (mode !== 'none' && list.length) P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;break-inside:avoid;"><b>Map checks</b><br>' + list.map(q => q.ack
+                  ? '<b style="color:#475569">Acknowledged:</b> ' + esc(q.text) + ' <i style="color:#475569">— “' + esc(q.ack.note || 'OK') + '”' + (q.ack.by ? ', ' + esc(q.ack.by) : '') + '</i>'
+                  : (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
               P.push('</div>');
             }
 
@@ -6141,7 +6154,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (Array.isArray(plan.oonpSections)) setOonpSections([...plan.oonpSections]);
             setLog(plan.log ? migrateYesNoLog({ ...getInitialLog(), ...clone(plan.log) }) : getInitialLog());
             setMapData(md);
-            setOpsMap(plan.opsMap ? clone(plan.opsMap) : null); setOpsMapOpen(false);
+            setOpsMap(plan.opsMap ? clone(plan.opsMap) : null); setOpsMapOpen(false); setOpsViewImages(clone(plan.opsViewImages) || {});
             setSiteAttachments(clone(plan.siteAttachments) || []);
             setBallistic(plan.ballistic ? clone(plan.ballistic) : { enabled: false, height: 5.0, speed: 5.0 });
             setKeData(plan.keData ? { enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05, ...clone(plan.keData) }
@@ -6308,6 +6321,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const [mapData, setMapData] = useState({ launches: [], recoveries: [], signage: [], areaPolygon: [], crowdZones: [], exclusionZones: [] });
           const [opsMap, setOpsMap] = useState(null); // v7.9 advanced ops map
           const [opsMapOpen, setOpsMapOpen] = useState(false);
+          const [opsViewImages, setOpsViewImages] = useState({}); // v7.12: pictures of the 3D views kept for the plan / PDF (by view id)
           const [selectedMarker, setSelectedMarker] = useState(null);
           const [draggingMarker, setDraggingMarker] = useState(null);
           const opsMapRef = React.useRef(null);
@@ -7561,6 +7575,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               oonpSections:    safeClone(oonpSections),
               mapData:         safeClone(mapData),
               ...(hasOpsContent(opsMap) ? { opsMap: safeClone(opsMap) } : {}),
+              ...((() => { const ids = ((opsMap && opsMap.views) || []).filter(v => v.kind === '3d').map(v => v.id); const o = {}; ids.forEach(id => { if (opsViewImages[id]) o[id] = opsViewImages[id]; }); return Object.keys(o).length ? { opsViewImages: o } : {}; })()),
               siteAttachments: safeClone(siteAttachments || []),
               ballistic:       safeClone(ballistic),
               keData:          safeClone(keData),
@@ -7698,7 +7713,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             setDirty(true);
             if (workingTimer.current) clearTimeout(workingTimer.current);
             workingTimer.current = setTimeout(() => saveRecoveryRef.current(), 2500);
-          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments, opsMap]); // eslint-disable-line
+          }, [overview, checklist, checklistNotes, jsa, risks, approval, log, oonp, oonpMode, mapData, keData, extraKe, ballistic, heatStrokes, heatExclZones, siteAttachments, opsMap, opsViewImages]); // eslint-disable-line
           useEffect(() => {
             const warn = (e) => { if (dirty) { saveRecoveryRef.current(); e.preventDefault(); e.returnValue = 'You have unsaved changes.'; return e.returnValue; } };
             window.addEventListener('beforeunload', warn);
@@ -9210,7 +9225,7 @@ View in the Database & Settings tab.`);
                   clearMap();
                   setHeatStrokes([]); setHeatExclZones([]); amendmentsRef.current = [];
                   // v6.0: these used to carry over from the previous job (OONP set-up, KE/ballistic, attachments)
-                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]); setOpsMap(null);
+                  setOonp(getInitialOonp()); setOonpMode(false); setSiteAttachments([]); setOpsMap(null); setOpsViewImages({});
                   setBallistic({ enabled: false, height: 5.0, speed: 5.0 });
                   setKeData({ enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 });
                   setExtraKe([]); setOonpToolsOpen(false);
@@ -10168,7 +10183,7 @@ View in the Database & Settings tab.`);
               })()}
               {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
                 center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
-                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {

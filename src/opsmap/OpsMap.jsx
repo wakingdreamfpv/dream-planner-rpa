@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KINDS, POINT_KINDS, kindStyle, emptyOpsMap, makeProj, refOf, zoneTag, zoneBuffer, zoneArea, checkOps,
-  presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent, smoothStroke, chaikin, rdp, toKph, fromKph, fmtSpeed,
+  presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent, smoothStroke, chaikin, rdp, toKph, fromKph, fmtSpeed, autoZoneLimit,
 } from './geo.js';
 import { loadPdfJs } from '../cloud/Manual.jsx';
 
@@ -182,7 +182,11 @@ function Profile({ path, res, readOnly, onAlt, onPick, onStart, selPt }) {
   );
 }
 
-export default function OpsMap({ value, onChange, onClose, center, fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace }) {
+export default function OpsMap({ value, onChange, onClose, center, fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace, viewImages = {}, onViewImage, plannedHeightM = 0, reviewer = '' }) {
+  const [toast, setToast] = useState('');
+  const [ackOpen, setAckOpen] = useState(null); // { key, note }
+  const api3d = useRef(null), cam3d = useRef(null);
+  const [viewMsg, setViewMsg] = useState('');
   const [doc, setDoc] = useState(() => value || null);
   const docRef = useRef(doc); docRef.current = doc;
   const hist = useRef([]);
@@ -217,11 +221,13 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
     const rest = Object.keys(fleet || {}).filter((d) => !job.includes(d) && (fleet[d] || {}).weight > 0).sort();
     return [...job, ...rest];
   }, [jobDrones, fleet]);
+  const keForRef = useRef(null);
   const keFor = useCallback((d) => {
     const viaProp = keForProp ? keForProp(d) : null;
     if (viaProp) return viaProp;
     return simpleKe(parseFloat(((fleet || {})[d] || {}).weight) || 0);
   }, [keForProp, fleet]);
+  keForRef.current = keFor;
 
   const commit = useCallback((next) => {
     if (readOnly) return;
@@ -231,11 +237,28 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const undo = useCallback(() => { const p = hist.current.pop(); if (p) { docRef.current = p; setDoc(p); onChange && onChange(p); } }, [onChange]);
   const patch = (fn) => { const d = docRef.current; if (d) commit(fn(d)); };
   const setZone = (id, ch) => patch((d) => ({ ...d, zones: d.zones.map((z) => (z.id === id ? { ...z, ...ch } : z)) }));
+  // v7.12: heights and speeds come from the drone's energy (KE) table until the pilot picks or reviews them
+  const autoFor = (z) => { const E = Number(z.energy) === 15 ? 15 : 34; const a = autoZoneLimit(keForRef.current(z.drone), E, plannedHeightM); return a ? { h: a.h, v: a.v, limitId: null, autoLimit: { energy: E, drone: z.drone, from: a.from, at: new Date().toISOString() }, limitReviewed: null } : null; };
+  const setZoneLimits = (z, ch) => {
+    if ('h' in ch || 'v' in ch) return setZone(z.id, { ...ch, autoLimit: null, limitReviewed: null }); // the pilot chose a limit
+    if (('drone' in ch || 'energy' in ch) && (z.autoLimit || z.h == null || z.h === '')) { const a = autoFor({ ...z, ...ch }); if (a) { setZone(z.id, { ...ch, ...a }); setToast('Height and speed filled in from the ' + a.autoLimit.energy + ' J energy table for ' + (ch.drone || z.drone) + '. Pilot: review them.'); return; } }
+    setZone(z.id, ch);
+  };
   const setPath = (id, ch) => patch((d) => ({ ...d, paths: d.paths.map((p) => (p.id === id ? { ...p, ...ch } : p)) }));
   const setPoint = (id, ch) => patch((d) => ({ ...d, points: d.points.map((p) => (p.id === id ? { ...p, ...ch } : p)) }));
   const setOverlay = (ch) => patch((d) => ({ ...d, overlay: d.overlay ? { ...d.overlay, ...ch } : d.overlay }));
 
   const checks = useMemo(() => (doc ? checkOps(doc, keFor) : null), [doc, keFor]);
+  // zones drawn before limits were filled in automatically get them now (once, when the map opens)
+  const autoDone = useRef(false);
+  useEffect(() => {
+    if (autoDone.current || !doc || readOnly) return; autoDone.current = true;
+    const todo = (doc.zones || []).filter((z) => KINDS[z.kind] && KINDS[z.kind].limits && (z.h == null || z.h === ''));
+    if (!todo.length) return;
+    let n = 0; const zones = doc.zones.map((z) => { if (!todo.includes(z)) return z; const a = autoFor(z); if (!a) return z; n++; return { ...z, ...a }; });
+    if (n) { commit({ ...doc, zones }); setToast('Heights and speeds filled in from the energy table for ' + n + ' zone' + (n === 1 ? '' : 's') + '. Pilot: review each one (Checks).'); }
+  }, [!!doc]); // eslint-disable-line
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 9000); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { if (sel && window.innerWidth < 1024) setMob('details'); }, [sel && sel.t, sel && sel.id]); // eslint-disable-line
   const mode = doc ? doc.mode : 'geo';
   const settings = (doc && doc.settings) || {};
@@ -258,6 +281,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
         ...(d.shape === 'circle' ? { c: d.c, r: Math.round(d.r * 10) / 10 } : { pts: d.pts }),
         ...(KINDS[d.kind].limits ? { drone: drones[0] || '', energy: 34 } : {}),
         ...(d.kind === 'exclusion' ? { buffer: DEFAULT_BUFFER } : {}) };
+      if (KINDS[d.kind].limits) { const a = autoFor(z); if (a) { Object.assign(z, a); setToast('Height and speed filled in from the ' + a.autoLimit.energy + ' J energy table for ' + z.drone + ' (' + a.h + ' m · ' + fmtSpeed(a.v) + '). Pilot: review them.'); } }
       commit({ ...cur, zones: [...cur.zones, z] }); setSel({ t: 'zone', id: z.id });
     } else if (d.type === 'path') {
       if (d.pts.length < 2) return;
@@ -268,6 +292,34 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
     }
     setDraft(null); setTool('select');
   };
+
+  // ── v7.12: views kept for the plan and the PDF ──
+  // 2D: the map area on screen (re-drawn sharp in the PDF); 3D: a picture of the scene from this angle.
+  const addView = () => {
+    const cur = docRef.current; if (!cur || readOnly) return;
+    const views = cur.views || [], id = 'v' + uid(), n = views.filter((v) => v.kind === view).length + 1;
+    if (view === '2d') {
+      const m = mapRef.current; if (!m) return; const bb = m.getBounds();
+      commit({ ...cur, views: [...views, { id, kind: '2d', title: (cur.mode === 'plan' ? 'Floor plan view ' : 'Map view ') + n, bounds: [[bb.getSouth(), bb.getWest()], [bb.getNorth(), bb.getEast()]], at: new Date().toISOString() }] });
+    } else {
+      const api = api3d.current; if (!api) { setViewMsg('The 3D view is still loading.'); return; }
+      const src = api.capture();
+      if (onViewImage) onViewImage(id, src);
+      commit({ ...cur, views: [...views, { id, kind: '3d', title: '3D view ' + n, camera: api.camera(), at: new Date().toISOString() }] });
+    }
+    setViewMsg((view === '2d' ? 'Map view' : '3D view') + ' added. It prints in the PDF under the advanced ops map.'); setSel(null);
+  };
+  const showView = (v) => {
+    if (v.kind === '2d') { if (view !== '2d') { setView('2d'); setTimeout(() => { const m = mapRef.current; if (m) m.fitBounds(v.bounds, { animate: false }); }, 250); } else if (mapRef.current) mapRef.current.fitBounds(v.bounds); }
+    else { cam3d.current = v.camera; if (view !== '3d') setView('3d'); else if (api3d.current) api3d.current.setCamera(v.camera); }
+  };
+  const retakeView = (v) => {
+    const cur = docRef.current;
+    if (v.kind === '2d') { const m = mapRef.current; if (!m || view !== '2d') { setViewMsg('Switch to 2D, frame the map, then press Retake.'); return; } const bb = m.getBounds(); commit({ ...cur, views: cur.views.map((x) => x.id === v.id ? { ...x, bounds: [[bb.getSouth(), bb.getWest()], [bb.getNorth(), bb.getEast()]], at: new Date().toISOString() } : x) }); }
+    else { const api = api3d.current; if (!api || view !== '3d') { setViewMsg('Switch to 3D, turn it to the angle you want, then press Retake.'); return; } if (onViewImage) onViewImage(v.id, api.capture()); commit({ ...cur, views: cur.views.map((x) => x.id === v.id ? { ...x, camera: api.camera(), at: new Date().toISOString() } : x) }); }
+    setViewMsg('View updated.');
+  };
+  const setViews = (fn) => patch((d) => ({ ...d, views: fn(d.views || []) }));
 
   // ── start: outdoor (satellite) or indoor (floor plan only) ──
   const start = (m) => { const d = emptyOpsMap(m); docRef.current = d; setDoc(d); onChange && onChange(d); };
@@ -615,6 +667,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
           {['2d', '3d'].map((v) => <button key={v} type="button" data-ops-view={v} onClick={() => { setView(v); setDraft(null); }} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === v ? 'bg-violet-300 text-violet-950' : 'text-violet-100'}`}>{v === '2d' ? '2D plan' : '3D view'}</button>)}
         </div>
         <div className="flex lg:hidden gap-1">{[['tools', 'fa-pen-ruler', 'Tools'], ['details', 'fa-sliders', 'Details']].map(([k, ic, l]) => <button key={k} type="button" data-ops-mob={k} onClick={() => setMob((m) => (m === k ? null : k))} className={`${btn} ${mob === k ? 'bg-violet-300 text-violet-950 border-violet-300' : 'border-white/30 text-white'} ${k === 'tools' ? 'md:hidden' : ''}`}><i className={`fa-solid ${ic}`}></i>{l}</button>)}</div>
+        {!readOnly && <button type="button" data-ops-addview="1" onClick={addView} disabled={(doc.views || []).length >= 8} className={`${btn} border-emerald-300 bg-emerald-500 text-white disabled:opacity-40`} title="Keep this view (2D or 3D) in the plan and the PDF"><i className="fa-solid fa-camera"></i> Add this view to the plan</button>}
         {!readOnly && <button type="button" onClick={undo} disabled={!hist.current.length} className={`${btn} border-white/30 text-white disabled:opacity-40`} title="Undo (Ctrl+Z)"><i className="fa-solid fa-rotate-left"></i> Undo</button>}
         <button type="button" onClick={() => window.print()} className={`${btn} border-white/30 text-white`}><i className="fa-solid fa-print"></i> Print / PDF</button>
         <button type="button" data-ops-close="1" onClick={onClose} className={`${btn} border-violet-300 bg-violet-300 text-violet-950`}><i className="fa-solid fa-check"></i> {readOnly ? 'Close' : 'Done'}</button>
@@ -653,7 +706,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
               <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? 'Press and drag from the end of the path to carry on drawing' : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
@@ -667,6 +720,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
                   // scale about the plan's centre so the measured points stay on the same features
                   setOverlay({ widthM: Math.round(o.widthM * f * 100) / 100 }); void prj; } setScaleAsk(null); }}>Apply</button></div>
               <button type="button" className="text-xs underline text-slate-500" onClick={() => setScaleAsk(null)}>Cancel</button></div>}
+            {toast && <div className="absolute top-14 right-3 z-[680] max-w-[340px] bg-amber-50 border border-amber-300 text-amber-900 text-xs rounded-xl shadow-lg px-3 py-2 flex gap-2" role="status" data-ops-toast="1" data-ops-noprint="1"><i className="fa-solid fa-circle-info mt-0.5"></i><span className="flex-1">{toast}</span><button type="button" aria-label="Close" onClick={() => setToast('')}><i className="fa-solid fa-xmark"></i></button></div>}
             {busy && <div className="absolute inset-0 z-[700] bg-white/60 flex items-center justify-center text-sm font-semibold">{busy}</div>}
             {view === '2d' && <div className="absolute bottom-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] pointer-events-none" data-ops-legend="1">
               {[...((airspace || []).length && show.airspace && doc.mode !== 'plan' ? [['Controlled airspace', { border: '2px dashed #1d4ed8' }], ['Restricted / danger', { border: '2px dashed #be185d' }]] : []), ['Exclusion', { background: '#dc2626' }], ['Over people', { background: kindStyle('oonp', settings).color }], ['Near people', { border: '2px dashed #b45309', background: '#fff7e6' }], ['Clear of people', { background: '#b9a6f2' }], ['Buffer', { border: '2px dashed #d97706' }], ['Emergency LZ', { background: '#ea580c', borderRadius: '50%' }]].map(([l, s]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm inline-block" style={s}></span>{l}</span>)}
@@ -691,7 +745,12 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             <div><label className={lbl} htmlFor="oz-name">Name</label><input id="oz-name" className={inp} disabled={readOnly} value={selZone.name || ''} onChange={(e) => setZone(selZone.id, { name: e.target.value })} /></div>
             <div><label className={lbl} htmlFor="oz-kind">Type</label><select id="oz-kind" className={inp} disabled={readOnly} value={selZone.kind} onChange={(e) => setZone(selZone.id, { kind: e.target.value, ...(KINDS[e.target.value].limits && !selZone.drone ? { drone: drones[0] || '', energy: 34 } : {}) })}>{Object.keys(KINDS).map((k) => <option key={k} value={k}>{KINDS[k].label}</option>)}</select></div>
             <div className="text-[11px] text-slate-500">{selZone.shape === 'circle' ? 'Circle, ' + selZone.r + ' m radius' : selZone.pts.length + ' corners'} · {Math.round(area).toLocaleString()} m²{selZone.shape !== 'circle' && !readOnly ? ' · drag corners, drag a midpoint to add one, right-click a corner to delete' : ''}</div>
-            {KINDS[selZone.kind].limits && <LimitPicker zone={selZone} setZone={(ch) => setZone(selZone.id, ch)} drones={drones} fleet={fleet} keFor={keFor} onSaveDroneLimits={onSaveDroneLimits} readOnly={readOnly} />}
+            {KINDS[selZone.kind].limits && selZone.autoLimit && <div className={`rounded-lg px-3 py-2 text-xs ${selZone.limitReviewed ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-amber-50 text-amber-900 border border-amber-300'}`} data-ops-review={selZone.limitReviewed ? 'done' : 'todo'}>
+              {selZone.limitReviewed ? <span><i className="fa-solid fa-circle-check mr-1"></i>Filled in from the {selZone.autoLimit.energy} J energy table; reviewed by {selZone.limitReviewed.by || 'the pilot'}.</span>
+                : <><b>Pilot to review:</b> {selZone.h} m · {fmtSpeed(selZone.v)} was filled in from the {selZone.autoLimit.energy} J energy table for {selZone.autoLimit.drone || 'this drone'}{selZone.autoLimit.from === 'planned height' ? ' at the job\'s planned height' : ''}. Check it suits this zone, or pick another limit.
+                  {!readOnly && <button type="button" data-ops-reviewed="1" onClick={() => setZone(selZone.id, { limitReviewed: { by: reviewer || 'Pilot', at: new Date().toISOString() } })} className="mt-1.5 block px-2.5 py-1 rounded-md bg-amber-600 text-white font-semibold">I've reviewed it</button>}</>}
+            </div>}
+            {KINDS[selZone.kind].limits && <LimitPicker zone={selZone} setZone={(ch) => setZoneLimits(selZone, ch)} drones={drones} fleet={fleet} keFor={keFor} onSaveDroneLimits={onSaveDroneLimits} readOnly={readOnly} />}
             {selZone.kind === 'clear' && <div className="grid grid-cols-2 gap-2">
               <div><label className={lbl} htmlFor="oz-ch">Max height (m)</label><input id="oz-ch" type="number" min="0" className={inp} disabled={readOnly} value={selZone.h == null ? '' : selZone.h} onChange={(e) => setZone(selZone.id, { h: e.target.value === '' ? null : Number(e.target.value) })} placeholder="120" /></div>
               <SpeedField id="oz-cv" label="Max speed" ms={selZone.v} disabled={readOnly} placeholder="any" onMs={(v) => setZone(selZone.id, { v })} /></div>}
@@ -766,10 +825,41 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
           </div>}
 
           {!sel && <div className="space-y-3">
+            <div data-ops-views="1">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Views in the plan &amp; PDF</div>
+              {viewMsg && <p className="text-xs text-emerald-700 mb-1" data-ops-viewmsg="1">{viewMsg}</p>}
+              {!(doc.views || []).length && <p className="text-xs text-slate-500">Frame the map (2D) or turn the 3D view to the angle you want, then press <b>Add this view to the plan</b>.</p>}
+              <div className="space-y-2">{(doc.views || []).map((v, i) => (
+                <div key={v.id} data-ops-viewrow={v.kind} className="border border-slate-200 rounded-lg p-2 flex gap-2 items-start">
+                  {v.kind === '3d' && viewImages[v.id] ? <img src={viewImages[v.id]} alt="" className="w-16 h-12 object-cover rounded border border-slate-200 shrink-0" /> : <span className="w-16 h-12 rounded border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-400 shrink-0"><i className={`fa-solid ${v.kind === '3d' ? 'fa-cube' : 'fa-map'}`}></i></span>}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <input aria-label="View title" value={v.title} disabled={readOnly} onChange={(e) => setViews((vs) => vs.map((x) => x.id === v.id ? { ...x, title: e.target.value } : x))} className="w-full px-1.5 py-0.5 text-xs font-semibold border border-slate-200 rounded" />
+                    <div className="flex flex-wrap gap-x-2 text-[11px]">
+                      <span className="text-slate-500">{v.kind === '3d' ? '3D' : '2D'}</span>
+                      <button type="button" className="underline text-violet-700" onClick={() => showView(v)}>Show</button>
+                      {!readOnly && <button type="button" className="underline text-violet-700" onClick={() => retakeView(v)}>Retake</button>}
+                      {!readOnly && i > 0 && <button type="button" className="underline text-slate-600" onClick={() => setViews((vs) => { const n = [...vs]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n; })}>Up</button>}
+                      {!readOnly && <button type="button" data-ops-viewdel="1" className="underline text-red-600" onClick={() => setViews((vs) => vs.filter((x) => x.id !== v.id))}>Remove</button>}
+                    </div>
+                  </div>
+                </div>))}</div>
+            </div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Checks</div>
             {checks && checks.issues.length === 0 && <div className="text-sm bg-emerald-50 text-emerald-900 rounded-lg px-3 py-2" data-ops-checks="clear">{doc.paths.length ? 'All paths are inside their zone limits.' : 'Draw zones and a flight path to check them.'}</div>}
-            {checks && checks.issues.map((q, i) => <button key={i} type="button" data-ops-issue={q.lvl} onClick={() => { if (q.path) { setSel({ t: 'path', id: q.path }); setSelPt(q.leg); } else if (q.zone) setSel({ t: 'zone', id: q.zone }); }}
-              className={`w-full text-left text-xs rounded-lg px-3 py-2 ${q.lvl === 'stop' ? 'bg-red-50 text-red-900' : 'bg-amber-50 text-amber-900'}`}><b className="mr-1">{q.lvl === 'stop' ? 'Fix' : 'Check'}</b>{q.text}</button>)}
+            {checks && checks.issues.map((q, i) => (
+              <div key={q.key || i} data-ops-issue={q.ack ? 'ack' : q.lvl} className={`text-xs rounded-lg px-3 py-2 ${q.ack ? 'bg-slate-50 text-slate-600 border border-slate-200' : q.lvl === 'stop' ? 'bg-red-50 text-red-900' : 'bg-amber-50 text-amber-900'}`}>
+                <button type="button" className="w-full text-left" onClick={() => { if (q.path) { setSel({ t: 'path', id: q.path }); setSelPt(q.leg); } else if (q.zone) setSel({ t: 'zone', id: q.zone }); }}>
+                  <b className="mr-1">{q.ack ? 'Acknowledged' : q.lvl === 'stop' ? 'Fix' : 'Check'}</b>{q.text}</button>
+                {q.ack && <div className="mt-1 text-[11px]">“{q.ack.note || 'OK'}” · {q.ack.by || ''}{!readOnly && <button type="button" className="ml-2 underline" onClick={() => patch((d) => { const a = { ...(d.acks || {}) }; delete a[q.key]; return { ...d, acks: a }; })}>Undo</button>}</div>}
+                {!q.ack && !readOnly && q.key && (ackOpen && ackOpen.key === q.key
+                  ? <div className="mt-1.5 flex gap-1" data-ops-ackform="1"><input autoFocus aria-label="Why it's OK" value={ackOpen.note} onChange={(e) => setAckOpen({ ...ackOpen, note: e.target.value })} placeholder={q.lvl === 'stop' ? 'Why it\'s OK (required)' : 'Note (optional)'} className="flex-1 min-w-0 px-2 py-1 border border-slate-300 rounded text-xs text-slate-800 bg-white" />
+                      <button type="button" data-ops-ackok="1" disabled={q.lvl === 'stop' && ackOpen.note.trim().length < 5} onClick={() => { patch((d) => ({ ...d, acks: { ...(d.acks || {}), [q.key]: { note: ackOpen.note.trim(), by: reviewer || 'Pilot', at: new Date().toISOString() } } })); setAckOpen(null); }} className="px-2 py-1 rounded bg-slate-800 text-white font-semibold disabled:opacity-40">OK</button>
+                      <button type="button" onClick={() => setAckOpen(null)} className="underline">Cancel</button></div>
+                  : <div className="mt-1 flex gap-3">{q.review && <button type="button" data-ops-reviewed-check="1" className="underline font-semibold" onClick={() => setZone(q.zone, { limitReviewed: { by: reviewer || 'Pilot', at: new Date().toISOString() } })}>I've reviewed it</button>}
+                      {!q.review && <button type="button" data-ops-ack="1" className="underline" onClick={() => setAckOpen({ key: q.key, note: '' })}>Acknowledge</button>}</div>)}
+              </div>))}
+            {checks && checks.issues.length > 0 && <div className="text-[11px] text-slate-600" data-ops-pdfchecks="1"><span className="font-semibold">In the PDF:</span>
+              {[['all', 'All checks'], ['open', 'Only open ones'], ['none', 'Leave out']].map(([k, l]) => <label key={k} className="ml-2 inline-flex items-center gap-1"><input type="radio" name="ops-pdfchecks" disabled={readOnly} checked={(settings.pdfChecks || 'all') === k} onChange={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), pdfChecks: k } }))} />{l}</label>)}</div>}
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 pt-2">On this map</div>
             <div className="space-y-1 text-sm">
               {doc.zones.map((z) => <button key={z.id} type="button" onClick={() => setSel({ t: 'zone', id: z.id })} className="w-full flex items-center gap-2 text-left hover:bg-slate-50 rounded px-1 py-0.5"><span className="w-3 h-3 rounded-sm" style={{ background: kindStyle(z.kind, settings).color }}></span><span className="flex-1 truncate">{z.name}</span><span className="text-[10px] text-slate-500">{z.h != null && z.h !== '' ? z.h + ' m' : ''}</span></button>)}
