@@ -50,6 +50,7 @@ export function checkJobCrew(plan, cur) {
   jobRequirements(plan).forEach((c) => {
     const p = findPerson(people, c.name);
     c.needs.forEach((n) => {
+      if (n.comp === 'induction' && p && p.role === 'crp') return; // the CRP runs the inductions; they don't induct themselves
       const comps = n.anyOf || [n.comp], label = n.label || compLabel(n.comp);
       const id = 'crew:' + norm(c.name) + ':' + (n.comp || 'type');
       if (!p) { out.push({ id, name: c.name, role: c.role, label, status: 'unknown', detail: 'Add them in Crew & users (with a login) so their certifications can be checked.' }); return; }

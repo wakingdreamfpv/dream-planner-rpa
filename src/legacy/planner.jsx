@@ -181,7 +181,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.13';
+        const APP_VERSION = '7.14';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1479,6 +1479,8 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
+          // v7.14: the CRP's crew-record bypasses are admin, not part of what the RPIC signs (adding one doesn't void a signature)
+          if (ap.reqOverrides && Object.keys(ap.reqOverrides).some(k => k.startsWith('crew:'))) { const o = {}; Object.keys(ap.reqOverrides).forEach(k => { if (!k.startsWith('crew:')) o[k] = ap.reqOverrides[k]; }); if (Object.keys(o).length) ap.reqOverrides = o; else delete ap.reqOverrides; }
           const out = { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
           // v7.9: the advanced ops map is signed too, but only when there is one (older plans keep their fingerprint)
           const om = opsSignable(opsMap); if (om) out.opsMap = om;
@@ -10247,11 +10249,11 @@ View in the Database & Settings tab.`);
               })()}
               {reqBypass && (() => {
                 const b = reqBypass, items = reqMissing(b.tab), ok = b.ids.size > 0 && b.declared && String(b.reason || '').trim().length >= 10;
-                const who = (signedIn && auth.name) || rpicName || 'the RPIC';
+                const who = b.crp ? ((signedIn && auth.name) || approval.crpName || 'the CRP') : ((signedIn && auth.name) || rpicName || 'the RPIC');
                 return (
                   <div className="fixed inset-0 z-[5000] bg-slate-900/60 flex items-center justify-center p-3 print:hidden" data-testid="bypass-modal" onClick={e => { if (e.target === e.currentTarget) setReqBypass(null); }}>
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92dvh] overflow-y-auto">
-                      <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2"><i className="fa-solid fa-user-shield text-amber-600"></i><h3 className="font-bold text-slate-800 flex-1">RPIC declaration: bypass mandatory items</h3>
+                      <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2"><i className="fa-solid fa-user-shield text-amber-600"></i><h3 className="font-bold text-slate-800 flex-1">{b.crp ? 'CRP declaration: bypass crew records' : 'RPIC declaration: bypass mandatory items'}</h3>
                         <button type="button" onClick={() => setReqBypass(null)} className="text-slate-400 hover:text-slate-700 text-xl px-1" aria-label="Close"><i className="fa-solid fa-xmark"></i></button></div>
                       <div className="p-5 space-y-3 text-sm">
                         <div><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Items to bypass</div>
@@ -10259,10 +10261,10 @@ View in the Database & Settings tab.`);
                             <label key={x.id} className="flex items-start gap-2 cursor-pointer"><input type="checkbox" data-bypass-item={x.id} className="mt-0.5" checked={b.ids.has(x.id)} onChange={e => { const ids = new Set(b.ids); e.target.checked ? ids.add(x.id) : ids.delete(x.id); setReqBypass({ ...b, ids }); }} />
                               <span><span className="font-medium text-slate-800">{x.label}</span><span className="block text-[11px] text-slate-500">{x.why.replace(/__MOS4__/g, 'MOS 10.04').replace(/__MOS5__/g, 'MOS 10.05')}</span></span></label>))}</div></div>
                         <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Why it isn't needed, or how it's covered instead</label>
-                          <textarea data-bypass-reason="1" value={b.reason} onChange={e => setReqBypass({ ...b, reason: e.target.value })} rows={3} placeholder="e.g. Indoor operation in a closed venue: no launch coordinates (GPS unavailable); launch point marked on the site plan" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                          <textarea data-bypass-reason="1" value={b.reason} onChange={e => setReqBypass({ ...b, reason: e.target.value })} rows={3} placeholder={b.crp ? 'e.g. All crew inducted and checked on paper / Google Forms; EVLOS observers trained 12 Oct; records to be entered in the registers' : 'e.g. Indoor operation in a closed venue: no launch coordinates (GPS unavailable); launch point marked on the site plan'} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
                           {String(b.reason || '').trim().length < 10 && <div className="text-[11px] text-slate-400">At least a sentence (10+ characters).</div>}</div>
                         <label className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer"><input type="checkbox" data-bypass-declare="1" className="mt-0.5" checked={b.declared} onChange={e => setReqBypass({ ...b, declared: e.target.checked })} />
-                          <span className="text-amber-900 text-[13px]">I, <b>{who}</b>, as Remote Pilot in Command, declare that the item{b.ids.size === 1 ? '' : 's'} above {b.ids.size === 1 ? 'is' : 'are'} not required for this operation, or {b.ids.size === 1 ? 'is' : 'are'} managed as described, and that the operation remains safe and compliant. I understand this declaration is recorded with my name and the time, and printed in the flight record.</span></label>
+                          <span className="text-amber-900 text-[13px]">{b.crp ? <>I, <b>{who}</b>, as Chief Remote Pilot, declare that the crew above hold the inductions, checks and certifications this job needs. The records are kept outside the planner and haven't been entered yet. This is kept in the plan's record.</> : <>I, <b>{who}</b>, as Remote Pilot in Command, declare that the item{b.ids.size === 1 ? '' : 's'} above {b.ids.size === 1 ? 'is' : 'are'} not required for this operation, or {b.ids.size === 1 ? 'is' : 'are'} managed as described, and that the operation remains safe and compliant. I understand this declaration is recorded with my name and the time, and printed in the flight record.</>}</span></label>
                         <div className="flex justify-end gap-2 pt-1">
                           <button type="button" onClick={() => setReqBypass(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 font-semibold">Cancel</button>
                           <button type="button" data-bypass-save="1" disabled={!ok} onClick={saveBypass} className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-semibold">Record declaration</button>
@@ -13764,6 +13766,9 @@ View in the Database & Settings tab.`);
                                             : <span key={m} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 border border-amber-200 text-amber-900">{m}</span>; })}</span></span> : 'Everything is recorded and both signatures are in. Switch on to approve the flight and lock the plan.'}
                                   </div>
                                 </div>
+                                {!on && (!signedIn || auth.role === 'crp') && (() => { const crewMiss = reqItems.filter(x => x.crew && !x.ok); return crewMiss.length ? (
+                                  <div className="basis-full -mt-1" data-crp-bypass-row="1"><button type="button" data-allow-locked="1" data-crp-bypass="1" onClick={() => setReqBypass({ tab: 'approval', ids: new Set(crewMiss.map(x => x.id)), reason: '', declared: false, crp: true })}
+                                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100"><i className="fa-solid fa-user-shield mr-1"></i>CRP: bypass crew records ({crewMiss.length}), done outside the planner</button></div>) : null; })()}
                                 {approveBlocked && <div data-approve-locked="1" className="basis-full text-xs text-slate-500"><i className="fa-solid fa-lock mr-1"></i>{approveBlocked}</div>}
                                 <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can || !!approveBlocked}
                                   className={`relative w-24 h-12 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-emerald-600' : can ? 'bg-slate-300 hover:bg-slate-400' : 'bg-slate-200 cursor-not-allowed'}`}>
