@@ -4,7 +4,8 @@
 import Dashboard, { Access as CrewAccess, Shared as CrewShared } from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
-import { ObserverPanel, CrpObserverReview, CrewObserverBar } from '../observer/Observer.jsx';
+import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister } from '../observer/Observer.jsx';
+import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
@@ -174,7 +175,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.7';
+        const APP_VERSION = '7.8';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -7916,6 +7917,15 @@ View in the Database & Settings tab.`);
               }
           };
 
+          // v7.8: the VO for EVLOS / BVLOS / night comes from Section 1's "Visual Observer / Support" unless it's been changed
+          const prevSupport = useRef(overview.supportPersonnel || '');
+          useEffect(() => {
+            const sp = String(overview.supportPersonnel || '').trim(), old = String(prevSupport.current || '').trim(); prevSupport.current = sp;
+            const ops = jsa.operationTypes || [];
+            const fields = [['EVLOS', 'evlosObserver'], ['BVLOS', 'bvlosObserver'], ['NVLOS', 'nvlosObserver']].filter(([o]) => ops.includes(o)).map(([, k]) => k);
+            if (!sp || !fields.length || planLoadingRef.current || approval.rpSigned || approval.crpSigned) return; // never touch a job being opened or already signed
+            setJsa(prev => { let ch = false; const n = { ...prev }; fields.forEach(k => { const v = String(prev[k] || '').trim(); if (!v || v === old) { if (v !== sp) { n[k] = sp; ch = true; } } }); return ch ? n : prev; });
+          }, [overview.supportPersonnel, (jsa.operationTypes || []).join(',')]); // eslint-disable-line
           const toggleOperationType = (op) => {
             setJsa(prev => {
                 const current = prev.operationTypes || [];
@@ -9158,7 +9168,7 @@ View in the Database & Settings tab.`);
           const setAllFolds = (v) => setDbOpen(() => { const next = { '*': v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           const setFold = (id, v) => setDbOpen(prev => { const next = { ...prev, [id]: v }; try { localStorage.setItem('wd_db_open', JSON.stringify(next)); } catch (e) {} return next; });
           // v7.5.4: a pilot or observer sees their own jobs, drafts and records, their account and hours; the company's settings stay with the CRP
-          const CREW_DB_OK = ['dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
+          const CREW_DB_OK = ['dbsec-ops-manual', 'dbsec-drafts', 'dbsec-approved', 'dbsec-completed', 'dbsec-import', 'dbsec-recovery', 'dbsec-company', 'dbsec-crew-users', 'dbsec-logged', 'dbsec-crew-areas'];
           const dbFold = (id, title, icon, preview, body) => {
             if (isCrewRole && !CREW_DB_OK.includes(id)) return null;
             if (isCrewRole && id === 'dbsec-company') {
@@ -9396,6 +9406,8 @@ View in the Database & Settings tab.`);
           const [obsWaiting, setObsWaiting] = useState(() => window.wdObsWaiting || []);
           useEffect(() => { const h = () => setObsWaiting(window.wdObsWaiting || []); window.addEventListener('wd-obs-waiting', h); return () => window.removeEventListener('wd-obs-waiting', h); }, []);
           const [obsReview, setObsReview] = useState(null);
+          const [manualOpen, setManualOpen] = useState(false);
+          useEffect(() => { const h = () => setManualOpen(true); window.addEventListener('wd-open-manual', h); return () => window.removeEventListener('wd-open-manual', h); }, []);
           const importCloudFlights = (grp) => {
             const uid = grp.job && grp.job.plan_uid; const local = cloudJobsList().find(j => j.uid === uid);
             const inc = { rpaLogs: {} };
@@ -9967,6 +9979,7 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
                 const crew = jobCrewLogins(), picked = crew.filter(c => logInvite.picks[c.email]);
@@ -11771,7 +11784,7 @@ View in the Database & Settings tab.`);
 
                               {jsa.operationTypes?.includes('EVLOS') && (
                                 <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg animate-in fade-in slide-in-from-top-2">
-                                  <label className="block text-sm font-medium text-blue-900 mb-2">Visual Observer (VO)</label>
+                                  <label className="block text-sm font-medium text-blue-900 mb-2">Visual Observer (VO){overview.supportPersonnel && String(jsa.evlosObserver || '').trim() === String(overview.supportPersonnel).trim() ? <span className="ml-2 text-[11px] font-normal text-blue-700" data-vo-from-prelim="1">from Section 1</span> : null}</label>
                                   <div className="flex gap-2">
                                     <ComboBox name="evlosObserver" value={jsa.evlosObserver} onChange={handleJsaChange} onBlur={e => handleAutoSave('observers', e.target.value)} onAdd={makeAddHandler('observers')} options={obsOpts} placeholder="Select or type VO name..." className="px-3 py-2 border border-blue-200 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm bg-white" />
                                   </div>
@@ -14266,6 +14279,11 @@ View in the Database & Settings tab.`);
                           </div>
                         </div>
                         </>))}
+                        {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-ops-manual', 'Operations Manual', 'fa-book', <span>{auth.role === 'crp' ? 'Protected copy for crew and observers · read report' : 'Read-only copy from your CRP'}</span>, (auth.role === 'crp'
+                          ? <ManualAdmin />
+                          : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
+                              <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
                         {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
                             {/* Official authorisations (v5.30) */}
                             {(() => {

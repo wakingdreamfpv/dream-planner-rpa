@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import qrcode from 'qrcode-generator';
 import SignaturePad, { SignatureView } from '../cloud/SignaturePad.jsx';
 import { getSupabase } from '../cloud/client.js';
+import { ManualViewer } from '../cloud/Manual.jsx';
 
 export const OBS_TLDR = [
   'Stand beside the pilot and watch the drone. Nothing else while it flies: no phone, no filming, no radio.',
@@ -41,6 +42,37 @@ function Tick({ checked, onChange, children, testid }) {
   );
 }
 
+// The manual version / extract for signed-in users (link viewers get them with the form)
+export function useManualInfo(enabled = true) {
+  const [m, setM] = useState(null);
+  useEffect(() => { if (!enabled) return; const sb = getSupabase(); try { sb.from('app_settings').select('key,value').in('key', ['manual_file', 'manual_version', 'observer_extract']).then(({ data }) => {
+    const o = {}; (data || []).forEach(r => { o[r.key] = r.value; }); setM({ available: !!(o.manual_file && o.manual_file.path), version: o.manual_version || '', extract: o.observer_extract || '' }); }, () => setM({ available: false })); } catch (e) { setM({ available: false }); } }, [enabled]);
+  return m;
+}
+
+// The job's map for the job pack: operating area, launch / landing points, signage and any geo-referenced zones
+export function JobMap({ s }) {
+  const el = React.useRef(null);
+  useEffect(() => {
+    const L = window.L, d = el.current; if (!L || !d || !s) return;
+    const md = s.mapData || {}, pts = [], ll = (p) => (p && p.lat != null && p.lng != null ? [+p.lat, +p.lng] : null);
+    const parse = (t) => { const m = String(t || '').match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/); return m ? [+m[1], +m[2]] : null; };
+    const m = L.map(d, { zoomControl: true, attributionControl: false, scrollWheelZoom: false });
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 21, maxNativeZoom: 19 }).addTo(m);
+    const area = (md.areaPolygon || []).map(ll).filter(Boolean); if (area.length > 2) { L.polygon(area, { color: '#2563eb', weight: 2, fillOpacity: 0.12 }).bindTooltip('Operating area').addTo(m); pts.push(...area); }
+    const zone = (z, color, label) => { const ps = (z.points || []).map(ll).filter(Boolean); if (ps.length > 2) { L.polygon(ps, { color, weight: 2, fillOpacity: 0.2 }).bindTooltip(label).addTo(m); pts.push(...ps); } };
+    (md.exclusionZones || []).forEach(z => zone(z, '#dc2626', 'Exclusion zone')); (md.crowdZones || []).forEach(z => zone(z, '#16a34a', 'People / crowd'));
+    const dot = (p, color, label) => { const q = ll(p); if (!q) return; L.circleMarker(q, { radius: 7, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).bindTooltip(label).addTo(m); pts.push(q); };
+    (md.launches || []).forEach((p, i) => dot(p, '#16a34a', p.label || 'Launch ' + (i + 1))); (md.recoveries || []).forEach((p, i) => dot(p, '#dc2626', p.label || 'Landing ' + (i + 1)));
+    (md.signage || []).forEach(p => dot(p, '#f59e0b', p.label || 'Sign'));
+    const ov = s.overview || {}; [...(ov.launchSites || []).map(x => [parse(x.coords), x.name || 'Launch']), ...(ov.recoverySites || []).map(x => [parse(x.coords), x.name || 'Landing'])].forEach(([q, n]) => { if (q && !pts.some(p => Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6)) { L.circleMarker(q, { radius: 6, color: '#fff', weight: 2, fillColor: '#7c3aed', fillOpacity: 1 }).bindTooltip(n).addTo(m); pts.push(q); } });
+    if (pts.length > 1) m.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 19 }); else if (pts.length === 1) m.setView(pts[0], 17); else { m.remove(); d.dataset.empty = '1'; return; }
+    setTimeout(() => m.invalidateSize(), 150);
+    return () => { try { m.remove(); } catch (e) {} };
+  }, [s]);
+  return <div ref={el} data-obs-map="1" className="w-full h-64 rounded-xl overflow-hidden bg-slate-200" />;
+}
+
 // Plan summary for an observer (the "simple viewer"): what, where, when, who, the hazards and who to call
 export function JobSummary({ s }) {
   if (!s) return null;
@@ -52,9 +84,11 @@ export function JobSummary({ s }) {
   return (
     <div className="space-y-3" data-obs-summary="1">
       <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm">{rows.map(([k, v]) => <React.Fragment key={k}><dt className="text-slate-500">{k}</dt><dd className="text-slate-800 font-medium">{v}</dd></React.Fragment>)}</dl>
+      {s.overview && s.overview.taskOverview ? <p className="text-sm text-slate-700 whitespace-pre-line" data-obs-task="1">{s.overview.taskOverview}</p> : null}
+      {(s.mapData || (s.overview && (s.overview.launchSites || []).length)) && typeof window !== 'undefined' && window.L ? <JobMap s={s} /> : null}
       {risks.length > 0 && <details className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2" open={risks.length <= 6}>
         <summary className="text-sm font-semibold text-amber-900 cursor-pointer">Hazards for this job ({risks.length})</summary>
-        <ul className="mt-2 space-y-1.5 text-sm" data-obs-hazards="1">{risks.map((r, i) => <li key={i}><b className="text-slate-800">{r.hazard}</b>{r.controls ? <span className="block text-xs text-slate-600 whitespace-pre-line">{r.controls}</span> : null}</li>)}</ul>
+        <ul className="mt-2 space-y-1.5 text-sm" data-obs-hazards="1">{risks.map((r, i) => <li key={i}><b className="text-slate-800">{r.hazard}</b>{r.risk ? <span className="block text-xs text-slate-600">{r.risk}</span> : null}{r.controls ? <span className="block text-xs text-slate-600 whitespace-pre-line">{r.controls}</span> : null}</li>)}</ul>
       </details>}
       {ec.length > 0 && <div className="text-sm"><div className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Emergency contacts</div>
         {ec.map((r, i) => <div key={i} className="flex gap-2"><span className="text-slate-500 w-40 shrink-0 truncate">{r.role}</span><span className="text-slate-800">{[r.name, r.phone].filter(Boolean).join(' · ')}</span></div>)}</div>}
@@ -63,10 +97,12 @@ export function JobSummary({ s }) {
 }
 
 // The observer's part. mode: 'link' (own phone, no login), 'device' (CRP's device), 'login' (signed-in observer)
-export function ObserverPart({ mode, summary, defaults = {}, onSubmit, busy, error, onOpenPlan }) {
-  const [f, setF] = useState(() => ({ name: defaults.name || '', phone: defaults.phone || '', email: defaults.email || '', declaration: false, reviewedPlan: false, sig: null }));
+export function ObserverPart({ mode, summary, defaults = {}, onSubmit, busy, error, onOpenPlan, manual, token, training }) {
+  const [f, setF] = useState(() => ({ name: defaults.name || '', phone: defaults.phone || '', email: defaults.email || '', declaration: false, reviewedPlan: false, manualRead: false, sig: null }));
+  const [reading, setReading] = useState(false);
+  const needManual = !!(manual && (manual.available || manual.extract));
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
-  const missing = [!f.name.trim() && 'your name', mode !== 'login' && !f.phone.trim() && 'your phone', mode === 'login' && !f.reviewedPlan && 'confirm you reviewed the plan', !f.declaration && 'the declaration', !f.sig && 'your signature'].filter(Boolean);
+  const missing = [!f.name.trim() && 'your name', mode !== 'login' && !f.phone.trim() && 'your phone', mode === 'login' && !f.reviewedPlan && 'confirm you reviewed the plan', needManual && !f.manualRead && 'confirm you read the manual extract', !f.declaration && 'the declaration', !f.sig && 'your signature'].filter(Boolean);
   return (
     <div className="space-y-4" data-obs-part={mode}>
       <div className="rounded-xl bg-violet-50 border border-violet-200 p-4">
@@ -80,6 +116,13 @@ export function ObserverPart({ mode, summary, defaults = {}, onSubmit, busy, err
         {mode !== 'login' && <input className={input} placeholder="Mobile" inputMode="tel" value={f.phone} onChange={e => set('phone', e.target.value)} data-obs-f="phone" autoComplete="tel" />}
         {mode !== 'login' && <input className={input} placeholder="Email (optional)" type="email" value={f.email} onChange={e => set('email', e.target.value)} data-obs-f="email" autoComplete="email" />}
       </div>
+      {needManual && <div className="rounded-xl border border-slate-200 p-4 space-y-2" data-obs-manual="1">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Operations Manual{manual.version ? ' · version ' + manual.version : ''}</div>
+        {manual.extract ? <div className="text-sm text-slate-700 whitespace-pre-line bg-slate-50 rounded-lg p-3 max-h-72 overflow-y-auto" data-obs-extract="1">{manual.extract}</div> : null}
+        {manual.available && <button type="button" data-obs-open-manual="1" onClick={() => setReading(true)} className="px-3 py-2 rounded-lg border border-violet-300 text-violet-800 text-sm font-semibold hover:bg-violet-50"><i className="fa-solid fa-book mr-1"></i>Read the full manual (read-only)</button>}
+        <Tick checked={f.manualRead} onChange={v => set('manualRead', v)} testid="obs-manual-read">I have read the observer sections of the Operations Manual{manual.version ? ' (version ' + manual.version + ')' : ''} and understand them.</Tick>
+        {reading && <ManualViewer token={token} viewer={f.name || 'Observer'} onClose={() => setReading(false)} />}
+      </div>}
       {mode === 'login' && <Tick checked={f.reviewedPlan} onChange={v => set('reviewedPlan', v)} testid="obs-reviewed">I have reviewed this job's flight plan and risk assessment in the planner{onOpenPlan && <> (<button type="button" onClick={e => { e.preventDefault(); onOpenPlan(); }} className="underline text-violet-700">open the plan</button>)</>}.</Tick>}
       <div>
         <Tick checked={f.declaration} onChange={v => set('declaration', v)} testid="obs-declaration">I have been briefed and trained as an EVLOS Class 1 observer for this operation, I understand my duties and the standard calls, and I am fit to do this role.</Tick>
@@ -89,7 +132,7 @@ export function ObserverPart({ mode, summary, defaults = {}, onSubmit, busy, err
       <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Your signature</div>
         <SignaturePad name={f.name} value={f.sig} onChange={v => set('sig', v)} testid="obs-sig" /></div>
       {error && <div className="text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700" data-obs-error="1">{error}</div>}
-      <button type="button" data-obs-submit="1" disabled={!!missing.length || busy} onClick={() => onSubmit({ name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), answers: { declaration: true, reviewedPlan: !!f.reviewedPlan, items: OBS_DECLARATION, tldr: true, date: new Date().toISOString().slice(0, 10) }, signature: { ...f.sig, name: f.name.trim() } })}
+      <button type="button" data-obs-submit="1" disabled={!!missing.length || busy} onClick={() => onSubmit({ name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), answers: { declaration: true, reviewedPlan: !!f.reviewedPlan, items: OBS_DECLARATION, tldr: true, date: new Date().toISOString().slice(0, 10), manualRead: !!f.manualRead, manualVersion: (manual && manual.version) || '', training: !!training }, signature: { ...f.sig, name: f.name.trim() } })}
         className={btn + ' w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-base py-3'}>{busy ? 'Sending…' : mode === 'device' ? 'Done: hand back to the CRP' : 'Sign and send to the CRP'}</button>
       {missing.length > 0 && <p className="text-xs text-slate-500 text-center">Still needed: {missing.join(', ')}.</p>}
     </div>
@@ -146,15 +189,45 @@ export async function syncObserverQueue(sb) {
   for (const it of q) {
     try {
       let jobId = it.jobId;
-      if (!jobId) { const { data } = await sb.from('jobs').select('id').eq('plan_uid', it.jobUid).maybeSingle(); jobId = data && data.id; }
-      if (!jobId) { left.push({ ...it, note: 'Waiting for the job to be saved to the cloud' }); continue; }
-      const { error } = await sb.rpc('record_observer_signoff', { p_job_id: jobId, p_person: it.person, p_answers: it.answers, p_person_sig: it.personSig, p_signed_at: it.signedAt, p_result: it.result, p_crp: it.crp, p_crp_sig: it.crpSig });
+      if (!jobId && it.jobUid) { const { data } = await sb.from('jobs').select('id').eq('plan_uid', it.jobUid).maybeSingle(); jobId = data && data.id;
+        if (!jobId) { left.push({ ...it, note: 'Waiting for the job to be saved to the cloud' }); continue; } }
+      const { error } = await sb.rpc('record_observer_signoff', { p_job_id: jobId || null, p_person: it.person, p_answers: it.answers, p_person_sig: it.personSig, p_signed_at: it.signedAt, p_result: it.result, p_crp: it.crp, p_crp_sig: it.crpSig });
       if (error) throw error;
       synced++;
     } catch (e) { left.push({ ...it, note: String((e && e.message) || e) }); }
   }
   qSet(left); return { synced, left: left.length };
 }
+
+// The link / QR sheet (a job link, or a training link with no job), with copy, text and email
+export function LinkSheet({ qr, setQr, title, training }) {
+  const sb = getSupabase();
+  const [em, setEm] = useState(''), [sent, setSent] = useState('');
+  const email = async () => {
+    setSent('Sending…');
+    const { data, error } = await sb.functions.invoke('notify', { body: { event: 'observer_link', email: em.trim().toLowerCase(), link: qr.link, title: title || '', training: !!training } });
+    setSent(error || (data && data.error) ? 'Couldn\'t send: ' + ((data && data.error) || error.message) : (data && data.sent ? 'Sent to ' + em.trim() : (data && data.message) || 'Not sent'));
+  };
+  return (
+    <Sheet title={training ? 'Observer training link' : 'Job link for crew without a login'} sub={title} onClose={() => setQr(null)} testid="obs-qr-sheet">
+      <div className="space-y-3 text-sm text-center">
+        <p className="text-slate-600">{training ? 'The observer opens this on their phone, reads the observer extract and the manual, and signs. No login needed.'
+          : 'They scan or tap this on their phone: the job pack (plan, map, hazards, emergency contacts), the manual, and their EVLOS observer sign-off. No login needed.'} It works for 7 days and up to 5 people.</p>
+        {qr.svg ? <div className="mx-auto w-56 h-56" data-obs-qr-svg="1" dangerouslySetInnerHTML={{ __html: qr.svg }} /> : null}
+        <div className="flex gap-2 justify-center flex-wrap">
+          <button type="button" className={btn + ' border border-slate-300'} data-obs-copy="1" onClick={() => { try { navigator.clipboard.writeText(qr.link); } catch (e) {} setQr({ ...qr, copied: true }); }}>{qr.copied ? 'Copied' : 'Copy link'}</button>
+          <a className={btn + ' border border-slate-300'} href={'sms:?&body=' + encodeURIComponent((training ? 'EVLOS observer training: ' : 'Your job pack and EVLOS observer sign-off for ' + title + ': ') + qr.link)}>Text it</a>
+        </div>
+        <div className="flex gap-2 max-w-sm mx-auto"><input type="email" value={em} onChange={e => setEm(e.target.value)} placeholder="or email it to…" className={input} data-obs-email="1" />
+          <button type="button" disabled={!/\S+@\S+\.\S+/.test(em)} onClick={email} className={btn + ' bg-violet-600 text-white disabled:opacity-40'} data-obs-email-send="1">Email</button></div>
+        {sent && <p className="text-xs text-violet-800" data-obs-email-msg="1">{sent}</p>}
+        <p className="text-xs text-slate-500">Their sign-off appears in Awaiting action on Home for you to countersign.</p>
+      </div>
+    </Sheet>
+  );
+}
+export const makeLinkQr = (token) => { const link = location.origin + location.pathname + '#observer=' + token; let svg = '';
+  try { const q = qrcode(0, 'M'); q.addData(link, 'Byte'); q.make(); svg = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); } catch (e) {} return { link, svg, copied: false }; };
 
 // ── The CRP's panel on a job ─────────────────────────────────────────────────────────────────────────
 export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refreshKey, onChanged }) {
@@ -170,14 +243,13 @@ export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refre
     window.addEventListener('wd-obs-queue', h); window.addEventListener('online', on); on();
     return () => { window.removeEventListener('wd-obs-queue', h); window.removeEventListener('online', on); }; }, [jobId]); // eslint-disable-line
   const mine = queue.filter(q => q.jobUid === jobUid);
+  const manual = useManualInfo();
   const makeQr = async () => {
     setMsg('');
     if (!jobId) { setMsg('Save the job first so it is in the cloud, then make the link.'); return; }
     const { data, error } = await sb.rpc('create_observer_token', { p_job_id: jobId, p_days: 7 });
     if (error || !data) { setMsg('Couldn\'t make the link: ' + ((error && error.message) || 'unknown error')); return; }
-    const link = location.origin + location.pathname + '#observer=' + data;
-    let svg = ''; try { const q = qrcode(0, 'M'); q.addData(link, 'Byte'); q.make(); svg = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); } catch (e) {}
-    setQr({ link, svg, copied: false });
+    setQr(makeLinkQr(data));
   };
   const saveDevice = (obs) => (crp) => {
     const it = { id: 'o' + Date.now(), jobUid, jobId: jobId || null, title: jobTitle, person: { name: obs.name, phone: obs.phone, email: obs.email }, answers: obs.answers, personSig: obs.signature,
@@ -192,10 +264,10 @@ export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refre
       <div className="px-4 py-3 bg-violet-50 border-b border-violet-200 flex items-center gap-2 flex-wrap">
         <i className="fa-solid fa-binoculars text-violet-600"></i><h4 className="font-semibold text-violet-900 text-sm flex-1">EVLOS observer sign-off</h4>
         <button type="button" data-obs-device="1" onClick={() => setDevice({ step: 1 })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-tablet-screen-button mr-1"></i>Sign off on this device</button>
-        <button type="button" data-obs-qr="1" onClick={makeQr} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-violet-300 text-violet-800 hover:bg-violet-100"><i className="fa-solid fa-qrcode mr-1"></i>QR for their phone</button>
+        <button type="button" data-obs-qr="1" onClick={makeQr} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-violet-300 text-violet-800 hover:bg-violet-100"><i className="fa-solid fa-qrcode mr-1"></i>Job link / QR (no login)</button>
       </div>
       <div className="p-4 space-y-2 text-sm">
-        <p className="text-xs text-slate-500">Observers with a login sign from the job in their planner, after reviewing the full plan. Observers without one: scan the QR on their own phone, or hand them this device (works offline).</p>
+        <p className="text-xs text-slate-500">Crew with a login open this job from My jobs (full plan and risk assessment) and sign there. Crew without one: send the job link (they get the job pack, the manual and the sign-off), or hand them this device (works offline).</p>
         {msg && <div className="text-xs rounded-lg px-3 py-2 bg-violet-50 text-violet-900" data-obs-msg="1">{msg}</div>}
         {mine.map(q => <div key={q.id} className="flex items-center gap-2 border border-dashed border-amber-300 rounded-lg px-3 py-2" data-obs-queued="1"><i className="fa-solid fa-cloud-arrow-up text-amber-600"></i><span className="flex-1"><b>{q.person.name}</b> · signed on this device {fmtDT(q.signedAt)}<span className="block text-[11px] text-amber-800">{q.note || 'Not uploaded yet'}</span></span></div>)}
         {list === null ? <p className="text-xs text-slate-400">Loading…</p> : list.length === 0 && !mine.length ? <p className="text-xs text-slate-400" data-obs-none="1">No observer sign-offs for this job yet.</p>
@@ -206,18 +278,9 @@ export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refre
               {r.status === 'awaiting_crp' && <button type="button" data-obs-countersign={r.id} onClick={() => setReview(r)} className="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-600 text-white">Countersign</button>}
             </div>; })}
       </div>
-      {qr && <Sheet title="Observer sign-off link" sub={jobTitle} onClose={() => setQr(null)} testid="obs-qr-sheet">
-        <div className="space-y-3 text-sm text-center">
-          <p className="text-slate-600">The observer scans this with their phone camera, reads the job and their duties, and signs. No login needed. The link works for 7 days and up to 5 observers on this job.</p>
-          {qr.svg ? <div className="mx-auto w-56 h-56" data-obs-qr-svg="1" dangerouslySetInnerHTML={{ __html: qr.svg }} /> : null}
-          <div className="flex gap-2 justify-center flex-wrap">
-            <button type="button" className={btn + ' border border-slate-300'} data-obs-copy="1" onClick={() => { try { navigator.clipboard.writeText(qr.link); } catch (e) {} setQr({ ...qr, copied: true }); }}>{qr.copied ? 'Copied' : 'Copy link'}</button>
-            <a className={btn + ' border border-slate-300'} href={'sms:?&body=' + encodeURIComponent('EVLOS observer sign-off for ' + jobTitle + ': ' + qr.link)}>Text it</a>
-          </div>
-          <p className="text-xs text-slate-500">Their sign-off appears here (and in Awaiting action on Home) for you to countersign.</p>
-        </div></Sheet>}
+      {qr && <LinkSheet qr={qr} setQr={setQr} title={jobTitle} />}
       {device && <Sheet title={device.step === 1 ? 'Hand this device to the observer' : 'CRP check and signature'} sub={jobTitle} onClose={() => { if (device.step === 1 || window.confirm('Discard this observer sign-off?')) setDevice(null); }} testid="obs-device-sheet">
-        {device.step === 1 ? <ObserverPart mode="device" summary={summary} onSubmit={(o) => setDevice({ step: 2, obs: { ...o, at: new Date().toISOString() } })} />
+        {device.step === 1 ? <ObserverPart mode="device" summary={summary} manual={manual} onSubmit={(o) => setDevice({ step: 2, obs: { ...o, at: new Date().toISOString() } })} />
           : <div className="space-y-3"><div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm" data-obs-device-summary="1"><b>{device.obs.name}</b> · {device.obs.phone} signed {fmtDT(device.obs.at)}<div className="mt-2"><SignatureView sig={device.obs.signature} at={device.obs.at} /></div></div>
             <CrpPart crpName={crpName} onSubmit={saveDevice(device.obs)} /></div>}
       </Sheet>}
@@ -257,6 +320,7 @@ export function CrpObserverReview({ rec, crpName, onClose }) {
 export function SelfObserverSheet({ jobId, jobTitle, summary, name, onOpenPlan, onClose }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false), [err, setErr] = useState(''), [done, setDone] = useState(false);
+  const manual = useManualInfo();
   const submit = async (o) => {
     setBusy(true); setErr('');
     const { error } = await sb.rpc('submit_observer_self', { p_job_id: jobId, p_answers: o.answers, p_signature: o.signature });
@@ -267,7 +331,7 @@ export function SelfObserverSheet({ jobId, jobTitle, summary, name, onOpenPlan, 
   return (
     <Sheet title="EVLOS observer sign-off" sub={jobTitle} onClose={onClose} testid="obs-self-sheet">
       {done ? <div className="text-center space-y-3 py-6" data-obs-self-done="1"><i className="fa-solid fa-circle-check text-emerald-500 text-4xl"></i><p className="font-semibold text-slate-800">Signed and sent to the CRP.</p><p className="text-sm text-slate-500">They'll check and countersign before the job.</p><button type="button" onClick={onClose} className={btn + ' bg-slate-800 text-white'}>Close</button></div>
-        : <ObserverPart mode="login" summary={summary} defaults={{ name }} onSubmit={submit} busy={busy} error={err} onOpenPlan={onOpenPlan ? () => { onClose(); onOpenPlan(); } : null} />}
+        : <ObserverPart mode="login" summary={summary} manual={manual} defaults={{ name }} onSubmit={submit} busy={busy} error={err} onOpenPlan={onOpenPlan ? () => { onClose(); onOpenPlan(); } : null} />}
     </Sheet>
   );
 }
@@ -299,7 +363,7 @@ export function ObserverLinkApp({ token }) {
     <div className="min-h-[100dvh] bg-slate-100" data-observer-app="1">
       <div className="text-white px-4 py-4" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
         <div className="text-xs uppercase tracking-widest opacity-75">{(d && d.company) || 'Dream Planner RPA'}</div>
-        <h1 className="text-xl font-bold mt-0.5">EVLOS observer sign-off</h1>
+        <h1 className="text-xl font-bold mt-0.5">{d && d.training ? 'EVLOS observer training sign-off' : 'EVLOS observer sign-off'}</h1>
         {d && d.job && <div className="text-sm opacity-85">{d.job.title}</div>}
       </div>
       <div className="max-w-xl mx-auto p-4">
@@ -308,7 +372,7 @@ export function ObserverLinkApp({ token }) {
           : d && d.error ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{d.error}</div>
           : !d ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{st.error}</div>
           : <div className="bg-white rounded-2xl p-4 sm:p-5">{st.offline && <div className="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-900 mb-3">No signal: showing the job saved on this phone. You can fill it in; it sends when you have reception.</div>}
-              <ObserverPart mode="link" summary={d} onSubmit={send} busy={busy} error={err} /></div>}
+              <ObserverPart mode="link" summary={d.training ? null : d} manual={{ ...(d.manual || {}), extract: d.extract || '' }} token={token} training={!!d.training} onSubmit={send} busy={busy} error={err} /></div>}
       </div>
     </div>
   );
@@ -329,6 +393,62 @@ export function CrewObserverBar({ jobId, jobTitle, summary, name, onOpenPlan }) 
         : st === 'awaiting_crp' ? <><b>Observer sign-off sent</b> {fmtDT(rec.person_signed_at)}. The CRP will countersign.</> : <><b>Observer sign-off certified</b> {fmtDT(rec.crp_signed_at)}.</>}</div>
       {(!st || st === 'not_yet_competent') && <button type="button" data-obs-self-open="1" onClick={() => setOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold"><i className="fa-solid fa-signature mr-1"></i>Sign as observer</button>}
       {open && <SelfObserverSheet jobId={jobId} jobTitle={jobTitle} summary={summary} name={name} onOpenPlan={onOpenPlan} onClose={() => { setOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+// ── EVLOS observer register (CRP) ───────────────────────────────────────────────────────────────────
+export function ObserverRegister({ crpName }) {
+  const sb = getSupabase();
+  const [rows, setRows] = useState(null), [err, setErr] = useState(''), [q, setQ] = useState(''), [qr, setQr] = useState(null), [device, setDevice] = useState(null), [review, setReview] = useState(null), [msg, setMsg] = useState('');
+  const manual = useManualInfo();
+  const load = async () => { try { const { data, error } = await sb.rpc('observer_register'); if (error) setErr(error.message); else { setErr(''); setRows(data || []); } } catch (e) { setErr(String(e.message || e)); } };
+  useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-cloud-refresh', h); return () => window.removeEventListener('wd-cloud-refresh', h); }, []); // eslint-disable-line
+  const today = Date.now();
+  const stOf = (r) => r.status === 'awaiting_crp' ? ['Waiting for you', 'bg-amber-100 text-amber-900', 'waiting'] : r.status === 'not_yet_competent' ? ['Not yet competent', 'bg-rose-100 text-rose-800', 'nyc']
+    : !r.next_due ? ['Certified', 'bg-emerald-100 text-emerald-800', 'current'] : Date.parse(r.next_due) < today ? ['Expired', 'bg-rose-100 text-rose-800', 'expired'] : Date.parse(r.next_due) - today < 60 * 864e5 ? ['Due soon', 'bg-amber-100 text-amber-900', 'soon'] : ['Current', 'bg-emerald-100 text-emerald-800', 'current'];
+  // newest record per person first
+  const list = (rows || []).filter(r => !q || (r.full_name + ' ' + (r.phone || '') + ' ' + (r.job_title || '')).toLowerCase().includes(q.toLowerCase()));
+  const trainLink = async () => { setMsg(''); const { data, error } = await sb.rpc('create_observer_token', { p_job_id: null, p_days: 7 }); if (error || !data) { setMsg('Couldn\'t make the link: ' + ((error && error.message) || '')); return; } setQr(makeLinkQr(data)); };
+  const csv = () => {
+    const head = ['Name', 'Phone', 'Email', 'Status', 'Certified', 'Next due', 'Assessor', 'Callsign', 'Manual version', 'Job', 'Signed via'];
+    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const body = list.map(r => [r.full_name, r.phone, r.email, stOf(r)[0], r.certified_at ? new Date(r.certified_at).toISOString().slice(0, 10) : '', r.next_due ? String(r.next_due).slice(0, 10) : '', r.assessor, r.callsign, r.manual_version, r.job_title || (r.training ? 'Training' : ''), r.via].map(esc).join(','));
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([[head.join(','), ...body].join('\n')], { type: 'text/csv' })); a.download = 'EVLOS-observer-register-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
+  };
+  const saveDevice = (obs) => (crp) => {
+    const it = { id: 'o' + Date.now(), jobUid: null, jobId: null, title: 'Training', person: { name: obs.name, phone: obs.phone, email: obs.email }, answers: obs.answers, personSig: obs.signature, signedAt: obs.at, result: crp.result, crp: crp.crp, crpSig: crp.signature, savedAt: new Date().toISOString() };
+    qSet([...qGet(), it]); setDevice(null);
+    syncObserverQueue(sb).then(() => { load(); setMsg(qGet().some(x => x.id === it.id) ? 'Saved on this device; it uploads when you are online.' : obs.name + ' added to the register.'); });
+  };
+  return (
+    <div className="space-y-3 text-sm" data-obs-register="1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, phone or job" className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm flex-1 min-w-[10rem]" />
+        <button type="button" data-reg-train-device="1" onClick={() => setDevice({ step: 1 })} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white"><i className="fa-solid fa-tablet-screen-button mr-1"></i>Train &amp; assess on this device</button>
+        <button type="button" data-reg-train-link="1" onClick={trainLink} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-violet-300 text-violet-800"><i className="fa-solid fa-qrcode mr-1"></i>Training link / QR</button>
+        <button type="button" data-reg-csv="1" onClick={csv} disabled={!list.length} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300 disabled:opacity-40"><i className="fa-solid fa-file-csv mr-1"></i>CSV</button>
+      </div>
+      {msg && <div className="text-xs rounded-lg px-3 py-2 bg-violet-50 text-violet-900" data-reg-msg="1">{msg}</div>}
+      {err && <div className="text-xs text-red-700">Couldn't load the register: {err}. (Run migration 0006 in Supabase.)</div>}
+      {rows === null && !err ? <p className="text-xs text-slate-400">Loading…</p> : list.length === 0 ? <p className="text-xs text-slate-500" data-reg-empty="1">No EVLOS observers yet. Train and assess one on this device, or send a training link.</p>
+        : <div className="overflow-x-auto"><table className="w-full text-xs" data-reg-table="1"><thead><tr className="text-left text-slate-500 border-b border-slate-200"><th className="py-1.5 pr-2">Observer</th><th className="pr-2">Status</th><th className="pr-2">Certified</th><th className="pr-2">Next due</th><th className="pr-2">Assessor · callsign</th><th className="pr-2">Manual</th><th className="pr-2">Job</th><th></th></tr></thead>
+          <tbody>{list.map(r => { const st = stOf(r); return (
+            <tr key={r.signoff_id} className="border-b border-slate-100 align-top" data-reg-row={st[2]}>
+              <td className="py-1.5 pr-2"><div className="font-semibold text-slate-800">{r.full_name}</div><div className="text-slate-500">{[r.phone, r.email].filter(Boolean).join(' · ')}</div></td>
+              <td className="pr-2"><span className={`font-bold px-2 py-0.5 rounded-full ${st[1]}`}>{st[0]}</span></td>
+              <td className="pr-2">{fmtD(r.certified_at)}</td><td className="pr-2">{fmtD(r.next_due)}</td>
+              <td className="pr-2">{[r.assessor, r.callsign].filter(Boolean).join(' · ')}</td><td className="pr-2">{r.manual_version || '—'}</td>
+              <td className="pr-2">{r.job_title || (r.training ? <span className="text-violet-700">Training</span> : '')}</td>
+              <td>{r.status === 'awaiting_crp' && <button type="button" data-reg-countersign={r.signoff_id} onClick={async () => { const { data } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,people:person_id (full_name, phone, email)').eq('id', r.signoff_id).single(); if (data) setReview({ ...data, job_title: r.job_title || 'Training' }); }} className="font-semibold px-2 py-1 rounded bg-emerald-600 text-white">Countersign</button>}</td>
+            </tr>); })}</tbody></table></div>}
+      {qr && <LinkSheet qr={qr} setQr={setQr} title="EVLOS observer training" training />}
+      {device && <Sheet title={device.step === 1 ? 'Hand this device to the observer' : 'CRP assessment and signature'} sub="Training and assessment (not tied to a job)" onClose={() => { if (device.step === 1 || window.confirm('Discard this sign-off?')) setDevice(null); }} testid="reg-device-sheet">
+        {device.step === 1 ? <ObserverPart mode="device" manual={manual} training onSubmit={(o) => setDevice({ step: 2, obs: { ...o, at: new Date().toISOString() } })} />
+          : <div className="space-y-3"><div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm"><b>{device.obs.name}</b> · {device.obs.phone} signed {fmtDT(device.obs.at)}<div className="mt-2"><SignatureView sig={device.obs.signature} at={device.obs.at} /></div></div>
+            <CrpPart crpName={crpName} onSubmit={saveDevice(device.obs)} /></div>}
+      </Sheet>}
+      {review && <CrpObserverReview rec={review} crpName={crpName} onClose={(ch) => { setReview(null); if (ch) load(); }} />}
     </div>
   );
 }
