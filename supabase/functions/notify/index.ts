@@ -49,6 +49,25 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const event = String(body.event || '');
 
+    // v7.8: the CRP emails a job link / training link to someone without a login
+    if (event === 'observer_link') {
+      if (me.role !== 'crp') return json({ error: 'Only the CRP can send this' }, 403);
+      const to4 = String(body.email || '').trim().toLowerCase(), link = String(body.link || '');
+      if (!/^\S+@\S+\.\S+$/.test(to4)) return json({ error: 'Enter a valid email' }, 400);
+      if (!link.startsWith(appUrl.replace(/\/$/, '')) || !/#observer=[a-f0-9]{40,80}$/i.test(link)) return json({ error: 'Not a planner observer link' }, 400);
+      if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing)' });
+      const { data: crpP } = await admin.from('profiles').select('full_name').eq('id', who.user.id).single();
+      const training = !!body.training, title = String(body.title || '').slice(0, 120);
+      const subject4 = training ? 'EVLOS observer training sign-off' : `Your job pack and EVLOS observer sign-off: ${title}`;
+      const html4 = page(subject4,
+        P(`${esc(crpP?.full_name || 'The Chief Remote Pilot')} has sent you ${training ? 'your EVLOS observer training sign-off' : 'the job pack for <b>' + esc(title) + '</b>'}.`) +
+        P(training ? 'Open it on your phone: read the observer extract and the Operations Manual, tick the declaration and sign. No login needed.'
+          : 'Open it on your phone: the flight plan, map, hazards and emergency contacts, the Operations Manual, and your EVLOS observer sign-off. No login needed.') +
+        P('The link works for 7 days.'), training ? 'Open the sign-off' : 'Open the job pack', link);
+      const r4 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to4], subject: subject4, html: html4 }) });
+      if (!r4.ok) return json({ ok: false, error: 'Email failed: ' + (await r4.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: 1 });
+    }
     // v7.5.7: the CRP asks crew on a job to fill in the post-flight log
     if (event === 'log_request') {
       if (me.role !== 'crp') return json({ error: 'Only the CRP can send this' }, 403);

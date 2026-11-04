@@ -327,7 +327,8 @@ function MyHours({ c, a }) {
     {c.inductionHours != null && <p className="text-xs text-slate-500 mt-2">Total hours declared at induction: {c.inductionHours}</p>}
     <div className="mt-2 flex items-center gap-2 flex-wrap">{(() => { const st = c.induction && c.induction.status; const m = { certified: ['Induction certified', 'bg-emerald-100 text-emerald-800'], awaiting_crp: ['Induction with the CRP', 'bg-sky-100 text-sky-800'], not_yet_competent: ['Induction: not yet competent', 'bg-rose-100 text-rose-800'], draft: ['Induction started', 'bg-amber-100 text-amber-900'] }[st] || (c.induction ? ['Induction not started', 'bg-slate-100 text-slate-700'] : null);
       return m ? <span data-crew-ind-status={st || 'none'} className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${m[1]}`}>{m[0]}</span> : null; })()}
-      <Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn></div>
+      <Btn onClick={a.openInduction} data-crew-induction="1"><i className="fa-solid fa-id-card mr-1"></i>My induction</Btn>
+      <Btn onClick={() => window.dispatchEvent(new Event('wd-open-manual'))} data-crew-open-manual="1"><i className="fa-solid fa-book mr-1"></i>Ops Manual</Btn></div>
   </div>;
 }
 export function Access({ c, a }) {

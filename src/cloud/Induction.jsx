@@ -75,6 +75,7 @@ export function PilotInduction({ sb, me }) {
     <div className="border border-violet-200 rounded-xl p-4 space-y-3" data-testid="pilot-induction">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="font-semibold text-violet-900 text-sm flex-1"><i className="fa-solid fa-id-card-clip mr-1.5"></i>Pilot induction</div>
+        <button type="button" data-ind-manual="1" onClick={() => window.dispatchEvent(new Event('wd-open-manual'))} className="text-xs font-semibold text-violet-700 underline"><i className="fa-solid fa-book mr-1"></i>Ops Manual</button>
         {s && <StatusPill s={s} />}
       </div>
       {(!s || s === 'draft' || s === 'not_yet_competent') && (
