@@ -131,10 +131,12 @@ export function useCloudJobs(sb, me) {
     // v7.11: crew currency (certifications + the 3-flights rule) and logged hours, for job checks and the registers
     const loadCurrency = async () => {
       try {
-        const [{ data: rows, error }, { data: hours }] = await Promise.all([sb.rpc('crew_currency'), sb.from('pilot_hours').select('person_id,rpa_type,flights,seconds')]);
+        const [{ data: rows, error }, { data: hours }, ex] = await Promise.all([sb.rpc('crew_currency'), sb.from('pilot_hours').select('person_id,rpa_type,flights,seconds'),
+          Promise.resolve(sb.from('experience').select('person_id,rpa_type,hours')).catch(() => ({ data: [] }))]);
         if (error) throw error;
         const ppl = peopleRef.current.length ? peopleRef.current : await loadPeople();
-        if (!dead) publish('wdCurrency', { rows: rows || [], hours: hours || [], people: ppl, at: Date.now() }, 'wd-currency');
+        // v7.15: hours on type from the induction / imported register count towards OONP's 10 hours
+        if (!dead) publish('wdCurrency', { rows: rows || [], hours: hours || [], experience: (ex && ex.data) || [], people: ppl, at: Date.now() }, 'wd-currency');
       } catch (e) { if (!dead) publish('wdCurrency', { rows: [], hours: [], people: peopleRef.current, error: String((e && e.message) || e), at: Date.now() }, 'wd-currency'); }
     };
     window.addEventListener('wd-currency-refresh', loadCurrency);

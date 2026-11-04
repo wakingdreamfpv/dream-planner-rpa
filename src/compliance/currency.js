@@ -62,8 +62,11 @@ export function checkJobCrew(plan, cur) {
       else detail = 'No ' + label + ' certification on record.';
       if (n.hours && status !== 'missing' && status !== 'expired') {
         const hrs = hours.filter((h) => h.person_id === p.id && o.types.includes(h.rpa_type)).reduce((t, h) => t + (Number(h.seconds) || 0), 0) / 3600;
+        // v7.15: plus hours on type recorded at induction / in the imported register (verified by the CRP for OONP)
+        const prior = ((cur && cur.experience) || []).filter((h) => h.person_id === p.id && o.types.includes(h.rpa_type)).reduce((t, h) => t + (Number(h.hours) || 0), 0);
         const declared = Number(p.total_hours) || 0;
-        if (hrs < n.hours) { status = status === 'current' ? 'hours' : status; detail += ' · ' + hrs.toFixed(1) + ' h logged on ' + (o.types.join(' / ') || 'type') + ' (needs ' + n.hours + ')' + (declared ? ', ' + declared + ' h declared overall' : ''); }
+        if (hrs + prior < n.hours) { status = status === 'current' ? 'hours' : status; detail += ' · ' + hrs.toFixed(1) + ' h logged' + (prior ? ' + ' + prior + ' h on record' : '') + ' on ' + (o.types.join(' / ') || 'type') + ' (needs ' + n.hours + ')' + (declared ? ', ' + declared + ' h declared overall' : ''); }
+        else if (prior && hrs < n.hours) detail += ' · ' + (hrs + prior).toFixed(1) + ' h on type (' + prior + ' h on record)';
       }
       out.push({ id, name: c.name, role: c.role, personId: p.id, label, status, due: best && best.due, detail });
     });

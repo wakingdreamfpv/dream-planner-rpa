@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getSupabase } from '../cloud/client.js';
 import { compLabel, STATUS_LABEL } from './currency.js';
+import RegisterImport from './RegisterImport.jsx';
+import { printAuditPack, printRegisters } from './auditPack.js';
 
 const TABS = [['all', 'All'], ['induction', 'Induction'], ['type', 'Type'], ['evlos', 'EVLOS'], ['oonp', 'OONP'], ['night', 'Night'], ['evlos_observer', 'EVLOS observers']];
 const fmtD = (d) => { if (!d) return '—'; const x = new Date(d); return isNaN(x) ? String(d) : x.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -10,7 +12,7 @@ const iso = (d) => (d ? String(d).slice(0, 10) : '');
 const tone = (s) => s === 'current' ? 'bg-emerald-100 text-emerald-800' : s === 'due_soon' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800';
 const RECENCY = (c) => ['evlos', 'oonp', 'night'].includes(c) || String(c).startsWith('type:');
 
-export default function Registers({ fleetTypes = [], crpName = '' }) {
+export default function Registers({ fleetTypes = [], crpName = '', company = '' }) {
   const sb = getSupabase();
   const [st, setSt] = useState({ loading: true, rows: [], people: [], hours: [] });
   const [tab, setTab] = useState('all');
@@ -18,11 +20,13 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
   const [q, setQ] = useState('');
   const [rec, setRec] = useState(null); // record-a-check form
   const [msg, setMsg] = useState('');
+  const [imp, setImp] = useState(false);
+  const [packing, setPacking] = useState('');
   const load = async () => {
     if (!sb) { setSt({ loading: false, rows: [], people: [], hours: [], error: 'Sign in to see the registers.' }); return; }
     try {
       const [{ data: rows, error }, { data: people }, { data: hours }] = await Promise.all([
-        sb.rpc('crew_currency'), sb.from('people').select('id,full_name,email,role,active').order('full_name'), sb.from('pilot_hours').select('person_id,rpa_type,seconds')]);
+        sb.rpc('crew_currency'), sb.from('people').select('id,full_name,email,role,active,date_last_engaged,created_at').order('full_name'), sb.from('pilot_hours').select('person_id,rpa_type,seconds')]);
       if (error) throw error;
       setSt({ loading: false, rows: rows || [], people: people || [], hours: hours || [] });
     } catch (e) { setSt({ loading: false, rows: [], people: [], hours: [], error: String((e && e.message) || e) }); }
@@ -53,6 +57,14 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
     if (error) { setMsg('Not saved: ' + error.message); return; }
     setRec(null); setMsg('Check recorded.'); window.dispatchEvent(new Event('wd-currency-refresh')); load();
   };
+  const pack = async (pid) => {
+    setPacking(pid); setMsg('');
+    try { await printAuditPack(sb, pid, company); } catch (e) { setMsg('Couldn\'t make the audit pack: ' + ((e && e.message) || e)); }
+    setPacking('');
+  };
+  const SEVEN = 7 * 365.25 * 864e5;
+  const retention = st.people.filter((p) => p.role !== 'crp' && (p.date_last_engaged ? Date.now() - Date.parse(p.date_last_engaged) > SEVEN : p.created_at && Date.now() - Date.parse(p.created_at) > SEVEN));
+  const neverEngaged = st.people.filter((p) => p.role !== 'crp' && !p.date_last_engaged);
   const sel = 'px-2 py-1.5 border border-slate-300 rounded-md text-sm bg-white';
 
   return (
@@ -64,9 +76,12 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
         <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-800" data-cur-count="expired">{counts.expired || 0} expired</span>
         <div className="ml-auto flex gap-2">
           <button type="button" data-cur-record="1" onClick={() => setRec({ person: '', comp: 'evlos', date: new Date().toISOString().slice(0, 10), assessor: crpName })} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Record a check</button>
+          <button type="button" data-gf-open="1" onClick={() => setImp(!imp)} className="text-xs font-semibold px-3 py-1.5 rounded-md border border-violet-300 bg-white text-violet-900"><i className="fa-solid fa-file-import mr-1"></i>Import Google Forms</button>
           <button type="button" onClick={csv} className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 bg-white"><i className="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <button type="button" data-cur-print="1" onClick={() => printRegisters(rows, { company, filter: [tab !== 'all' ? (TABS.find((t) => t[0] === tab) || [])[1] : '', issues ? 'only due / expired' : '', q.trim() ? 'search “' + q.trim() + '”' : ''].filter(Boolean).join(' · ') })} className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 bg-white"><i className="fa-solid fa-print mr-1"></i>Print / PDF</button>
         </div>
       </div>
+      {imp && <RegisterImport fleetTypes={fleetTypes} onDone={load} onClose={() => setImp(false)} />}
       {msg && <p className="text-xs text-emerald-800" data-cur-msg="1">{msg}</p>}
       {rec && <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 grid sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end" data-cur-form="1">
         <label className="text-xs font-semibold text-slate-600">Person<select className={sel + ' w-full mt-1'} value={rec.person} onChange={(e) => setRec({ ...rec, person: e.target.value })}><option value="">Choose…</option>{st.people.filter((p) => p.active !== false).map((p) => <option key={p.id} value={p.id}>{p.full_name} ({p.role})</option>)}</select></label>
@@ -89,7 +104,7 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
               {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-slate-500 text-sm">Nothing here yet.</td></tr>}
               {rows.map((r) => (
                 <tr key={r.cert_id} data-cur-row={r.status}>
-                  <td className="px-3 py-2"><b>{r.full_name}</b><div className="text-[11px] text-slate-500">{r.role}</div></td>
+                  <td className="px-3 py-2"><b>{r.full_name}</b><div className="text-[11px] text-slate-500">{r.role} · <button type="button" data-cur-pack={r.person_id} onClick={() => pack(r.person_id)} className="text-violet-700 hover:underline">{packing === r.person_id ? 'Preparing…' : 'Audit pack'}</button></div></td>
                   <td className="px-3 py-2">{compLabel(r.competency)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{fmtD(r.check_date)}<div className="text-[11px] text-slate-500">{r.assessor || ''}</div></td>
                   <td className="px-3 py-2 whitespace-nowrap">{r.due ? fmtD(r.due) : 'No expiry'}{r.extended && r.status !== 'expired' ? <div className="text-[11px] text-emerald-700">extended by recent flights</div> : null}</td>
@@ -100,7 +115,13 @@ export default function Registers({ fleetTypes = [], crpName = '' }) {
             </tbody>
           </table>
         </div>}
-      {noCerts.length > 0 && <p className="text-xs text-slate-600" data-cur-nocerts="1"><b>No certifications yet:</b> {noCerts.map((p) => p.full_name).join(', ')}. Ask pilots to complete their induction, train and assess observers in EVLOS observers, or record a check.</p>}
+      {noCerts.length > 0 && <p className="text-xs text-slate-600" data-cur-nocerts="1"><b>No certifications yet:</b> {noCerts.map((p, i) => <React.Fragment key={p.id}>{i ? ', ' : ''}<button type="button" data-cur-pack={p.id} onClick={() => pack(p.id)} className="underline decoration-dotted" title="Audit pack">{p.full_name}</button></React.Fragment>)}. Ask pilots to complete their induction, train and assess observers in EVLOS observers, or record a check.</p>}
+      <div className="border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-600" data-retention="1">
+        <b className="text-slate-800"><i className="fa-solid fa-box-archive mr-1"></i>Records retention</b> — records are kept for at least 7 years after a person was last engaged (their latest check or flight), and are never deleted automatically.
+        {retention.length ? <div className="mt-1 text-amber-900" data-retention-flag="1"><b>Past 7 years:</b> {retention.map((p) => `${p.full_name} (last engaged ${p.date_last_engaged ? fmtD(p.date_last_engaged) : 'never'})`).join(', ')}. You may archive these now; download their audit pack first.</div>
+          : <div className="mt-1 text-emerald-800" data-retention-ok="1">No one is past 7 years.</div>}
+        {neverEngaged.length > 0 && <div className="mt-1 text-slate-500">No check or flight yet: {neverEngaged.map((p) => p.full_name).join(', ')}.</div>}
+      </div>
       <p className="text-[11px] text-slate-500">Flights count automatically from completed jobs (the pilot who flew, the aircraft type, and EVLOS / OONP / night from the JSA). OONP also needs 10+ hours on type, checked on each job.</p>
     </div>
   );
