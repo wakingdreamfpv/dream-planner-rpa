@@ -12,7 +12,7 @@ import Registers from '../compliance/Registers.jsx';
 import { RecordVersions } from '../compliance/Versions.jsx';
 import { getSupabase as wdSb } from '../cloud/client.js';
 import SignDialog from '../cloud/SignDialog.jsx';
-import { CommentsPanel, SharePanel, refreshLinkSnapshots } from '../collab/Comments.jsx';
+import { CommentsPanel, SharePanel, refreshLinkSnapshots, SUGGEST_FIELDS, RISK_FIELDS } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.21';
+        const APP_VERSION = '7.22';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4828,7 +4828,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [navModal, setNavModal] = useState(null); // { to: string, warnings: [{field, label, severity}] }
 
           // Call this instead of setActiveTab directly from Next buttons
-          // v6.0: no pop-up on Next. Missing mandatory items are listed at the top of each section and on the sidebar.
+          // v6.0: no pop-up on Next. Missing mandatory items are listed at the bottom of each section (v7.22; was the top) and on the sidebar.
           const handleNavigate = (to) => { setActiveTab(to); try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} };
           
           const defaultPilots = WD_NS ? [] : [ // v7.2.5: other people's spaces start without the owner's sample people
@@ -5075,6 +5075,19 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && editionPick === 'free');
           const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
           const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
+          // v7.22: an invite or sign-in link that has expired or was already used (often opened first by an email app's
+          // link checker) comes back with an error in the address: say so plainly and offer a fresh link right there
+          const [linkErr] = useState(() => { try { const h = (location.hash || '') + '&' + (location.search || ''); const m = /error_code=([\w-]+)/.exec(h); return m ? m[1] : (/error=access_denied/.test(h) ? 'access_denied' : null); } catch (e) { return null; } });
+          useEffect(() => { if (linkErr) { try { history.replaceState(null, '', location.pathname); sessionStorage.removeItem('wd_pw_intent'); } catch (e) { /* ok */ } } }, []); // eslint-disable-line
+          const [gateLink, setGateLink] = useState(() => ({ open: false, email: '', busy: false, sent: false, err: '' }));
+          const sendGateLink = async () => {
+            const em = gateLink.email.trim().toLowerCase();
+            if (!/^\S+@\S+\.\S+$/.test(em)) { setGateLink({ ...gateLink, err: 'Enter the email address your invitation was sent to.' }); return; }
+            setGateLink({ ...gateLink, busy: true, err: '' });
+            const sb = wdSb(); const { error } = sb ? await sb.auth.signInWithOtp({ email: em, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } }) : { error: { message: 'offline' } };
+            setGateLink(error ? { ...gateLink, busy: false, err: /signup|not allowed|not found/i.test(error.message) ? 'That email isn\'t set up for this planner yet. Ask your Chief Remote Pilot to invite you.' : /rate|seconds/i.test(error.message) ? 'A link was sent very recently. Wait a minute, then try again.' : 'Couldn\'t send it: ' + error.message }
+              : { ...gateLink, busy: false, sent: true, err: '' });
+          };
           const setTestEdition = (v) => { lsSet('wd_edition_test', v); setEditionTest(v); };
           // v7.2.3: switch to this person's own data space once we know who is signed in (see WD_NS)
           useEffect(() => {
@@ -5099,6 +5112,18 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [myInd, setMyInd] = useState(() => window.wdMyInduction);
           useEffect(() => { const h = () => setMyInd(window.wdMyInduction); h(); window.addEventListener('wd-my-induction', h); return () => window.removeEventListener('wd-my-induction', h); }, []);
           const indDone = !!(myInd && ['awaiting_crp', 'certified', 'not_yet_competent'].includes(myInd.status));
+          // v7.22: the welcome is remembered on the person's account (not just this device), so a new phone doesn't show it again
+          const metaWelcomed = !!(auth.meta && auth.meta.welcomed_at);
+          const showRoleWelcome = isCrewRole && !roleWelcomed && !metaWelcomed && myInd !== undefined && !(auth.role === 'pilot' && indDone);
+          // arriving from an invite with the welcome already seen: the account panel asks for the password instead
+          const welcomeDoneRef = useRef(false); // closed in this visit: the card already offered the password
+          useEffect(() => { if (auth.invitePw && isCrewRole && myInd !== undefined && !showRoleWelcome && !welcomeDoneRef.current) window.dispatchEvent(new Event('wd-open-setpw')); }, [auth.invitePw, isCrewRole, myInd, showRoleWelcome]); // eslint-disable-line
+          const [welPw, setWelPw] = useState({ a: '', b: '', busy: false, err: '', saved: false });
+          const [welObs, setWelObs] = useState(null);
+          useEffect(() => {
+            if (!showRoleWelcome || auth.role !== 'observer') return;
+            (async () => { try { const sb = wdSb(); const { data } = sb ? await sb.rpc('my_observer_status') : { data: null }; setWelObs(data || { current: false }); } catch (e) { setWelObs({ current: false }); } })();
+          }, [showRoleWelcome, auth.role]); // eslint-disable-line
           useEffect(() => { if (isCrewRole && indDone && !roleWelcomed) { lsSet(roleKey, new Date().toISOString()); setRoleWelcomed(true); } }, [isCrewRole, indDone, roleWelcomed]); // eslint-disable-line
           const [opOpen, setOpOpen] = useState(false);
           const [gsHidden, setGsHidden] = useState(() => !!lsGet('wd_gs_hidden'));
@@ -8004,8 +8029,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             } catch (e) { return 'could not read the database back (' + e.message + ')'; }
           };
 
+          const crewSaveHookRef = useRef(null); // v7.22: crew on a company job: their plan edits go to the CRP as suggestions
           const handleSaveDraftPlan = async (opts) => {
             opts = (opts && !opts.nativeEvent && !opts.target) ? opts : {};
+            if (!opts.noCrewHook && crewSaveHookRef.current) { const r = await crewSaveHookRef.current(); if (r === 'handled') return; }
             const ov = resolvePlanId(); if (!ov) return;
             const title = getOpTitle(ov);
             const draft = {
@@ -9560,7 +9587,8 @@ View in the Database & Settings tab.`);
               box.classList.add('wd-req-flash'); setTimeout(() => box.classList.remove('wd-req-flash'), 1600);
             }, 120);
           };
-          // Compact "still to record" strip at the top of each section.
+          // Compact "still to record" strip — v7.22: at the bottom of each section, just above Back / Next, so working down the
+          // page you only meet it once you've reached the end (the sidebar still shows the count for each section).
           const BypassedList = ({ tab }) => {
             const bp = reqItems.filter(x => x.tab === tab && x.overridden);
             if (!bp.length) return null;
@@ -9571,15 +9599,15 @@ View in the Database & Settings tab.`);
                 {!bypassBlocked && <button type="button" data-bypass-undo={x.id} onClick={() => undoBypass(x.id)} className="text-amber-700 underline">Undo</button>}
               </div>))}</div>;
           };
-          const ReqStrip = ({ tab, title }) => {
-            const m = reqMissing(tab);
+          const ReqStrip = ({ tab, title, bottom }) => {
+            const m = reqMissing(tab), at = bottom ? 'mt-8' : 'mx-6 mt-4';
             if (!m.length) return (
-              <div className="mx-6 mt-4 print:hidden" data-req-strip={tab} data-req-left="0">
+              <div className={at + ' print:hidden'} data-req-strip={tab} data-req-left="0">
                 <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5"><i className="fa-solid fa-circle-check"></i> All mandatory items for this section are recorded.</div>
                 <BypassedList tab={tab} />
               </div>);
             return (
-              <div className="mx-6 mt-4 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 print:hidden" data-req-strip={tab} data-req-left={m.length}>
+              <div className={at + ' rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 print:hidden'} data-req-strip={tab} data-req-left={m.length}>
                 <div className="text-xs font-bold text-rose-800 mb-1.5"><span className="text-rose-500">*</span> {m.length} mandatory item{m.length === 1 ? '' : 's'} {title || 'still to record'} <span className="font-normal text-rose-700/80">· tap one to go to it</span></div>
                 <div className="flex flex-wrap gap-1.5">
                   {m.map(x => <button key={x.id} type="button" data-allow-locked="1" data-req-chip={x.id} title={x.why} onClick={() => jumpToReq(x.id)}
@@ -9987,6 +10015,7 @@ View in the Database & Settings tab.`);
               if (d.error || !d.plan) { alert('Couldn\'t open the job: ' + (d.error || 'no plan saved yet')); return; }
               const plan = { ...d.plan, title: d.job.title, status: 'draft' };
               handleLoadPlan(plan, { silent: true });
+              takeCrewBase(d.job.id);
               const base = cloudLogFlights(d.plan.log).map(x => x.key);
               const prev = lsJson(cjKey, null);
               setCloudJob({ ...d.job, base, sent: prev && prev.id === d.job.id ? (prev.sent || []) : [], baseLogSig: logSig(d.plan.log || {}), sentLogSig: prev && prev.id === d.job.id ? prev.sentLogSig : undefined });
@@ -9995,6 +10024,67 @@ View in the Database & Settings tab.`);
             };
             window.addEventListener('wd-load-cloud-job', h); return () => window.removeEventListener('wd-load-cloud-job', h);
           }); // eslint-disable-line
+          // v7.22: a pilot or observer can't change a company plan directly. When they save a company job, each change to the
+          // plan (not the flight log, which they send as before) becomes a suggestion for the CRP, who is emailed and accepts or
+          // declines it in Comments. Their copy then goes back to the CRP's version until a suggestion is accepted.
+          const SUG_LABEL = Object.fromEntries(Object.values(SUGGEST_FIELDS).flat());
+          const RISK_LABEL = Object.fromEntries(RISK_FIELDS);
+          const SEC_NAME = { mapData: 'Map, launch and recovery sites', opsMap: 'Advanced ops map', checklists: 'Preliminary checklist', emergency: 'Emergency contacts', emergencyContacts: 'Emergency contacts',
+            oonp: 'OONP', rf: 'RF coordination', rfPlan: 'RF coordination', keData: 'Energy transfer (KE)', extraKe: 'Energy transfer (KE)', ballistic: 'Ballistic splash area', attachments: 'Site attachments', amendments: 'Record of amendments' };
+          const humanKey = (k) => String(k).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+          const SKIP_TOP = new Set(['log', 'overview', 'jsa', 'approval', 'risks', 'uid', 'id', 'title', 'status', 'savedAt', 'appVersion', 'exportedAt', 'crewLog']);
+          const isSigKey = (k) => /sig|signed|approv|amendLog|lockedAt|authorised/i.test(k);
+          const prim = (v) => v == null || ['string', 'number', 'boolean'].includes(typeof v);
+          const sameV = (a, b) => String(a == null ? '' : a).trim() === String(b == null ? '' : b).trim();
+          // what the plan looked like on this device right after it was opened (so only real edits count)
+          const buildSnapRef = useRef(null); buildSnapRef.current = buildPlanSnapshot;
+          const crewBaseRef = useRef({});
+          const takeCrewBase = (jobId) => setTimeout(() => { try { crewBaseRef.current[jobId] = JSON.parse(JSON.stringify(buildSnapRef.current())); } catch (e) { /* falls back to the cloud copy */ } }, 900);
+          const planDiff = (cloud, local, general = true) => {
+            const out = [];
+            ['overview', 'jsa', 'approval'].forEach(sec => { const c = cloud[sec] || {}, l = local[sec] || {};
+              [...new Set([...Object.keys(c), ...Object.keys(l)])].forEach(k => {
+                if (isSigKey(k) || k === 'uid' || k === 'identifier') return;
+                if (prim(c[k]) && prim(l[k])) { if (!sameV(c[k], l[k])) out.push({ section: sec === 'approval' ? 'approval' : sec, suggestion: { path: sec + '.' + k, label: SUG_LABEL[sec + '.' + k] || humanKey(k), from: c[k] == null ? '' : c[k], to: l[k] == null ? '' : l[k] } }); }
+                else if (JSON.stringify(c[k] == null ? null : c[k]) !== JSON.stringify(l[k] == null ? null : l[k])) out.push({ section: sec, free: humanKey(k) });
+              }); });
+            const cr = (cloud.risks || []).filter(r => String(r.hazard || '').trim()), lr = (local.risks || []).filter(r => String(r.hazard || '').trim());
+            lr.forEach(r => { const o = cr.find(x => String(x.refNo) === String(r.refNo));
+              if (!o) { out.push({ section: 'risks', suggestion: { kind: 'new_risk', label: 'New risk: ' + r.hazard, risk: { hazard: r.hazard, riskDescription: r.riskDescription || '', existingControls: r.existingControls || '', additionalControls: r.additionalControls || '', initL: r.initL || '', initC: r.initC || '', resL: r.resL || '', resC: r.resC || '', riskOwner: r.riskOwner || '' } } }); return; }
+              RISK_FIELDS.forEach(([f, lab]) => { if (!sameV(o[f], r[f])) out.push({ section: 'risks', suggestion: { path: 'risks:' + r.refNo + '.' + f, label: 'Risk ' + r.refNo + ' · ' + lab, from: o[f] == null ? '' : o[f], to: r[f] == null ? '' : r[f] } }); });
+              if (!sameV(o.initL, r.initL) || !sameV(o.initC, r.initC)) out.push({ section: 'risks', free: 'Risk ' + r.refNo + ' initial rating (' + (o.initL || '') + (o.initC || '') + ' → ' + (r.initL || '') + (r.initC || '') + ')' }); });
+            cr.forEach(o => { if (!lr.some(r => String(r.refNo) === String(o.refNo))) out.push({ section: 'risks', free: 'Remove risk ' + o.refNo + ': ' + o.hazard }); });
+            if (general) [...new Set([...Object.keys(cloud), ...Object.keys(local)])].forEach(k => { if (SKIP_TOP.has(k)) return;
+              if (JSON.stringify(cloud[k] == null ? null : cloud[k]) !== JSON.stringify(local[k] == null ? null : local[k])) out.push({ section: 'general', free: SEC_NAME[k] || humanKey(k) }); });
+            return out;
+          };
+          const sendCrewSuggestions = async () => {
+            if (!isCrewRole || !cloudJob || cloudJob.uid !== overview.uid) return null;
+            const sb = wdSb(); if (!sb) return null;
+            const { data: row, error } = await sb.from('jobs').select('id, title, plan').eq('id', cloudJob.id).maybeSingle();
+            if (error || !row || !row.plan) { alert('Couldn\'t reach the company copy of this job, so your changes stay on this device for now. Try saving again when you\'re online.'); return null; }
+            const local = buildPlanSnapshot(overview), base = crewBaseRef.current[row.id];
+            const diff = base ? planDiff(base, local) : planDiff(row.plan, local, false);
+            if (!diff.length) return null; // nothing changed in the plan: save the flight log as before
+            const free = diff.filter(d => d.free), sug = diff.filter(d => d.suggestion);
+            const crpN = (crewCloud && crewCloud.company && crewCloud.company.crp_name) || (auth.meta && auth.meta.invited_by) || '';
+            const n = sug.length + (free.length ? 1 : 0), crpFirst = crpN ? crpN.split(' ')[0] : 'the Chief Remote Pilot';
+            if (!window.confirm(`You've changed ${n === 1 ? 'something' : n + ' things'} in the plan.\n\nOnly the Chief Remote Pilot can change a company plan, so ${n === 1 ? 'it goes' : 'they go'} to ${crpFirst} as suggested change${n === 1 ? '' : 's'} to accept or decline. The plan shows the current version until then.\n\nSend ${n === 1 ? 'it' : 'them'}?`)) return 'handled';
+            const name = auth.name || auth.email || 'Crew';
+            const rows = sug.map(d => ({ job_id: row.id, section: d.section, kind: 'suggestion', suggestion: d.suggestion, author_name: name,
+              body: d.suggestion.kind === 'new_risk' ? 'Suggested new risk: ' + d.suggestion.risk.hazard : 'Suggested change to ' + d.suggestion.label + ': “' + String(d.suggestion.from).slice(0, 200) + '” → “' + String(d.suggestion.to).slice(0, 400) + '”' }));
+            if (free.length) rows.push({ job_id: row.id, section: free.length === 1 ? free[0].section : 'general', kind: 'suggestion', suggestion: { free: true }, author_name: name,
+              body: 'I also changed: ' + [...new Set(free.map(f => f.free))].join('; ') + '. These can\'t be applied automatically; ask me what I changed or reply here.' });
+            const { error: e2 } = await sb.from('plan_comments').insert(rows);
+            if (e2) { alert('Your suggested changes weren\'t sent: ' + e2.message + '\n\nThey\'re still on this device. Try again when you\'re online.'); return 'handled'; }
+            try { await sb.functions.invoke('notify', { body: { event: 'plan_suggestions', job_id: row.id, count: rows.length } }); } catch (e) { /* the CRP still sees them on Home */ }
+            // back to the company version (keeping this person's flight log), then save that on this device
+            handleLoadPlan({ ...row.plan, log: local.log, title: row.title, status: 'draft' }, { silent: true }); takeCrewBase(row.id);
+            setTimeout(() => handleSaveDraftPlan({ quiet: true, noCrewHook: true }), 300);
+            setTimeout(() => alert(`Sent to ${crpFirst}: ${rows.length} suggested change${rows.length === 1 ? '' : 's'}.\n\nYou'll see ${rows.length === 1 ? 'it' : 'them'} in Comments on this job, with ${crpFirst}'s decision. The plan shows the current version until ${rows.length === 1 ? 'it is' : 'they are'} accepted.`), 400);
+            return 'handled';
+          };
+          crewSaveHookRef.current = isCrewRole && cloudJob && cloudJob.uid === overview.uid ? sendCrewSuggestions : null;
           useEffect(() => {
             if (!crewJobLink || !isCrewRole || !crewCloud) return;
             const j = (crewCloud.jobs || []).find(x => String(x.id) === crewJobLink.id);
@@ -10085,6 +10175,22 @@ View in the Database & Settings tab.`);
             if (!local) { openJobFromCloud(row.job_id || (row.job && row.job.id), uid, finish); return; }
             handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 500);
           };
+          // v7.22: the "suggested changes" email links to #job-comments=<job id>: open that job with its Comments panel
+          const [commentsLink, setCommentsLink] = useState(() => { const m = /^#job-comments=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
+          useEffect(() => { const h = () => { const m = /^#job-comments=([\w-]+)$/.exec(location.hash || ''); if (m) setCommentsLink(m[1]); };
+            window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          useEffect(() => {
+            if (!commentsLink || !isCrpCloud || !dbReady) return;
+            const j = cloudJobsAll.find(x => String(x.id) === commentsLink);
+            if (!j && !cloudJobsAll.length) return; // the job list is still loading
+            try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+            setCommentsLink(null);
+            if (!j) { alert('That job isn\'t in the cloud any more.'); return; }
+            const show = () => setTimeout(() => setCollab({ kind: 'comments', section: 'all', jobId: j.id }), 500);
+            const local = cloudJobsList().find(x => x.uid === j.plan_uid);
+            if (local) { if (overview.uid !== local.uid) handleLoadPlan(local.p, { silent: true }); setActiveTab('preliminary'); show(); }
+            else openJobFromCloud(j.id, j.plan_uid, show);
+          }, [commentsLink, isCrpCloud, dbReady, cloudJobsAll]); // eslint-disable-line
           // v7.5.3: the "signed as RPIC" email links to #rpic-signed=<id>: open that job, add the signature, go to Authorisation
           const [signLink, setSignLink] = useState(() => { const m = /^#rpic-signed=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
           useEffect(() => { const h = () => { const m = /^#rpic-signed=([\w-]+)$/.exec(location.hash || ''); if (m) { setSignLink(m[1]); window.dispatchEvent(new Event('wd-cloud-refresh')); } };
@@ -10279,7 +10385,7 @@ View in the Database & Settings tab.`);
             if (thenSetup) openSetupWizard(kind, 1);
           };
           const TOUR_STEPS = [
-            { tab: 'preliminary', sel: '[data-req-strip=preliminary]', title: 'Section 1 — the job', body: 'This sample job is filled in for you. The box at the top lists any mandatory item still missing (CASA MOS 10.04 and your Form F.1). Tap an item and it jumps you to the field.' },
+            { tab: 'preliminary', sel: '[data-req-strip=preliminary]', title: 'Section 1 — the job', body: 'This sample job is filled in for you. The box at the bottom of each section, just above Next, lists any mandatory item still missing (CASA MOS 10.04 and your Form F.1). Tap an item and it jumps you to the field.' },
             { tab: 'preliminary', sel: '[data-tour=map]', title: 'Map the site', body: 'Draw the ops area, drop launch and recovery pins, signage and exclusion zones on satellite imagery. Pin coordinates fill the flight record automatically.' },
             { tab: 'preliminary', sel: '[data-req-anchor=prelim]', title: 'Preliminary checklist', body: 'Answer Yes or No for each standard condition. A No opens a box for the reason or the approval that covers it, and the JSA is flagged.' },
             { tab: 'jsa', sel: '[data-req-anchor=risks]', title: 'JSA and risk register', body: 'Load a risk template (VLOS, night, EVLOS, OONP…) or write your own. Likelihood × consequence gives the rating, before and after your controls.' },
@@ -10462,7 +10568,17 @@ View in the Database & Settings tab.`);
                     </div>
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 sm:p-6 space-y-3">
                       <button type="button" data-gate-signin="1" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="w-full py-3.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold">Sign in</button>
-                      <p className="text-xs text-slate-500 text-center">Invited as crew? Open the invitation email on this device and tap <b>Accept invitation</b>.</p>
+                      {linkErr && !gateLink.sent && <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900" data-gate-link-error={linkErr}>
+                        <b>That link has expired or was already used.</b> Invitation and sign-in links work once, for about an hour, and some email apps open links to check them first, which uses them up. Enter your email below for a fresh one.</div>}
+                      {!linkErr && <p className="text-xs text-slate-500 text-center">Invited as crew? Open the invitation email on this device and tap <b>Accept invitation</b>.</p>}
+                      {(linkErr || gateLink.open) ? <div className="rounded-xl border border-slate-200 p-3 space-y-2" data-gate-link-form="1">
+                        {gateLink.sent ? <div className="text-sm text-emerald-800" data-gate-link-sent="1"><i className="fa-solid fa-envelope-circle-check mr-1.5"></i><b>Check your email</b> (and junk) for a sign-in link from planner@wakingdreamfpv.com. Open it on this device; it signs you straight in.</div> : <>
+                          <div className="text-sm font-semibold text-slate-800">Email me a sign-in link</div>
+                          <input type="email" autoComplete="email" placeholder="Your email" value={gateLink.email} onChange={e => setGateLink({ ...gateLink, email: e.target.value, err: '' })} data-gate-link-email="1" className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-base" />
+                          {gateLink.err && <div className="text-xs text-red-700" data-gate-link-err="1">{gateLink.err}</div>}
+                          <button type="button" disabled={gateLink.busy} onClick={sendGateLink} data-gate-link-send="1" className="w-full py-2.5 rounded-lg bg-slate-800 text-white font-semibold disabled:opacity-50">{gateLink.busy ? 'Sending…' : 'Send me a link'}</button>
+                        </>}
+                      </div> : <button type="button" data-gate-link-open="1" onClick={() => setGateLink({ ...gateLink, open: true })} className="w-full text-xs text-violet-700 font-semibold underline">Invite link not working? Email me a sign-in link</button>}
                       <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-400 font-bold py-1"><span className="flex-1 border-t border-slate-200"></span>or<span className="flex-1 border-t border-slate-200"></span></div>
                       <button type="button" data-gate-free="1" onClick={chooseFree} className="w-full py-3 rounded-xl border-2 border-violet-200 hover:bg-violet-50 text-violet-800 text-base font-bold">Use free on this device</button>
                       <ul className="text-xs text-slate-600 space-y-1 pt-1">
@@ -10503,25 +10619,57 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
-              {isCrewRole && !roleWelcomed && myInd !== undefined && !indDone && (() => {
-                const done = () => { lsSet(roleKey, new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setRoleWelcomed(true); setShowWelcome(false); };
+              {showRoleWelcome && (() => {
+                // v7.22: one welcome card: who invited them and to which company, an optional password, and their next step
+                const done = () => {
+                  welcomeDoneRef.current = true;
+                  lsSet(roleKey, new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setRoleWelcomed(true); setShowWelcome(false);
+                  try { const sb = wdSb(); if (sb) sb.auth.updateUser({ data: { welcomed_at: new Date().toISOString() } }); } catch (e) { /* this device still remembers */ }
+                  window.dispatchEvent(new Event('wd-invite-pw-done'));
+                };
                 const first = String(auth.name || '').split(' ')[0];
+                const meta = auth.meta || {}, co = meta.company || (crewCloud && crewCloud.company && crewCloud.company.name) || '', by = meta.invited_by || '';
+                const isPilot = auth.role === 'pilot';
+                const savePw = async () => {
+                  if (welPw.a.length < 10) { setWelPw({ ...welPw, err: 'Use at least 10 characters.' }); return; }
+                  if (welPw.a !== welPw.b) { setWelPw({ ...welPw, err: "The passwords don't match." }); return; }
+                  setWelPw({ ...welPw, busy: true, err: '' });
+                  const { error } = await wdSb().auth.updateUser({ password: welPw.a });
+                  setWelPw(error ? { ...welPw, busy: false, err: error.message } : { a: '', b: '', busy: false, err: '', saved: true });
+                };
+                const dueTxt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return d; } };
                 return (
                   <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden" data-testid="role-welcome">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden my-2 sm:my-6">
                       <div className="px-5 py-4 text-white" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
-                        <div className="text-xs uppercase tracking-widest opacity-75">{auth.role === 'pilot' ? 'Pilot' : 'Observer'}</div>
+                        <div className="text-xs uppercase tracking-widest opacity-75" data-welcome-co="1">{isPilot ? 'Pilot' : 'Observer'}{co ? ' · ' + co : ''}</div>
                         <h2 className="text-xl font-bold mt-1">Welcome{first ? ', ' + first : ''}</h2>
-                        <p className="text-sm opacity-85 mt-1">You've been invited to fly with this operator as {auth.role === 'pilot' ? 'a pilot' : 'an observer'}.</p>
+                        <p className="text-sm opacity-85 mt-1" data-welcome-by="1">{by ? by + ' has' : "You've been"} invited {by ? 'you ' : ''}to fly with {co || 'this operator'} as {isPilot ? 'a pilot' : 'an observer'}.</p>
                       </div>
                       <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700">
-                        {auth.role === 'pilot' ? (<>
-                          <p>First step: your <b>pilot induction</b>. Your details, next of kin, hours, RePL and the aircraft you'll fly, then the declaration (about 10 minutes). The Chief Remote Pilot checks it and certifies you.</p>
+                        {auth.invitePw && <div className="rounded-xl border border-slate-200 p-3 space-y-2" data-welcome-pw="1">
+                          {welPw.saved ? <div className="text-emerald-700 font-semibold" data-welcome-pw-saved="1"><i className="fa-solid fa-circle-check mr-1"></i>Password saved. Sign in with your email and password from now on.</div> : <>
+                            <div className="font-semibold text-slate-800">Choose a password <span className="font-normal text-slate-500">(optional)</span></div>
+                            <p className="text-xs text-slate-500">So you can sign in on any device. Or skip it, and use “Email me a sign-in link” whenever you sign in.</p>
+                            <input type="password" autoComplete="new-password" placeholder="Password (10+ characters)" value={welPw.a} onChange={e => setWelPw({ ...welPw, a: e.target.value, err: '' })} data-welcome-pw-a="1" className="w-full px-3 py-2 border border-slate-300 rounded-lg" />
+                            <input type="password" autoComplete="new-password" placeholder="Repeat password" value={welPw.b} onChange={e => setWelPw({ ...welPw, b: e.target.value, err: '' })} data-welcome-pw-b="1" className="w-full px-3 py-2 border border-slate-300 rounded-lg" />
+                            {welPw.err && <div className="text-xs text-red-700" data-welcome-pw-err="1">{welPw.err}</div>}
+                            <button type="button" disabled={welPw.busy || !welPw.a} onClick={savePw} data-welcome-pw-save="1" className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold disabled:opacity-40">{welPw.busy ? 'Saving…' : 'Save password'}</button>
+                          </>}
+                        </div>}
+                        {isPilot ? (<>
+                          <p>First step: your <b>pilot induction</b>. Your details, next of kin, hours, RePL and the aircraft you'll fly, then the declaration (about 10 minutes). {by ? by.split(' ')[0] : 'The Chief Remote Pilot'} checks it and certifies you.</p>
                           <button type="button" data-role-induction="1" onClick={() => { done(); window.dispatchEvent(new Event('wd-open-account')); }} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start my induction</button>
-                        </>) : (
-                          <p>When you're added to a job you'll see its plan and can log flights. Your account and sign-offs are under the button with your initials, top right.</p>
-                        )}
-                        <button type="button" data-role-later="1" onClick={done} className="w-full py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold">{auth.role === 'pilot' ? 'Later, show me the planner' : 'Go to the planner'}</button>
+                        </>) : (<>
+                          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3" data-welcome-evlos={welObs ? (welObs.current ? 'current' : 'needed') : 'loading'}>
+                            <div className="font-semibold text-slate-800 mb-0.5"><i className="fa-solid fa-binoculars text-violet-600 mr-1.5"></i>Your EVLOS observer sign-off</div>
+                            {!welObs ? <span className="text-slate-500">Checking…</span>
+                              : welObs.current ? <span className="text-emerald-700 font-semibold"><i className="fa-solid fa-circle-check mr-1"></i>Current{welObs.due ? ' until ' + dueTxt(welObs.due) : ''}. On each job you just read the brief and sign.</span>
+                              : <span>Not done yet. Before your first job, {by ? by.split(' ')[0] : 'the Chief Remote Pilot'} goes through a short sign-off with you, usually on site (about 5 minutes): where to stand, the standard calls, and when to call “Land now”. Nothing to do until then.</span>}
+                          </div>
+                          <p>When you're added to a job it shows on <b>Home › My jobs</b> with the plan and the brief to sign. Your account and sign-offs are under the button with your initials, top right.</p>
+                        </>)}
+                        <button type="button" data-role-later="1" onClick={done} className={`w-full py-2.5 rounded-xl font-semibold ${isPilot ? 'border border-slate-300 text-slate-700' : 'bg-violet-600 hover:bg-violet-700 text-white'}`}>{isPilot ? 'Later, show me the planner' : 'Go to the planner'}</button>
                       </div>
                     </div>
                   </div>
@@ -11081,7 +11229,6 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-lines text-lg text-blue-600 print:hidden"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 1: Operations Overview & Preliminary Assessment<CommentChip sec="overview" /></h2>
                       </div>
-                      <ReqStrip tab="preliminary" />
 
                       {/* PRINT: Section page title */}
                       <div className="hidden print:flex print-page-title">
@@ -12064,6 +12211,7 @@ View in the Database & Settings tab.`);
                           )}
                         </div>
 
+                        <ReqStrip tab="preliminary" bottom />
                         {/* Bottom Nav — Section 1 */}
                         <div className="mt-6 flex justify-between items-center print:hidden">
                           <span className="text-xs text-slate-400 italic">Step 1 of 4</span>
@@ -12085,7 +12233,6 @@ View in the Database & Settings tab.`);
                           <h2 className="text-lg font-semibold text-slate-800">Section 2: Job Safety Assessment (JSA)<CommentChip sec="jsa" /></h2>
                         </div>
                       </div>
-                      <ReqStrip tab="jsa" />
 
                       {/* PRINT: JSA page title */}
                       <div className="hidden print:flex print-page-title">
@@ -13620,6 +13767,7 @@ View in the Database & Settings tab.`);
                         </OonpSection>
 
 
+                        <ReqStrip tab="jsa" bottom />
                         {/* Bottom Nav — JSA */}
                         <div className="mt-6 flex justify-between items-center print:hidden">
                           <button data-allow-locked="1" onClick={() => setActiveTab('preliminary')} className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm border border-slate-200">
@@ -13643,7 +13791,6 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation<CommentChip sec="approval" /></h2>
                       </div>
-                      <ReqStrip tab="approval" />
                       {isCrpCloud && (() => {
                         const items = reqItems.filter(x => x.crew);
                         if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
@@ -14198,6 +14345,7 @@ View in the Database & Settings tab.`);
                           </OonpSection>
                         </div>
 
+                        <ReqStrip tab="approval" bottom />
                         {/* Bottom Nav */}
                         <div className="mt-6 flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-200 print:hidden">
                           <span className="text-xs text-slate-400 italic">Step 3 of 4</span>
@@ -14223,7 +14371,6 @@ View in the Database & Settings tab.`);
                         <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log<CommentChip sec="postflight" /></h2>
                         <div className="mt-2"><SigList rows={obsSigRows} kind="post_flight" title="Observers signed after the flight" /></div>
                       </div>
-                      <ReqStrip tab="log" title="to complete the record" />
                       {isCrpCloud && <div data-log-invite-bar="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 flex items-center gap-3 flex-wrap">
                         <i className="fa-solid fa-envelope-open-text text-violet-600 text-lg"></i>
                         <div className="flex-1 min-w-[12rem] text-sm text-violet-900">Want the RPIC or observer to fill this in? They get an email with a link to this job's flight log, and their flights and answers come back to you in Awaiting action.</div>
@@ -14617,6 +14764,7 @@ View in the Database & Settings tab.`);
                           })}
                         </div>
 
+                        <ReqStrip tab="log" title="to complete the record" bottom />
                         {/* Bottom Nav */}
                         <div className="mt-6 flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-200">
                           <button data-allow-locked="1" onClick={() => setActiveTab('approval')} className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm border border-slate-200">

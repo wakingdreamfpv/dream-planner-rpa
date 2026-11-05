@@ -157,6 +157,16 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
     if (error) setNote({ ok: false, t: error.message }); else { load(); window.wdCloud && window.wdCloud.refresh(); }
   };
   const pending = invites.filter(i => !i.accepted_user_id);
+  // v7.22: the CRP can send anyone a password reset or a one-tap sign-in link (Supabase sends it; nobody sees the password)
+  const sendReset = async (p, kind) => {
+    const who = p.full_name || p.email, back = location.origin + location.pathname;
+    if (!confirm(kind === 'reset' ? `Email ${who} a link to choose a new password?\n\nTheir current password keeps working until they change it.` : `Email ${who} a one-tap sign-in link?\n\nUseful if their invite link expired or they're locked out. It signs them in without a password.`)) return;
+    const { error } = kind === 'reset' ? await sb.auth.resetPasswordForEmail(p.email, { redirectTo: back })
+      : await sb.auth.signInWithOtp({ email: p.email, options: { shouldCreateUser: false, emailRedirectTo: back } });
+    setNote(error ? { ok: false, t: (/rate|seconds/i.test(error.message) ? 'Too many emails just now; wait a minute and try again. ' : 'Not sent: ') + error.message }
+      : { ok: true, t: (kind === 'reset' ? 'Password reset email sent to ' : 'Sign-in link sent to ') + p.email + '. It works once and expires after an hour.' });
+    try { document.querySelector('[data-testid=invite-msg]') && document.querySelector('[data-testid=invite-msg]').scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* ok */ }
+  };
   if (!show) return (
     <button type="button" data-testid="crew-admin-toggle" onClick={() => setShow(true)} className="w-full flex items-center gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
       <i className="fa-solid fa-users text-violet-600"></i>
@@ -195,6 +205,10 @@ function CrewAdmin({ sb, me, defaultOpen = true }) {
                 if (!r) return p.role === 'pilot' ? <span data-ind-of={p.email} className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Induction not started</span> : null;
                 return <span className="flex items-center gap-1.5" data-ind-of={p.email}><StatusPill s={r.status} />{r.status === 'certified' && r.crp_signed_at && <span className="text-[11px] text-slate-500 hidden sm:inline">{fmt(r.crp_signed_at)}</span>}
                   {r.status !== 'draft' && <button type="button" data-crew-review={p.email} onClick={() => setReview(r.id)} className={`text-xs px-2 py-1 rounded font-semibold ${r.status === 'awaiting_crp' ? 'bg-violet-600 text-white' : 'border border-slate-300 text-slate-700'}`}>{r.status === 'awaiting_crp' ? 'Review' : 'View'}</button>}</span>; })()}
+              {p.id !== me.id && p.active && <span className="flex gap-1.5">
+                <button type="button" data-crew-reset={p.email} onClick={() => sendReset(p, 'reset')} title="Email them a link to choose a new password" className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50"><i className="fa-solid fa-key mr-1"></i>Reset password</button>
+                <button type="button" data-crew-link={p.email} onClick={() => sendReset(p, 'link')} title="Email them a one-tap sign-in link" className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50"><i className="fa-solid fa-envelope mr-1"></i>Sign-in link</button>
+              </span>}
               {p.id !== me.id && <button type="button" onClick={() => { if (p.active ? confirm(`Deactivate ${p.full_name || p.email}? They can't sign in to see crew records until reactivated. Their records are kept.`) : true) update(p.id, { active: !p.active }); }} className={`text-xs px-2 py-1 rounded border ${p.active ? 'border-slate-300 text-slate-600' : 'border-emerald-300 text-emerald-700'}`}>{p.active ? 'Deactivate' : 'Activate'}</button>}
             </div>
           ))}
@@ -247,8 +261,15 @@ function AccountPanel() {
   }, [sb]);
   useEffect(() => {
     const hash = typeof location !== 'undefined' ? location.hash : '';
-    const t = /type=(invite|recovery|signup)/.exec(hash);
-    sb.auth.getSession().then(({ data }) => { setSession(data.session); loadMe(data.session); setLoading(false); if (t && data.session) { setNeedPw(t[1]); setOpen(true); } });
+    let t = /type=(invite|recovery|signup)/.exec(hash);
+    // v7.22: the planner reloads once after a first sign-in (to open the person's own space), which can drop the link's
+    // details from the address bar; keep them for this tab so the password step still happens after the reload
+    try { if (t) sessionStorage.setItem('wd_pw_intent', t[1]); else { const k = sessionStorage.getItem('wd_pw_intent'); if (k) t = [k, k]; } } catch (e) { /* ok */ }
+    // v7.22: a crew member arriving from their invite gets one welcome card (with an optional password) from the planner
+    // instead of a separate "Set your password" pop-up; the CRP, and password resets, still get this panel's form
+    sb.auth.getSession().then(({ data }) => { setSession(data.session); loadMe(data.session); setLoading(false);
+      if (t && data.session) { if (t[1] === 'recovery') { setNeedPw('recovery'); setOpen(true); } else setInvitePw(t[1]); }
+      if (t && !data.session) { try { sessionStorage.removeItem('wd_pw_intent'); } catch (e) { /* ok */ } } });
     const { data: sub } = sb.auth.onAuthStateChange((evt, s) => {
       setSession(s); loadMe(s);
       if (evt === 'PASSWORD_RECOVERY') { setNeedPw('recovery'); setOpen(true); }
@@ -256,6 +277,18 @@ function AccountPanel() {
     return () => sub && sub.subscription && sub.subscription.unsubscribe();
   }, [sb, loadMe]);
   const signOut = async () => { await sb.auth.signOut(); setOpen(false); };
+  const [invitePw, setInvitePw] = useState(null);
+  useEffect(() => {
+    if (!invitePw || !me) return;
+    if (!(me.active && me.role && me.role !== 'crp')) { setNeedPw(invitePw); setOpen(true); setInvitePw(null); }
+  }, [invitePw, me]);
+  useEffect(() => {
+    const clear = () => { try { history.replaceState(null, '', location.pathname + location.search); sessionStorage.removeItem('wd_pw_intent'); } catch (e) { /* ok */ } };
+    const done = () => { setInvitePw(null); clear(); };
+    const own = () => { setNeedPw('invite'); setOpen(true); setInvitePw(null); };
+    window.addEventListener('wd-invite-pw-done', done); window.addEventListener('wd-open-setpw', own);
+    return () => { window.removeEventListener('wd-invite-pw-done', done); window.removeEventListener('wd-open-setpw', own); };
+  }, []);
   useEffect(() => { const h = () => setOpen(false); window.addEventListener('wd-close-account', h); return () => window.removeEventListener('wd-close-account', h); }, []);
   // v7.4 (Chunk 2b): jobs, crew, shared data and access requests in the cloud
   useCloudJobs(sb, me);
@@ -278,10 +311,11 @@ function AccountPanel() {
   // v6.8: the planner routes first-time users by sign-in state and role
   useEffect(() => {
     const v = loading ? { state: 'loading' } : !session ? { state: 'out' }
-      : { state: 'in', userId: session.user.id, email: session.user.email, name: (me && me.full_name) || '', role: (me && me.active && me.role) || null, ready: !!me };
+      : { state: 'in', userId: session.user.id, email: session.user.email, name: (me && me.full_name) || '', role: (me && me.active && me.role) || null, ready: !!me,
+          meta: session.user.user_metadata || {}, invitePw: !!invitePw };
     window.wdAuth = v; window.dispatchEvent(new Event('wd-auth'));
     if (session) { try { localStorage.removeItem('wd_edition'); } catch (e) {} }
-  }, [loading, session, me]);
+  }, [loading, session, me, invitePw]);
   const [toast, setToast] = useState('');
   // v7.2.4: links from the induction emails open the right screen (#review-induction=<id> for the CRP, #my-induction for the pilot)
   const readDeep = () => { const h = (typeof location !== 'undefined' && location.hash) || ''; const m = /^#review-induction=([A-Za-z0-9_-]{4,})$/.exec(h); return m ? { review: m[1] } : h === '#my-induction' ? { mine: true } : null; };
@@ -387,7 +421,7 @@ function AccountPanel() {
       {inline}
       {open && (
         <Modal title={needPw ? 'Set your password' : session ? 'Account & crew' : 'Sign in'} onClose={() => setOpen(false)}>
-          {needPw && session ? <SetPassword sb={sb} why={needPw} onDone={() => { setNeedPw(null); history.replaceState(null, '', location.pathname + location.search); }} />
+          {needPw && session ? <SetPassword sb={sb} why={needPw} onDone={() => { setNeedPw(null); history.replaceState(null, '', location.pathname + location.search); try { sessionStorage.removeItem('wd_pw_intent'); } catch (e) { /* ok */ } }} />
             : !session ? <SignIn sb={sb} onDone={() => setOpen(false)} />
             : accountView(false)
 }
