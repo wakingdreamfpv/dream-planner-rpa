@@ -17,7 +17,7 @@ MOCK = r"""
     {id:'u-p1',email:'pilot@test.com',full_name:'Test Pilot',role:'pilot',active:true},
     {id:'u-o1',email:'obs@test.com',full_name:'Obs One',role:'observer',active:true}];
   const me = role ? users.find(p=>p.role===role) : null;
-  const session = me ? { user: { id: me.id, email: me.email } } : null;
+  const session = me ? { user: { id: me.id, email: me.email, user_metadata: window.__META || {} } } : null;
   if (me) { try { localStorage.setItem('wd_auth_email', me.email); localStorage.setItem('wd_role:' + me.email, me.role); } catch (e) {} }
   const seed = window.__SEED || {};
   const T = { profiles: role==='crp' ? users : users.filter(u=>me&&u.id===me.id), invites: [],
@@ -52,7 +52,10 @@ MOCK = r"""
     return api; };
   window.__WD_SUPABASE_MOCK__ = {
     auth: { getSession: async () => ({ data: { session } }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe(){} } } }),
-      signOut: async () => ({ error: null }) },
+      signOut: async () => ({ error: null }),
+      updateUser: async (u) => { window.__calls.push({ auth: 'updateUser', args: u }); if (session && u && u.data) session.user.user_metadata = { ...session.user.user_metadata, ...u.data }; return { data: { user: session && session.user }, error: null }; },
+      resetPasswordForEmail: async (email, o) => { window.__calls.push({ auth: 'reset', email, o }); return { error: null }; },
+      signInWithOtp: async (a) => { window.__calls.push({ auth: 'otp', args: a }); return { error: null }; }, signInWithPassword: async () => ({ error: null }) },
     from: q,
     rpc: async (fn, args) => { window.__calls.push({ rpc: fn, args });
       if (window.__RPC && window.__RPC[fn]) return window.__RPC[fn](args, T);

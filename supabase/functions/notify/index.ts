@@ -1,4 +1,4 @@
-// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.18 ═══
+// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.22 ═══
 // Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
@@ -151,6 +151,34 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ from, to: send5, subject: subject5, html: html5 }) });
       if (!r6.ok) return json({ ok: false, error: 'Email failed: ' + (await r6.text()).slice(0, 200) }, 502);
       return json({ ok: true, sent: 1, name: name5, email: r5.email });
+    }
+    // v7.22: a pilot or observer saved changes to a company plan → they arrive as suggestions; email the CRP(s) to review them
+    if (event === 'plan_suggestions') {
+      const jobId8 = String(body.job_id || '');
+      const { data: job } = await admin.from('jobs').select('id, title, op_id, start_date').eq('id', jobId8).single();
+      if (!job) return json({ error: 'Job not found' }, 404);
+      const { data: mine } = await admin.from('job_crew').select('job_role, people:person_id!inner (full_name, user_id)').eq('job_id', job.id).eq('people.user_id', who.user.id);
+      const onJob8 = (mine || [])[0] as any;
+      if (!onJob8) return json({ error: 'You are not on this job' }, 403);
+      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: sg } = await admin.from('plan_comments').select('body, suggestion').eq('job_id', job.id).eq('author_user', who.user.id).eq('kind', 'suggestion').eq('status', 'open').gte('created_at', since);
+      if (!sg || !sg.length) return json({ error: 'No new suggestions' }, 400);
+      const { data: crps } = await admin.from('profiles').select('email').eq('role', 'crp').eq('active', true);
+      const to8 = await keep((crps || []).map((c: any) => c.email).filter(Boolean), 'plan_suggestions');
+      if (!to8.length) return json({ ok: true, sent: 0, message: 'No CRP to email' });
+      if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing); shown in the planner only' });
+      const nm8 = onJob8.people?.full_name || 'A crew member', role8 = ({ rpic: 'RPIC', pilot: 'pilot', observer: 'observer' } as Record<string, string>)[onJob8.job_role] || 'crew member';
+      const subject8 = `${nm8} suggested ${sg.length === 1 ? 'a change' : sg.length + ' changes'} to ${job.title || job.op_id || 'a job'}`;
+      const items = sg.slice(0, 8).map((x: any) => `<li style="margin:0 0 6px;">${esc(String(x.body || '').slice(0, 220))}</li>`).join('');
+      const html8 = page(subject8,
+        P(`<b>${esc(nm8)}</b> (${esc(role8)}) changed the plan for <b>${esc(job.title || '')}</b>${job.op_id ? ' (' + esc(job.op_id) + ')' : ''}${job.start_date ? ' · ' + esc(job.start_date) : ''}. Nothing has changed in your plan yet.`) +
+        `<ul style="margin:0 0 12px 18px;padding:0;font-size:14px;color:#334155;">${items}</ul>` + (sg.length > 8 ? P(`…and ${sg.length - 8} more.`) : '') +
+        P('Open the job to accept or decline each one. Accepted changes go into the plan; then save the job.'),
+        'Review the changes', appUrl + '#job-comments=' + job.id);
+      const r8 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: to8, subject: subject8, html: html8 }) });
+      if (!r8.ok) return json({ ok: false, error: 'Email failed: ' + (await r8.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: to8.length });
     }
     // v7.5.2: a crew member signed as RPIC on a company job → email the CRP(s)
     if (event === 'rpic_signed') {
