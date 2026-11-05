@@ -1,4 +1,4 @@
-// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.16 ═══
+// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.18 ═══
 // Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
@@ -108,6 +108,25 @@ Deno.serve(async (req) => {
         if (r3.ok) sent++;
       }
       return json({ ok: true, sent, skipped });
+    }
+    // v7.18: the CRP emails a live plan link (client or crew) — they view the plan and comment, no login
+    if (event === 'plan_link') {
+      if (me.role !== 'crp') return json({ error: 'Only the CRP can send this' }, 403);
+      const to7 = String(body.email || '').trim().toLowerCase(), link7 = String(body.link || '');
+      if (!/^\S+@\S+\.\S+$/.test(to7)) return json({ error: 'Enter a valid email' }, 400);
+      if (!link7.startsWith(appUrl.replace(/\/$/, '')) || !/#plan=[a-f0-9]{40,80}$/i.test(link7)) return json({ error: 'Not a planner plan link' }, 400);
+      if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing)' });
+      const { data: crpP7 } = await admin.from('profiles').select('full_name').eq('id', who.user.id).single();
+      const title7 = String(body.title || '').slice(0, 120), nm7 = String(body.name || '').split(' ')[0].slice(0, 40);
+      const subject7 = `Flight plan for review: ${title7}`;
+      const html7 = page(subject7,
+        (nm7 ? P(`Hi ${esc(nm7)},`) : '') +
+        P(`${esc(crpP7?.full_name || 'The Chief Remote Pilot')} has shared the flight plan for <b>${esc(title7)}</b> with you.`) +
+        P(body.audience === 'crew' ? 'Open it on your phone or computer: read the plan, comment on any section and suggest changes. No login needed.' : 'Open it on your phone or computer, read the plan, and leave comments or questions on any section. No login needed.') +
+        P('The link always shows the latest version of the plan.'), 'Open the plan', link7);
+      const r7 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to7], subject: subject7, html: html7 }) });
+      if (!r7.ok) return json({ ok: false, error: 'Email failed: ' + (await r7.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: 1 });
     }
     // v7.16: the CRP asks the job's RPIC to log in and sign the plan
     if (event === 'rpic_sign_request') {
