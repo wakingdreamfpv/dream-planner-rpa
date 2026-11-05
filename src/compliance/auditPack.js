@@ -22,8 +22,9 @@ table{width:100%;border-collapse:collapse;margin:4px 0}th,td{text-align:left;pad
 .sig{display:flex;gap:16px;margin-top:6px}.sig>div{flex:1;border-top:1px solid #94a3b8;padding-top:3px}.sig img{max-height:48px;max-width:220px;display:block}.typed{font:italic 16px Georgia,serif}
 .muted{color:#64748b}.foot{margin-top:18px;font-size:9px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:6px}`;
 
-export function printHtml(title, body, testId = 'audit') {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${CSS}</style></head><body>${body}</body></html>`;
+export const docHtml = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${CSS}</style></head><body>${body}</body></html>`;
+export function printHtml(title, body, testId = 'audit', full) {
+  const html = full || docHtml(title, body);
   document.querySelectorAll('iframe[data-print-frame]').forEach((f) => f.remove());
   const f = document.createElement('iframe');
   f.setAttribute('data-print-frame', testId); f.setAttribute('title', title);
@@ -45,6 +46,17 @@ function answersHtml(a) {
   return `<div class="kv" style="margin-top:4px">${rows.map(([k, v]) => `<div>${esc(label(k))}</div><div>${val(v)}</div>`).join('')}</div>`;
 }
 
+// v7.21 (Chunk 5): the printable signed copy of one locked sign-off version, made from the data the database kept
+export function signoffCopyHtml(s, personName, company = '', meta = {}) {
+  const t = (SO_TYPE[s.type] || s.type) + ' — ' + (personName || '');
+  const body = `<div class="band"><small>${esc(company || 'Dream Planner RPA')} · Signed copy · version ${esc(meta.version || s.version || 1)}</small><h1>${esc(t)}</h1>
+    <div>${esc(SO_STATUS[s.status] || s.status)} · locked${s.crp_signed_at ? ' · CRP signed ' + fmtDT(s.crp_signed_at) : ''}${s.manual_version ? ' · manual ' + esc(s.manual_version) : ''}</div></div>
+    ${s.correction_reason ? `<div class="so"><b>Correction (version ${esc(s.version)}):</b> ${esc(s.correction_reason)}</div>` : ''}
+    <div class="so">${answersHtml(s.answers)}<div class="sig">${sigCell(s.person_signature, (s.person_signature && s.person_signature.name) || personName, s.person_signed_at)}${sigCell(s.crp_signature, 'CRP', s.crp_signed_at)}</div></div>
+    <div class="foot">Record ${esc(s.id)} · chain ${esc(s.chain_id || s.id)} · this copy was kept when the record locked${meta.data_hash ? ' · data fingerprint (SHA-256) ' + esc(meta.data_hash) : ''}. It can't be changed; corrections are new versions.</div>`;
+  return docHtml('Signed copy – ' + t, body);
+}
+
 export async function loadAuditData(sb, personId) {
   const one = async (q) => { try { const { data } = await q; return data || []; } catch (e) { return []; } };
   const { data: person, error } = await sb.from('people').select('*').eq('id', personId).maybeSingle();
@@ -59,7 +71,8 @@ export async function loadAuditData(sb, personId) {
     one(sb.from('job_crew').select('job_role, jobs:job_id (title, op_id, status, start_date)').eq('person_id', personId)),
     person.user_id ? one(sb.from('document_access_log').select('document, doc_version, page, opened_at, duration_s').eq('user_id', person.user_id).order('opened_at', { ascending: false }).limit(200)) : Promise.resolve([]),
   ]);
-  return { person, cur, certs, signoffs, flights, exp, hours, jobs: jobs.filter((j) => j.jobs).map((j) => ({ ...j.jobs, role: j.job_role })), reads };
+  const versions = await one(sb.from('record_versions').select('id, record_id, chain_id, version, data_hash, copy_hash, reason, created_at').eq('person_id', personId).order('created_at', { ascending: true }));
+  return { person, cur, certs, signoffs, flights, exp, hours, jobs: jobs.filter((j) => j.jobs).map((j) => ({ ...j.jobs, role: j.job_role })), reads, versions };
 }
 
 export function auditPackHtml(d, company = '') {
@@ -72,8 +85,11 @@ export function auditPackHtml(d, company = '') {
     ['Medical expiry', p.medical_expiry ? fmtD(p.medical_expiry) : ''], ['Date last engaged', p.date_last_engaged ? fmtD(p.date_last_engaged) + (yrs > 7 ? ' — over 7 years ago (records may be archived)' : '') : '—'], ['Notes', esc(p.notes)]]);
   h += `<h2>Currency</h2>` + (d.cur.length ? `<table><tr><th>Competency</th><th>Checked</th><th>Assessor</th><th>Due</th><th>Status</th><th>Flights yr 1 / last 12 mo</th></tr>${d.cur.map((r) => `<tr><td>${esc(compLabel(r.competency))}</td><td>${fmtD(r.check_date)}</td><td>${esc(r.assessor)}</td><td>${r.due ? fmtD(r.due) : 'No expiry'}${r.extended ? ' <span class="muted">(extended by flights)</span>' : ''}</td><td><span class="pill ${esc(r.status)}">${esc(STATUS_LABEL[r.status] || r.status)}</span></td><td>${r.flights_first != null ? `${r.flights_first} / ${r.flights_recent}` : '—'}</td></tr>`).join('')}</table>` : '<p class="muted">No certifications.</p>');
   if (d.certs.length) h += `<h3>Every check on record</h3><table><tr><th>Competency</th><th>Checked</th><th>Next due</th><th>Assessor</th></tr>${d.certs.map((c) => `<tr><td>${esc(compLabel(c.competency))}</td><td>${fmtD(c.check_date)}</td><td>${fmtD(c.next_due)}</td><td>${esc(c.assessor)}</td></tr>`).join('')}</table>`;
-  h += `<h2>Sign-offs (${d.signoffs.length})</h2>` + (d.signoffs.length ? d.signoffs.map((s) => `<div class="so"><b>${esc(SO_TYPE[s.type] || s.type)}</b> · ${esc(SO_STATUS[s.status] || s.status)}${s.locked ? ' · locked' : ''}${s.manual_version ? ' · manual ' + esc(s.manual_version) : ''}${(s.answers || {}).source ? ` · <i>${esc(s.answers.source)}</i>` : ''}
-    ${answersHtml(s.answers)}<div class="sig">${sigCell(s.person_signature, (s.person_signature && s.person_signature.name) || p.full_name, s.person_signed_at)}${sigCell(s.crp_signature, 'CRP', s.crp_signed_at)}</div></div>`).join('') : '<p class="muted">None.</p>');
+  h += `<h2>Sign-offs (${d.signoffs.length})</h2>` + (d.signoffs.length ? d.signoffs.map((s) => `<div class="so"><b>${esc(SO_TYPE[s.type] || s.type)}</b> · ${esc(SO_STATUS[s.status] || s.status)}${s.locked ? ' · locked' : ''}${s.version > 1 ? ' · version ' + esc(s.version) : ''}${s.superseded_by ? ' · <i>superseded by a correction</i>' : ''}${s.manual_version ? ' · manual ' + esc(s.manual_version) : ''}${(s.answers || {}).source ? ` · <i>${esc(s.answers.source)}</i>` : ''}
+    ${s.correction_reason ? `<div><b>Correction:</b> ${esc(s.correction_reason)}</div>` : ''}${answersHtml(s.answers)}<div class="sig">${sigCell(s.person_signature, (s.person_signature && s.person_signature.name) || p.full_name, s.person_signed_at)}${sigCell(s.crp_signature, 'CRP', s.crp_signed_at)}</div></div>`).join('') : '<p class="muted">None.</p>');
+  if ((d.versions || []).length) h += `<h3>Locked copies and fingerprints (SHA-256)</h3><table><tr><th>Kept</th><th>Record</th><th>Version</th><th>Reason</th><th>Data fingerprint</th><th>Signed copy fingerprint</th></tr>${d.versions.map((v) => { const so = d.signoffs.find((x) => x.id === v.record_id) || {};
+    return `<tr><td>${fmtDT(v.created_at)}</td><td>${esc(SO_TYPE[so.type] || so.type || '')}</td><td>${esc(v.version)}</td><td>${esc(v.reason || '')}</td><td style="font:9px monospace;word-break:break-all">${esc(v.data_hash)}</td><td style="font:9px monospace;word-break:break-all">${esc(v.copy_hash || 'not made yet')}</td></tr>`; }).join('')}</table>
+    <p class="muted">Each locked copy is kept by the database and can't be changed or deleted. "Verify" in the planner works each fingerprint out again from the stored copy.</p>`;
   const tot = d.hours.reduce((t, x) => t + (x.seconds || 0), 0);
   h += `<h2>Experience and logged time</h2>`;
   if (d.exp.length) h += `<h3>Hours on type (declared or verified)</h3><table><tr><th>Aircraft</th><th>Hours</th></tr>${d.exp.map((x) => `<tr><td>${esc(x.rpa_type)}</td><td>${esc(x.hours)}</td></tr>`).join('')}</table>`;

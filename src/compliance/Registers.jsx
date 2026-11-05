@@ -5,6 +5,7 @@ import { getSupabase } from '../cloud/client.js';
 import { compLabel, STATUS_LABEL } from './currency.js';
 import RegisterImport from './RegisterImport.jsx';
 import { printAuditPack, printRegisters } from './auditPack.js';
+import { ensureSignoffCopies } from './Versions.jsx';
 
 const TABS = [['all', 'All'], ['induction', 'Induction'], ['type', 'Type'], ['evlos', 'EVLOS'], ['oonp', 'OONP'], ['night', 'Night'], ['evlos_observer', 'EVLOS observers']];
 const fmtD = (d) => { if (!d) return '—'; const x = new Date(d); return isNaN(x) ? String(d) : x.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -31,6 +32,8 @@ export default function Registers({ fleetTypes = [], crpName = '', company = '' 
       setSt({ loading: false, rows: rows || [], people: people || [], hours: hours || [] });
     } catch (e) { setSt({ loading: false, rows: [], people: [], hours: [], error: String((e && e.message) || e) }); }
   };
+  // v7.21: make the printable signed copy for any locked sign-off that doesn't have one yet (quietly, in the background)
+  useEffect(() => { ensureSignoffCopies(sb, company); }, []); // eslint-disable-line
   useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-currency', h); return () => window.removeEventListener('wd-currency', h); }, []); // eslint-disable-line
 
   const hrs = (pid) => st.hours.filter((h) => h.person_id === pid).reduce((t, h) => t + (Number(h.seconds) || 0), 0) / 3600;

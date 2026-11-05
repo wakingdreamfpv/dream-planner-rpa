@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import SignaturePad, { SignatureView } from './SignaturePad.jsx';
 import { TLDR, APPROVALS, DECLARATION_TITLE, DECLARATION_ITEMS, CONFIDENTIALITY, CRP_CHECKS, CRP_CERTIFY } from './inductionText.js';
+import { RecordVersions, CorrectSignoff } from '../compliance/Versions.jsx';
 
 const btn = 'px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed';
 const input = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300';
@@ -271,10 +272,11 @@ export function CrpInductions({ sb, me, onCount, autoOpenId }) {
   const [manual, setManual] = useState(''), [mvMsg, setMvMsg] = useState('');
   const load = useCallback(async () => {
     const { data, error } = await sb.from('signoff_records')
-      .select('id, status, created_at, person_signed_at, crp_signed_at, person_id, people:person_id (full_name, email)')
+      .select('id, status, created_at, person_signed_at, crp_signed_at, person_id, superseded_by, version, people:person_id (full_name, email)')
       .eq('type', 'pilot_induction').order('created_at', { ascending: false });
     if (error) { setErr(errText(error)); return; }
-    setList(data || []); onCount && onCount((data || []).filter(r => r.status === 'awaiting_crp').length);
+    const rows = (data || []).filter(r => !r.superseded_by); // v7.21: a corrected induction shows its latest version
+    setList(rows); onCount && onCount(rows.filter(r => r.status === 'awaiting_crp').length);
     const { data: mv } = await sb.from('app_settings').select('value').eq('key', 'manual_version').maybeSingle();
     setManual((mv && mv.value) || '');
   }, [sb, onCount]);
@@ -311,7 +313,8 @@ export function CrpInductions({ sb, me, onCount, autoOpenId }) {
   );
 }
 
-export function CrpReview({ sb, me, id, onClose }) {
+export function CrpReview({ sb, me, id: id0, onClose }) {
+  const [id, setId] = useState(id0), [fix, setFix] = useState(false), [vKey, setVKey] = useState(0); // v7.21: corrections open the new version
   const [rec, setRec] = useState(null), [person, setPerson] = useState(null), [exp, setExp] = useState([]), [err, setErr] = useState('');
   const [assessed, setAssessed] = useState([]), [ticks, setTicks] = useState({}), [oonpHrs, setOonpHrs] = useState(false);
   const [checkDate, setCheckDate] = useState(new Date().toISOString().slice(0, 10)), [notes, setNotes] = useState('');
@@ -383,7 +386,10 @@ export function CrpReview({ sb, me, id, onClose }) {
             <div><span className="text-slate-500">Checked:</span> {fmtD(crp.checkDate)} · {(crp.competencies || []).map(compLabel).join(', ') || 'no competencies'}</div>
             {crp.notes && <div><span className="text-slate-500">Notes:</span> {crp.notes}</div>}
             <SignatureView sig={rec.crp_signature} at={rec.crp_signed_at} />
-            <div className="text-xs text-slate-500"><i className="fa-solid fa-lock mr-1"></i>Locked. Corrections are made as a new version (Chunk 5).</div>
+            {rec.superseded_by && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900" data-testid="ind-old-version">This is version {rec.version || 1}, kept as it was signed. It has been corrected. <button type="button" className="underline font-semibold" onClick={() => setId(rec.superseded_by)}>Open the latest version</button></div>}
+            {rec.correction_reason && <div className="text-xs text-slate-700" data-testid="ind-correction"><b>Version {rec.version}, corrected:</b> {rec.correction_reason}</div>}
+            {rec.locked && <RecordVersions sb={sb} kind="signoff" chainId={rec.chain_id || rec.id} isCrp reloadKey={vKey} canCorrect={!rec.superseded_by} onCorrect={() => setFix(true)} />}
+            {fix && <CorrectSignoff sb={sb} rec={rec} onClose={() => setFix(false)} onDone={(nid) => { setFix(false); setVKey(k => k + 1); setRec(null); setId(nid); }} />}
           </div>
         ) : (
           <>
