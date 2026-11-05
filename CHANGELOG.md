@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.20 — 5 Nov 2026 — Live link laid out like the planner; KE for clients; choose what they see
+- **Laid out like the planner:** the live link now has the planner's side menu (**Preliminary**, **JSA & Risk**, **Authorisation**, **Flight Log**), with the same icons and highlight. Each tab shows one section card with the planner's grey header bar ("Section 2: Job Safety Assessment (JSA)"), and the headings inside use the planner's style, with a Comment button beside each one. On a phone the menu becomes a row of tabs across the top.
+- **Risk register as in the planner:** the same table, with Ref, Date added, Hazard, Risk description, Existing controls, Initial risk (L, C, rating), Additional controls, Residual risk (L, C, rating) and Risk owner. Each L and C shows its meaning (e.g. "4 Occasional", "B Hazardous"), and the ratings use the planner's colours.
+- **Energy transfer (KE) is its own section** in the PDF views and the live link. It is on in **Client view** and **WHS inspector**, so clients now see the KE tool and the ballistic splash area. Before, it was tied to the OONP section, which Client view leaves out. It shows on any job with OONP, a KE chart, extra KE charts or the ballistic splash turned on. Your own saved PDF views include it automatically; untick it in Database & Settings › PDF views if you don't want it.
+- **Choose what they see when sharing:** Share › **Choose what they see** lists every part of the plan with ticks. It starts from the view's defaults (Client view for a client, WHS inspector for crew/VO). Change any tick for this link only; "Back to Client view" resets it. The link remembers your picks each time it refreshes, and the link list shows it as "Client view (edited)".
+- **Supabase:** nothing to do.
+- **Tests:** live-link suite now 33 checks (tabs, planner table, KE in Client view, section picker); PDF views, collab, smoke and all 10 database suites pass.
+
 ## v7.19 — 5 Nov 2026 — Live link looks like the app, with the 3D map and the KE tool
 - **The live link is now a simplified version of the planner itself**, not a PDF copy: the same cards, colours and type as the app, with section chips at the top to jump around, and it works on a phone.
 - **Same sections as the PDF view you share:** whatever a view strips out of the PDF (e.g. Client view drops internal checklists, JSA detail, logs and crew records) is stripped out of the live link too.

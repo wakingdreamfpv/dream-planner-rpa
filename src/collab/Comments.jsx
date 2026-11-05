@@ -9,9 +9,26 @@ import PlanViewer from './PlanViewer.jsx';
 
 export const SECTIONS = [
   ['overview', 'Operation overview'], ['sites', 'Launch, recovery & sites'], ['map', 'Operations area map'], ['advmap', 'Advanced ops map'],
-  ['prelim', 'Preliminary checklist'], ['jsa', 'JSA'], ['emergency', 'Emergency contacts'], ['rf', 'RF coordination'], ['oonp', 'OONP'],
+  ['prelim', 'Preliminary checklist'], ['jsa', 'JSA'], ['emergency', 'Emergency contacts'], ['rf', 'RF coordination'], ['oonp', 'OONP'], ['ke', 'Energy transfer (KE)'],
   ['risks', 'Risk assessment register'], ['approval', 'Approval & NOTAMs'], ['postflight', 'Post-flight log'], ['flightlog', 'Flight log'], ['general', 'General'],
 ];
+// v7.20: the parts of the plan a live link can show, to tick on or off when sharing (starts from the audience's view)
+export const LINK_SECS = [
+  ['1', 'Section 1 · Preliminary', [['overview', 'Operation overview'], ['sites', 'Launch, recovery & sites'], ['prelim', 'Preliminary checklist'], ['map', 'Operations area map'], ['advmap', 'Advanced ops map (3D)']]],
+  ['2', 'Section 2 · JSA & Risk', [['jsa', 'JSA'], ['emergency', 'Emergency contacts'], ['rf', 'RF coordination'], ['oonp', 'OONP'], ['ke', 'Energy transfer (KE) & ballistic'], ['risks', 'Risk assessment register']]],
+  ['3', 'Section 3 · Authorisation', [['approval', 'Approval, NOTAMs & signatures']]],
+  ['4', 'Section 4 · Flight log', [['postflight', 'Post-flight log'], ['amendments', 'Record of amendments'], ['flightlog', 'Flight log by RPA']]],
+  ['A', 'Appendix', [['attachments', 'Site attachments']]],
+];
+const LINK_KEYS = LINK_SECS.flatMap((g) => g[2].map((x) => x[0]));
+const secOn = (sections, k) => (sections || {})[k] !== false;
+// a link's view: one of the PDF views, or that view with sections ticked on/off when it was shared ("pick:<view id>:<keys>")
+export function linkView(id, views) {
+  const m = /^pick:([^:]*):(.*)$/.exec(String(id || ''));
+  if (!m) return views.find((x) => x.id === id) || views[0];
+  const base = views.find((x) => x.id === m[1]) || views[0] || { name: 'Plan' }, keys = m[2].split(',').filter(Boolean);
+  return { ...base, id, name: (base.name || 'Plan') + ' (edited)', sections: { ...(base.sections || {}), ...Object.fromEntries(LINK_KEYS.map((k) => [k, keys.includes(k)])) } };
+}
 export const secLabel = (k) => (SECTIONS.find((s) => s[0] === k) || [k, k])[1];
 // fields a crew member can suggest a new value for (anything else: a written suggestion the CRP does by hand)
 export const SUGGEST_FIELDS = {
@@ -203,11 +220,17 @@ export function SharePanel({ jobId, jobTitle, views, makeSnapshot, onClose }) {
   const load = async () => { try { const { data, error } = await sb.from('plan_links').select('id,audience,label,email,view_id,view_name,created_at,expires_at,revoked,snapshot_at').eq('job_id', jobId).order('created_at', { ascending: false }); if (error) throw error; setLinks(data || []); }
     catch (e) { setErr(String((e && e.message) || e) + (/relation|does not exist/i.test(String(e && e.message)) ? ' (run the Supabase migration 0010)' : '')); setLinks([]); } };
   useEffect(() => { load(); }, [jobId]); // eslint-disable-line
-  const setAud = (a) => setF((x) => ({ ...x, audience: a, view: (views.find((v) => v.id === (a === 'client' ? 'client' : 'whs')) || views[0] || {}).id }));
+  const setAud = (a) => { const v = (views.find((x) => x.id === (a === 'client' ? 'client' : 'whs')) || views[0] || {}).id; setF((x) => ({ ...x, audience: a, view: v })); setPick(null); };
+  // v7.20: tick what they see; starts from the chosen view's sections (Client view for a client, WHS inspector for crew)
+  const [pick, setPick] = useState(null), [pickOpen, setPickOpen] = useState(false);
+  const baseView = views.find((x) => x.id === f.view) || views[0] || {};
+  const ticked = pick || LINK_KEYS.filter((k) => secOn(baseView.sections, k));
+  const edited = !!pick && (pick.length !== LINK_KEYS.filter((k) => secOn(baseView.sections, k)).length || pick.some((k) => !secOn(baseView.sections, k)));
+  const toggle = (k) => setPick(ticked.includes(k) ? ticked.filter((x) => x !== k) : [...ticked, k]);
   const make = async () => {
     setBusy(true); setErr('');
     try {
-      const v = views.find((x) => x.id === f.view) || views[0];
+      const v = edited ? linkView('pick:' + baseView.id + ':' + ticked.join(','), views) : baseView;
       const snap = markSections(makeSnapshot(v));
       const { data, error } = await sb.rpc('create_plan_link', { p_job_id: jobId, p_audience: f.audience, p_label: f.label, p_email: f.email, p_days: Number(f.days) || 30, p_view_id: v.id, p_view_name: v.name, p_snapshot: snap });
       if (error) throw error;
@@ -244,8 +267,18 @@ export function SharePanel({ jobId, jobTitle, views, makeSnapshot, onClose }) {
             <div className="grid sm:grid-cols-2 gap-2">
               <label className="text-xs font-semibold text-slate-600">Their name<input className={sel + ' mt-1'} data-share-label="1" value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder="e.g. Sarah, events manager" /></label>
               <label className="text-xs font-semibold text-slate-600">Email (optional, sends it)<input className={sel + ' mt-1'} type="email" data-share-email="1" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></label>
-              <label className="text-xs font-semibold text-slate-600">What they see<select className={sel + ' mt-1'} data-share-view="1" value={f.view} onChange={(e) => setF({ ...f, view: e.target.value })}>{views.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label>
+              <label className="text-xs font-semibold text-slate-600">What they see<select className={sel + ' mt-1'} data-share-view="1" value={f.view} onChange={(e) => { setF({ ...f, view: e.target.value }); setPick(null); }}>{views.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label>
               <label className="text-xs font-semibold text-slate-600">Works for<select className={sel + ' mt-1'} value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })}>{[[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, 'A year']].map(([d, l]) => <option key={d} value={d}>{l}</option>)}</select></label>
+            </div>
+            <div className="rounded-lg border border-slate-200" data-share-pick="1">
+              <button type="button" data-share-pick-open="1" onClick={() => setPickOpen(!pickOpen)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left">
+                <i className="fa-solid fa-sliders text-violet-600"></i><span className="flex-1 font-semibold text-slate-700">Choose what they see</span>
+                <span className="text-xs text-slate-500" data-share-pick-n={ticked.length}>{ticked.length} of {LINK_KEYS.length} parts{edited ? ' · edited' : ''}</span><i className={`fa-solid fa-chevron-${pickOpen ? 'up' : 'down'} text-xs text-slate-400`}></i></button>
+              {pickOpen && <div className="px-3 pb-3 space-y-2 border-t border-slate-100 pt-2">
+                {LINK_SECS.map(([g, gt, items]) => <div key={g}><div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">{gt}</div>
+                  <div className="grid sm:grid-cols-2 gap-x-3">{items.map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm py-0.5"><input type="checkbox" data-share-sec={k} checked={ticked.includes(k)} onChange={() => toggle(k)} className="accent-violet-600" />{l}</label>)}</div></div>)}
+                <div className="flex gap-3 text-xs pt-1"><button type="button" className="underline text-slate-600" data-share-pick-reset="1" onClick={() => setPick(null)}>Back to {baseView.name || 'the view'}</button><span className="text-slate-400">Your defaults per view are in Database &amp; Settings › PDF views.</span></div>
+              </div>}
             </div>
             <button type="button" data-share-make="1" disabled={busy} onClick={make} className="w-full px-4 py-2.5 rounded-lg bg-violet-700 text-white font-bold text-sm disabled:opacity-50"><i className="fa-solid fa-link mr-1.5"></i>{busy ? 'Making the link…' : 'Make the link'}</button>
           </div>}
@@ -273,7 +306,7 @@ export async function refreshLinkSnapshots(jobId, makeSnapshot, views) {
     const { data } = await sb.from('plan_links').select('id,view_id,revoked,expires_at').eq('job_id', jobId);
     const live = (data || []).filter((l) => !l.revoked && Date.parse(l.expires_at) > Date.now());
     for (const l of live) {
-      const v = views.find((x) => x.id === l.view_id) || views[0];
+      const v = linkView(l.view_id, views);
       await sb.from('plan_links').update({ snapshot: markSections(makeSnapshot(v)), snapshot_at: new Date().toISOString(), view_name: v.name }).eq('id', l.id);
     }
     return live.length;
