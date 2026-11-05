@@ -74,7 +74,8 @@ with sync_playwright() as p:
     calls = pg.evaluate('window.__calls')
     cr = [c for c in calls if c.get('rpc') == 'create_plan_link']
     snap = cr[-1]['args']['p_snapshot'] if cr else ''
-    R.check('link made with the client view as a snapshot, with section anchors', cr and cr[-1]['args']['p_view_id'] == 'client' and 'data-wd-sec="risks"' in snap and 'Job Safety Assessment (JSA)' not in snap, cr and cr[-1]['args']['p_view_id'])
+    R.check('link made with the client view (live data, JSA left out)', cr and cr[-1]['args']['p_view_id'] == 'client' and '"risks"' in snap and '"jsa"' not in snap, cr and cr[-1]['args']['p_view_id'])
+    snap = '<html><head></head><body><a data-wd-sec="overview"></a><h1>Plan</h1><a data-wd-sec="risks"></a><p>Risks</p><a data-wd-sec="jsa"></a><p>JSA</p><a data-wd-sec="map"></a><p>Map</p></body></html>'  # links made before v7.19 (a PDF copy)
     R.check('link shown with copy and QR', '#plan=' + 'a' * 64 in pg.input_value('[data-share-url]') and pg.locator('[data-share-made] svg').count() == 1)
     em = [c for c in calls if c.get('invoke') == 'notify' and (c.get('body') or {}).get('event') == 'plan_link']
     R.check('emailed to them', em and em[-1]['body']['email'] == 'dave@client.com' and em[-1]['body']['link'].endswith('a' * 64))
@@ -96,7 +97,7 @@ with sync_playwright() as p:
             'snapshot': snap, 'comments': [{'id': 'k1', 'section': 'risks', 'body': 'Looks good', 'kind': 'comment', 'status': 'open', 'author_name': 'Michael Rubio', 'author_role': 'crp', 'created_at': T0}]}
     pg, errs, dl = ctx_for(b, 'anon', {}, extra=RPC + 'window.__LINK=' + json.dumps(link) + ';')
     pg.goto(URL + '#plan=' + 'a' * 64); pg.wait_for_timeout(4000)
-    R.check('link page: the plan in a frame, title and view', pg.locator('[data-plan-link-app]').count() == 1 and pg.locator('[data-plan-frame]').count() == 1 and 'Bridge Shoot' in pg.inner_text('[data-plan-link-app]') and 'WHS INSPECTOR' in pg.inner_text('[data-plan-link-app]').upper())
+    R.check('older links (a PDF copy) still open: the plan in a frame, title and view', pg.locator('[data-plan-link-app]').count() == 1 and pg.locator('[data-plan-frame]').count() == 1 and 'Bridge Shoot' in pg.inner_text('[data-plan-link-app]') and 'WHS INSPECTOR' in pg.inner_text('[data-plan-link-app]').upper())
     fr = pg.frame_locator('[data-plan-frame]')
     pg.wait_for_timeout(1500)
     nb = fr.locator('button[data-wd-btn]').count()

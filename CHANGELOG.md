@@ -1,5 +1,16 @@
 # Planner changelog
 
+## v7.19 — 5 Nov 2026 — Live link looks like the app, with the 3D map and the KE tool
+- **The live link is now a simplified version of the planner itself**, not a PDF copy: the same cards, colours and type as the app, with section chips at the top to jump around, and it works on a phone.
+- **Same sections as the PDF view you share:** whatever a view strips out of the PDF (e.g. Client view drops internal checklists, JSA detail, logs and crew records) is stripped out of the live link too.
+- **Maps they can move:** the 2D ops area map pans and zooms, and the **3D ops map** can be opened and rotated (it loads on tap so the page opens fast).
+- **Energy transfer (KE) tool:** each RPA shows its 15 J and 34 J hover heights and ground-impact speeds, a height/speed table of limits, and sliders to try a height and ground speed and see the impact energy and its band (under 15 J, 15–34 J informed consent, over 34 J). Same calculation as the planner's KE chart.
+- **Ballistic splash:** fall height, speed at failure, fall time, throw distance and impact energy.
+- Comments, suggested edits and observer signatures work as in v7.18; each section card has its own 💬 Comment button with a count.
+- **Existing links** switch to the new look the next time you save the job; until then they show the PDF copy as before.
+- **Supabase:** nothing to do.
+- **Tests:** new live-view suite (20 checks); collab (38), smoke (12), PDF views (16) and all 10 database suites pass.
+
 ## v7.18 — 5 Nov 2026 — Live plan links, comments, suggested edits, short observer signatures
 - **Share a live link** (job bar › **Share**, CRP): make a link for a **client** or for **crew / VO**, pick what they see (any PDF view, e.g. Client view), how long it works, and optionally email it. They open the plan in their browser with no login. It's the plan as that view, and it refreshes each time you save the job. Stop a link at any time; the panel lists every link for the job.
 - **Comments on each section:** the live link has a 💬 button on every section of the plan. Clients' comments are private between them and you; crew links see each other's comments. Crew with a login comment from the job bar's **Comments** button or the 💬 chips on Sections 1–4 and the risk register.

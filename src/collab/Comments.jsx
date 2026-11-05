@@ -5,6 +5,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabase } from '../cloud/client.js';
 import qrcode from 'qrcode-generator';
+import PlanViewer from './PlanViewer.jsx';
 
 export const SECTIONS = [
   ['overview', 'Operation overview'], ['sites', 'Launch, recovery & sites'], ['map', 'Operations area map'], ['advmap', 'Advanced ops map'],
@@ -193,7 +194,7 @@ export function CommentsPanel({ jobId, jobTitle, me, isCrp, startSection, risks,
 
 // ── The CRP shares a live link ──────────────────────────────────────────────────────────────────────
 export const linkUrl = (token) => location.origin + location.pathname + '#plan=' + token;
-export function markSections(html) { return String(html || '').replace(/<!--S:(\w+)-->/g, '<a data-wd-sec="$1"></a>'); }
+export function markSections(html) { if (/^\s*\{/.test(String(html || ''))) return html; return String(html || '').replace(/<!--S:(\w+)-->/g, '<a data-wd-sec="$1"></a>'); }
 
 export function SharePanel({ jobId, jobTitle, views, makeSnapshot, onClose }) {
   const sb = getSupabase();
@@ -301,7 +302,8 @@ export function PlanLinkApp({ token }) {
   const th = threads(d.comments || []);
   const counts = {}; th.forEach((t) => { counts[t.section] = (counts[t.section] || 0) + 1 + t.replies.length; });
   useEffect(() => { try { frame.current && frame.current.contentWindow && frame.current.contentWindow.postMessage({ wdCounts: counts }, '*'); } catch (e) {} }); // keep the frame's buttons counted
-  const html = useMemo(() => d.snapshot ? String(d.snapshot).replace('</head>', FRAME_JS + '</head>').replace('<head>', '<head><meta name="viewport" content="width=840">') : '', [d.snapshot]);
+  const model = useMemo(() => { try { const m = /^\s*\{/.test(String(d.snapshot || '')) ? JSON.parse(d.snapshot) : null; return m && m.v === 2 ? m : null; } catch (e) { return null; } }, [d.snapshot]);
+  const html = useMemo(() => d.snapshot && !model ? String(d.snapshot).replace('</head>', FRAME_JS + '</head>').replace('<head>', '<head><meta name="viewport" content="width=840">') : '', [d.snapshot, model]);
   const send = async (o, parent) => {
     setErr('');
     if (!name.trim()) { setErr('Add your name first.'); return false; }
@@ -321,10 +323,11 @@ export function PlanLinkApp({ token }) {
       </div>
       {st.loading ? <p className="p-6 text-slate-500">Loading the plan…</p> : d.error ? <div className="p-6"><div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-plan-link-error="1">{d.error}</div></div> :
         <div className="flex-1 flex min-h-0 relative">
-          <iframe ref={frame} title="Flight plan" sandbox="allow-scripts allow-popups" srcDoc={html} className="flex-1 bg-white border-0 min-w-0" data-plan-frame="1" />
+          {model ? <div className="flex-1 min-w-0 overflow-y-auto" data-plan-scroll="1"><PlanViewer model={model} counts={counts} onComment={(k) => { setSection(k); setPanel(true); }} /></div>
+            : <iframe ref={frame} title="Flight plan" sandbox="allow-scripts allow-popups" srcDoc={html} className="flex-1 bg-white border-0 min-w-0" data-plan-frame="1" />}
           {panel && <div className="absolute md:static inset-0 md:inset-auto md:w-[380px] bg-slate-50 border-l border-slate-200 flex flex-col z-10" data-plan-comments="1">
             <div className="px-3 py-2 bg-white border-b border-slate-200 flex items-center gap-2">
-              <select value={section} onChange={(e) => setSection(e.target.value)} className={inp} data-plan-section="1">{SECTIONS.map(([k, l]) => <option key={k} value={k}>{l}{counts[k] ? ' (' + counts[k] + ')' : ''}</option>)}</select>
+              <select value={section} onChange={(e) => setSection(e.target.value)} className={inp} data-plan-section="1">{(model ? [...model.sections.map((x) => [x.key, x.title]), ['general', 'General']] : SECTIONS).map(([k, l]) => <option key={k} value={k}>{l}{counts[k] ? ' (' + counts[k] + ')' : ''}</option>)}</select>
               <button type="button" onClick={() => setPanel(false)} aria-label="Close comments" className="text-slate-500 text-xl px-2"><i className="fa-solid fa-xmark"></i></button>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">

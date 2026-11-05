@@ -183,7 +183,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.18';
+        const APP_VERSION = '7.19';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5382,8 +5382,71 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
           React.useEffect(() => { generatePDFRef.current = () => generatePDF(); });
           const generatePDFRef2 = React.useRef(null), dbRef2 = React.useRef(null);
-          React.useEffect(() => { generatePDFRef2.current = (o) => generatePDF(o); dbRef2.current = db; });
+          const liveModelRef = React.useRef(null);
+          React.useEffect(() => { generatePDFRef2.current = (o) => generatePDF(o); dbRef2.current = db; liveModelRef.current = (v) => buildLiveModel(v); });
           const [pdfMenu, setPdfMenu] = useState(null); // v7.17: { custom: null | { name, sections } }
+          // v7.19: the live link's data — the plan as a view (same sections as the PDF view), shown in the app's own look
+          const buildLiveModel = (view) => {
+            const on = (k) => pdfSecOn(view && view.sections, k), ov = overview, co = companyFor(ov), W = opWindow(ov);
+            const fd = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return d && m && y ? d + '/' + m + '/' + y : String(iso); };
+            const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
+            const S = [], add = (key, title, group, blocks) => { if (on(key) && blocks.filter(Boolean).length) S.push({ key, title, group, blocks: blocks.filter(Boolean) }); };
+            const kv = (rows) => { const r = rows.filter(x => x && x[1] != null && String(x[1]).trim() !== '' && String(x[1]).trim() !== '—'); return r.length ? { t: 'kv', rows: r.map(([l, v, wide]) => [l, String(v), !!wide]) } : null; };
+            const pilotArn = (n) => { const p = (db.pilots || []).find(x => x.name === n && x.arn); return p ? ' (ARN ' + p.arn + ')' : ''; };
+            add('overview', 'Operations Overview', '1', [kv([['Operation ID', ov.identifier], ['Operation window', W.dur], ['Start', fd(ov.operationDate) + ' ' + (ov.startTime || '')], ['End', fd(ov.operationEndDate || ov.operationDate) + ' ' + (ov.endTime || '')],
+              ['Location / site', ov.location], ['Max height planned', ov.maxHeightPlanned ? ov.maxHeightPlanned + ' ft AGL' : ''], ['RPAS fleet', (ov.rpaTypes || []).map(t => { const x = (db.fleet || {})[t] || {}; const id = [x.registrationNo, x.serial && ('S/N ' + x.serial)].filter(Boolean).join(', '); return t + (id ? ' (' + id + ')' : ''); }).join(', ')],
+              ['Remote pilot station', ov.remotePilotStation], ['RPIC', (ov.rpic || '') + pilotArn(ov.rpic)], ['Crew / support', ov.supportPersonnel], ['Flight mode', (jsa.operationTypes || []).join(', ') + (jsa.timeOfDay && jsa.timeOfDay !== 'DAY' ? ' · ' + jsa.timeOfDay.toLowerCase().replace('_', ' & ') : '')], ['Client', ov.clientName],
+              ['Task overview', ov.taskOverview, true]])]);
+            add('sites', 'Launch, recovery & sites', '1', [{ t: 'sites', launch: (ov.launchSites || []).map(x => [x.label || 'Launch', x.coords || '']), recovery: (ov.recoverySites || []).map(x => [x.label || 'Recovery', x.coords || '']) }]);
+            add('prelim', 'Preliminary assessment checklist', '1', [{ t: 'checklist', items: getPrelimItems().map(it => { const a = prelimAns(it.id), n = prelimWhy(it.id); return { label: it.label, st: a === 'yes' ? 'yes' : a === 'no' ? (n ? 'covered' : 'no') : 'open', note: n }; }) }]);
+            const md = mapData || {}, hasMap = (md.areaPolygon || []).some(p => p.lat != null) || ['launches', 'recoveries', 'signage'].some(k => (md[k] || []).some(p => p.lat != null)) || (hasOpsContent(opsMap) && opsMap.mode !== 'plan');
+            add('map', 'Operations area map', '1', [hasMap ? { t: 'map2d', s: { mapData: md, overview: { launchSites: ov.launchSites, recoverySites: ov.recoverySites }, opsMap: on('advmap') && hasOpsContent(opsMap) && opsMap.mode !== 'plan' ? { ...opsMap, overlay: null } : null } } : null]);
+            if (hasOpsContent(opsMap)) { const om = JSON.parse(JSON.stringify(opsMap)); if (om.overlay && String(om.overlay.src || '').length > 1500000) om.overlay = { ...om.overlay, src: '' };
+              let chk = null; try { chk = opsChecks; } catch (e) { chk = null; }
+              add('advmap', 'Advanced ops map (3D)', '1', [{ t: 'map3d', doc: om, checks: chk }, (om.zones || []).length ? { t: 'table', head: ['Zone', 'Type', 'Limit'], rows: om.zones.map(z => [z.name || '', (OPS_KINDS[z.kind] || {}).label || z.kind, opsZoneTag(z, om.settings)]) } : null]); }
+            add('jsa', 'Job Safety Assessment (JSA)', '2', [kv([['Airspace class', (jsa.airspaceClass || '') + (jsa.airspaceSource ? ' — ' + jsa.airspaceSource : '')], ['Max height', jsa.maxOperatingHeightAgl ? jsa.maxOperatingHeightAgl + ' ft AGL' : ''], ['SUA max altitude', jsa.suaMaxAltitudeAmsl ? jsa.suaMaxAltitudeAmsl + ' ft AMSL' : ''],
+              ['Time of day', jsa.timeOfDay === 'DAY_NIGHT' ? 'Day & night' : jsa.timeOfDay], ['Operation types', (jsa.operationTypes || []).join(', ')], ['EVLOS observer', jsa.evlosObserver], ['Night observer', jsa.nvlosObserver], ['BVLOS observer', jsa.bvlosObserver], ['Radio frequencies', jsa.radioFrequencies],
+              ['Nearby aerodromes', jsa.nearbyAerodromes, true], ['Airspace hazards & mitigations', jsa.airspaceHazards, true], ['Ground hazards & mitigations', jsa.groundHazards, true]])]);
+            { const ec = getEmergency(jsa), rows = (ec.rows || []).filter(r => String(r.name || '').trim() || String(r.phone || '').trim());
+              add('emergency', 'Emergency contacts', '2', [ec.enabled && rows.length ? { t: 'table', head: ['Role', 'Name', 'Phone'], rows: rows.map(r => [r.role || '', r.name || '', r.phone || '']), tel: 2 } : null, ec.enabled && ec.notes ? { t: 'text', label: 'Notes', text: ec.notes } : null]); }
+            { const rf = jsa.rfPlan || {}; add('rf', 'RF coordination', '2', [rf.enabled !== false && (rf.items || []).length ? { t: 'table', head: ['System', 'Who', 'MHz', 'Type'], rows: rf.items.map(i => [i.label || '', i.who || (i.side === 'us' ? 'Us' : 'Others'), i.mhz || '', i.type || '']) } : null,
+              rf.enabled !== false && String(rf.notes || '').trim() ? { t: 'agreed', text: rf.notes } : null]); }
+            if (oonpMode) { const cells = []; logisticsRows(oonp, db.oonpLogisticsTemplate).filter(r => !r.off).forEach(r => { const v = logisticsVal(oonp, r); if (r.kind === 'contact') cells.push([r.label, [v.name, v.phone].filter(Boolean).join(' · ')]); else cells.push([r.label, v.value]); });
+              const cl = (db.oonpChecklists && db.oonpChecklists.consent) || DEFAULT_OONP_CHECKLISTS.consent;
+              add('oonp', 'OONP' + (jsa.oonpPathway ? ' — ' + (jsa.oonpPathway === 'Custom' && jsa.oonpCustomPathway ? jsa.oonpCustomPathway : jsa.oonpPathway) : ''), '2', [kv(cells), { t: 'checklist', title: 'Informed consent', items: cl.map(it => { const st = consentState(oonp, it.id); return { label: it.label.split(' — ')[0], st: st === 'yes' ? 'yes' : st === 'no' ? 'no' : st === 'na' ? 'na' : 'open' }; }) },
+                oonp.oonpNotes ? { t: 'text', label: 'OONP notes', text: oonp.oonpNotes } : null]); }
+            // the energy transfer (KE) tool for each drone on the job, and the ballistic splash area
+            { const keFor = (rpa) => { const base = { weight: ((db.fleet || {})[rpa] || {}).weight, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 };
+                const k = keData && keData.rpa === rpa ? keData : (extraKe || []).find(x => x && x.rpa === rpa); return { ...base, ...(k || {}), weight: (k && parseFloat(k.weight)) || parseFloat(base.weight) || 0 }; };
+              const drones = (ov.rpaTypes || []).filter(t => t && t !== 'Custom').map(rpa => { const p = keFor(rpa), L = computeKeLimits(p); if (!L) return null;
+                const top = Math.max(isFinite(L.h34) ? L.h34 : 0, 2), step = top > 40 ? 10 : top > 20 ? 5 : top > 8 ? 2 : 1, hs = [];
+                for (let h = 0; h < top; h += step) hs.push(h); [L.h15, L.h34].forEach(h => { if (isFinite(h) && !hs.some(x => Math.abs(x - h) < 0.05)) hs.push(h); }); hs.sort((x, y) => x - y);
+                return { rpa, w: L.w, aero: L.useAero, rho: parseFloat(p.rho) || 0, cd: parseFloat(p.cd) || 0, area: parseFloat(p.area) || 0, h15: isFinite(L.h15) ? keFloorTo(L.h15, 2) : null, h34: isFinite(L.h34) ? keFloorTo(L.h34, 2) : null, s15: keFloorTo(L.s15, 2), s34: keFloorTo(L.s34, 2),
+                  rows: hs.map(h => { const a = keSpeedAt(L, 15, h), b = keSpeedAt(L, 34, h); return [keFloorTo(h, 2), a == null ? null : keFloorTo(a, 2), b == null ? null : keFloorTo(b, 2)]; }) }; }).filter(Boolean);
+              const bal = ballistic && ballistic.enabled ? (() => { const h = parseFloat(ballistic.height) || 0, v = parseFloat(ballistic.speed) || 0, t = Math.sqrt(2 * h / KE_G); const L = drones[0] ? computeKeLimits(keFor(drones[0].rpa)) : null;
+                return kv([['Fall height', h + ' m'], ['Speed at failure', v + ' m/s (' + Math.round(v * 3.6) + ' kph)'], ['Fall time', t.toFixed(2) + ' s'], ['Throw distance', (v * t).toFixed(1) + ' m'], ['Impact energy' + (drones[0] ? ' (' + drones[0].rpa + ')' : ''), L ? L.energy(h, v).toFixed(1) + ' J' : '']]); })() : null;
+              const kb = [drones.length ? { t: 'ke', drones } : null, bal ? { t: 'sub', text: 'Ballistic splash area' } : null, bal].filter(Boolean);
+              if ((oonpMode || (keData && keData.enabled)) && on('oonp') && kb.length) S.push({ key: 'ke', title: 'Energy transfer (KE) & ballistic splash', group: '2', blocks: kb });
+            }
+            add('risks', 'Risk assessment register', '2', [{ t: 'risks', rows: (risks || []).filter(r => String(r.hazard || '').trim()).map(r => { const bi = RISK_BANDS[riskLevel(r.initL, r.initC)], br = RISK_BANDS[riskLevel(r.resL, r.resC)];
+              return { ref: r.refNo, hazard: r.hazard, risk: r.riskDescription, existing: r.existingControls, extra: r.additionalControls, owner: r.riskOwner, init: { code: (r.initL || '') + (r.initC || ''), label: riskLevel(r.initL, r.initC), bg: bi.bg, fg: bi.fg }, res: { code: (r.resL || '') + (r.resC || ''), label: riskLevel(r.resL, r.resC), bg: br.bg, fg: br.fg } }; }) }]);
+            { const ns = summariseNotams(approval.notams, { maxNotams: 40, maxLines: 400 });
+              const sig = (who, name, arn, date, signed, sg, remote, by) => ({ who, name: name || '', arn: arn || '', date: fd(date), signed: !!signed, method: remote ? (remote.signatureImage ? 'drawn' : 'typed') : (sg && sg.method) || (signed ? 'click' : ''), image: remote ? remote.signatureImage || '' : (sg && sg.image) || '', typed: remote ? remote.typedSignature || '' : (sg && sg.typed) || '', by: by && by.email ? (by.name || by.email) : '' });
+              add('approval', 'Approval & Flight Authorisation', '3', [{ t: 'status', ok: !!approval.flightAuthApproved, text: approval.flightAuthApproved ? 'Approved for flight' + (approval.approvedAt ? ' · ' + new Date(approval.approvedAt).toLocaleDateString('en-AU') : '') : 'Not yet approved for flight' },
+                kv([['Approved date(s)', approval.approvedDates], ['Approved RPA types', (approval.approvedTypes || []).join(', ')], ['Official authorisation', approval.officialAuth, true], ['Other restrictions', approval.otherRestrictions, true]]),
+                String(ns.text || '').trim() ? { t: 'mono', label: 'Active NOTAMs', text: ns.text } : null,
+                { t: 'sigs', sigs: [sig('Chief Remote Pilot (CRP)', approval.crpName, approval.crpArn, approval.crpDate, approval.crpSigned, approval.crpSig, null, approval.crpSignedBy), sig('Remote Pilot in Command (RPIC)', approval.rpName, approval.rpArn, approval.rpDate, approval.rpSigned, approval.rpSig, approval.rpRemote, approval.rpSignedBy)],
+                  obs: (approval.obsSigs || []).filter(x => x.kind === 'brief').map(x => ({ name: x.name, at: x.signed_at, image: (x.signature || {}).image || '', typed: (x.signature || {}).typed || '' })) }]); }
+            add('postflight', 'Post-Flight Log', '4', [kv([['Weather meets limitations', yn(log.weatherMeetsLimitations)], ['Weather details', log.weatherDetails, true], ['Conducted as planned (Sections 1–3)', yn(log.conductedIAW)], ['RPAS serviceable at end', yn(log.serviceableAtEnd)],
+                ['Changes / deviations', log.conductedChanges, true], ['Comments / task outcome', log.comments, true], ['Defects', log.defects, true], ['Primary RP', log.crewRP], ['Second RP', log.crewSecondRP], ['Observer / crew', log.crewObserver]]),
+              (approval.obsSigs || []).some(x => x.kind === 'post_flight') ? { t: 'sigs', sigs: [], obs: (approval.obsSigs || []).filter(x => x.kind === 'post_flight').map(x => ({ name: x.name, at: x.signed_at, image: (x.signature || {}).image || '', typed: (x.signature || {}).typed || '', note: x.note || '' })), obsTitle: 'Observers signed after the flight' } : null]);
+            { const am = amendmentsRef.current || []; add('amendments', 'Record of amendments', '4', [am.length ? { t: 'table', head: ['When', 'Field', 'Was', 'Now', 'Reason'], rows: am.flatMap(a => (a.changes || []).map(c => [fd(a.date), c.field || '', String(c.was == null ? '' : c.was), String(c.now == null ? '' : c.now), c.reason || a.summary || ''])) } : null]); }
+            add('flightlog', 'Flight log', '4', (ov.rpaTypes || []).map(rpa => { const fl = (((log.rpaLogs || {})[rpa] || {}).flights || []).filter(f => parseInt(f.duration) > 0 || f.batteries); if (!fl.length) return null;
+              return { t: 'table', title: rpa + ' · ' + fl.length + ' flight' + (fl.length === 1 ? '' : 's') + ' · ' + fl.reduce((t, f) => t + (parseInt(f.duration) || 0), 0) + ' min', head: ['#', 'Flight', 'Minutes', 'Max height (ft)', 'Batteries'],
+                rows: fl.map((f, i) => [String(i + 1), f.label || '', String(f.duration || ''), String(Math.max(0, ...(f.segments || []).map(sg => parseFloat(sg.maxFt) || 0)) || ''), f.batteries || '']) }; }));
+            add('attachments', 'Site attachments', 'A', [(siteAttachments || []).length ? { t: 'list', items: siteAttachments.map(x => x.name || 'Attachment') } : null]);
+            return { v: 2, company: co.name || (db.companyProfile && db.companyProfile.name) || '', reoc: co.reocNumber || '', title: getOpTitle(ov), opId: ov.identifier, when: [fd(W.sd), W.ed && W.ed !== W.sd ? fd(W.ed) : ''].filter(Boolean).join(' – '), location: ov.location || '', view: view ? view.name : '', sections: S, at: new Date().toISOString() };
+          };
           const generatePDF = (opts) => {
             // Capture heatmap canvas snapshot before opening new window
             const heatmapDataUrl = null; // heat layer is now re-drawn from GPS data inside the PDF
@@ -9673,7 +9736,7 @@ View in the Database & Settings tab.`);
           };
           // live links show the plan as saved: refresh them each time the open job is saved to the cloud
           useEffect(() => { if (!isCrpCloud) return; const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.jobId || d.uid !== fpStateRef.current.overview.uid) return;
-              setTimeout(() => refreshLinkSnapshots(d.jobId, (v) => generatePDFRef2.current({ capture: true, view: v }), pdfViewsOf(dbRef2.current)), 300); };
+              setTimeout(() => refreshLinkSnapshots(d.jobId, (v) => JSON.stringify(liveModelRef.current(v)), pdfViewsOf(dbRef2.current)), 300); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, [isCrpCloud]); // eslint-disable-line
           useEffect(() => { const h = (e) => { const d = e.detail || {}, w = collabWant.current; if (!w || d.uid !== w.uid) return; collabWant.current = null;
               if (!d.ok || !d.jobId) { alert('Couldn\'t put the job in the cloud: ' + (d.error || 'unknown error')); return; }
@@ -10473,7 +10536,7 @@ View in the Database & Settings tab.`);
                 onApply={(sg) => { const r = applySuggestion(sg); if (r === true) setTimeout(() => alert('Change made in the plan. Save the job to keep it' + (approval.rpSigned ? ' (the RPIC will need to sign again).' : '.')), 50); return r; }}
                 onClose={() => { setCollab(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {collab && collab.kind === 'share' && <SharePanel jobId={collab.jobId} jobTitle={getOpTitle(overview)} views={pdfViewsOf(db)}
-                makeSnapshot={(v) => generatePDF({ capture: true, view: v })} onClose={() => setCollab(null)} />}
+                makeSnapshot={(v) => JSON.stringify(buildLiveModel(v))} onClose={() => setCollab(null)} />}
               {pdfMenu && (() => {
                 const views = pdfViewsOf(isCrewRole && crewCloud && crewCloud.company && Array.isArray(crewCloud.company.pdfViews) ? { pdfViews: crewCloud.company.pdfViews } : db);
                 const cu = pdfMenu.custom;
