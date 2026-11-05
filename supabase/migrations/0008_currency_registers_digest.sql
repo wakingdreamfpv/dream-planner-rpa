@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.11 · migration 0008_currency_registers_digest.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA v7.11 — Chunks 7 & 8: crew currency, registers, flight counts, and email notifications
 -- (weekly / fortnightly compliance digest, expiry alerts, per-event email settings). Safe to run more than once. Builds on 0001–0007.
 

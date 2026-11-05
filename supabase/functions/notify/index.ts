@@ -1,3 +1,5 @@
+// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.16 ═══
+// Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
 //   induction_submitted → every active CRP ("Ben has submitted his induction")

@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.4 · migration 0004_chunk2b_cloud_jobs.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA — Chunk 2b: cloud jobs for crew, crew home, access requests
 -- Safe to run more than once. Builds on 0001–0003.
 --

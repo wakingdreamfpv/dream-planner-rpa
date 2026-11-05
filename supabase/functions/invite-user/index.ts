@@ -1,3 +1,5 @@
+// ═══ Dream Planner RPA · edge function "invite-user" · last changed in v7.2 ═══
+// Paste into: Supabase › Edge Functions › invite-user › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — invite-user (Supabase Edge Function)
 // Only an active CRP can call this. It records the invite (which sets the person's role when they first sign in)
 // and sends Supabase's invite email. The service-role key is only ever used here, on the server.

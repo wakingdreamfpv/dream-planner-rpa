@@ -1,3 +1,5 @@
+// ═══ Dream Planner RPA · edge function "backup" · last changed in v7.15 ═══
+// Paste into: Supabase › Edge Functions › backup › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — backup (Supabase Edge Function), v7.15
 // A snapshot of every table the planner keeps (people, registers, sign-offs, jobs, flights, settings…) as one JSON file.
 //   { mode: 'cron' }      run daily by pg_cron: saved to the private "backups" bucket (once a day), and emailed to the

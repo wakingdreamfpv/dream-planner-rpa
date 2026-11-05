@@ -1,3 +1,5 @@
+// ═══ Dream Planner RPA · edge function "manual-link" · last changed in v7.8 ═══
+// Paste into: Supabase › Edge Functions › manual-link › Code (replace everything) › Deploy. Verify JWT: OFF.
 // manual-link: a 5-minute link to the protected Operations Manual for someone holding a valid observer link (no login).
 // Deploy with "Verify JWT" OFF (the observer has no login; the link token is checked here instead).
 import { createClient } from 'npm:@supabase/supabase-js@2';

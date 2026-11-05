@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.8 · migration 0006_evlos_register_manual.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA — EVLOS observer register (training without a job), job links for crew without a login,
 -- and the protected Operations Manual (read-only, logged). Safe to run more than once. Builds on 0001–0005.
 

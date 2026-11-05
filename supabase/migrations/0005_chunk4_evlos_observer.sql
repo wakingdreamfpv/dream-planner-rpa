@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.7 · migration 0005_chunk4_evlos_observer.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA — Chunk 4: EVLOS Class 1 observer sign-off
 -- Safe to run more than once. Builds on 0001–0004.
 --

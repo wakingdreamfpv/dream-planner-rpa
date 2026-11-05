@@ -182,7 +182,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.16';
+        const APP_VERSION = '7.17';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1475,6 +1475,26 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           if (lg.serviceableAtEnd === false && !String(lg.defects || '').trim()) lg.serviceableAtEnd = null; lg.yn60 = 1; return lg; };
         // v5.55: the CRP's own review answers (SOP mitigates / JSA correct) are left out, so answering them after the
         // RPIC has signed doesn't void the RPIC's signature. `legacy` gives the v5.51–5.54 fingerprint for older replies.
+        // v7.17: PDF views — the standard PDF keeps everything; a view keeps only the sections it ticks
+        const PDF_SECTIONS = [
+          ['overview', 'Operation overview', 'Section 1: operation details, crew, RPA, client'], ['sites', 'Launch, recovery & sites', 'Site list and photos'],
+          ['prelim', 'Preliminary assessment checklist', 'The yes / no checklist'], ['map', 'Operations area map', 'Full-page satellite map'],
+          ['advmap', 'Advanced ops map', 'Zones, paths, checks and saved views'], ['jsa', 'JSA', 'Section 2: airspace, weather, hazards, CASA checks'],
+          ['emergency', 'Emergency contacts', ''], ['rf', 'RF coordination', 'Radio & video bands'], ['oonp', 'OONP', 'Equipment, logistics, energy tables, ballistic area'],
+          ['risks', 'Risk assessment register', 'Matrix and register'], ['approval', 'Approval & signatures', 'Section 3: authorisation, NOTAMs, CRP and RPIC signatures'],
+          ['postflight', 'Post-flight log', 'Section 4: pre-flight checks, post-flight answers, crew'], ['amendments', 'Record of amendments', 'Changes after first save'],
+          ['flightlog', 'Flight log by RPA', 'Each flight, batteries, telemetry'], ['attachments', 'Site attachments', 'Appendix: photos and files'],
+          ['instruments', 'CASA instruments', 'Appendix: approvals and instruments'], ['heatmap', 'Crowd density map', 'Painted crowd density and exclusion zones'],
+        ];
+        const pdfAll = (on) => Object.fromEntries(PDF_SECTIONS.map(([k]) => [k, on]));
+        const pdfOnly = (keys) => Object.fromEntries(PDF_SECTIONS.map(([k]) => [k, keys.includes(k)]));
+        const DEFAULT_PDF_VIEWS = [
+          { id: 'client', name: 'Client view', note: 'What the client needs: the plan, maps, risks and sign-off. No internal checklists, logs or crew records.', sections: pdfOnly(['overview', 'sites', 'map', 'advmap', 'emergency', 'risks', 'approval', 'heatmap']) },
+          { id: 'record', name: 'My record', note: 'Everything, for your own files.', sections: pdfAll(true) },
+          { id: 'whs', name: 'WHS inspector', note: 'Safety planning and controls: JSA, risks, OONP, emergency contacts, sign-off and what happened on the day.', sections: pdfOnly(['overview', 'sites', 'prelim', 'map', 'advmap', 'jsa', 'emergency', 'oonp', 'risks', 'approval', 'postflight', 'amendments', 'heatmap']) },
+          { id: 'casa', name: 'CASA', note: 'The full operational record, including the flight log, amendments and instruments.', sections: pdfAll(true) },
+        ];
+        const pdfViewsOf = (db) => (Array.isArray(db && db.pdfViews) && db.pdfViews.length ? db.pdfViews : DEFAULT_PDF_VIEWS);
         // v7.16: how the signature was given (click / typed / drawn), shown in the RPIC and CRP boxes
         const SigShown = ({ sig, name, role }) => (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-900" data-sig-shown={role} data-sig-kind={sig.method || 'click'}>
@@ -5358,6 +5378,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           };
 
           React.useEffect(() => { generatePDFRef.current = () => generatePDF(); });
+          const [pdfMenu, setPdfMenu] = useState(null); // v7.17: { custom: null | { name, sections } }
           const generatePDF = (opts) => {
             // Capture heatmap canvas snapshot before opening new window
             const heatmapDataUrl = null; // heat layer is now re-drawn from GPS data inside the PDF
@@ -5815,12 +5836,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               +'function initMap(){'
               +'if(typeof L==="undefined"){setTimeout(window.print,500);return;}'
               +'var mo={zoomControl:false,attributionControl:true,zoomSnap:0,fadeAnimation:false,zoomAnimation:false,dragging:false,scrollWheelZoom:false};'
+              +'if(!document.getElementById("opmap")){var od=document.createElement("div");od.id="opmap";od.style.cssText="position:absolute;left:-9999px;top:0;width:680px;height:900px;";document.body.appendChild(od);}'
               +'var m=L.map("opmap",mo);'
               // Zoom the full-page map to the planned layout (ops area, sites, signage, exclusion zones); fall back to the on-screen view
               +'var CP=[];(MP||[]).forEach(function(p){CP.push(p);});ML.forEach(function(x){CP.push([x.lat,x.lng]);});MR.forEach(function(x){CP.push([x.lat,x.lng]);});MS.forEach(function(x){CP.push([x.lat,x.lng]);});'
               +'MX.forEach(function(z){if(z.type==="circle"){var c=L.latLng(z.geo.c);var b=c.toBounds(z.geo.rM*2);CP.push(b.getSouthWest(),b.getNorthEast());}else if(z.type==="rect"){CP.push(z.geo.a,z.geo.b);}else if(z.geo.pts){z.geo.pts.forEach(function(p){CP.push(p);});}});'
               +'if(CP.length>1){m.fitBounds(L.latLngBounds(CP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){m.fitBounds(MB,{padding:[0,0],animate:false});}else{m.setView(MC,MZ);}'
-              +'imagery(m);opsLayers(m);if(OM){opsAdvPrint(OM,imagery);(OM.views||[]).forEach(function(v,i){if(v.kind==="2d"&&v.bounds)opsAdvPrint(OM,imagery,"opsv"+i,v.bounds);});}'
+              +'imagery(m);opsLayers(m);if(OM&&document.getElementById("opsadv")){opsAdvPrint(OM,imagery);(OM.views||[]).forEach(function(v,i){if(v.kind==="2d"&&v.bounds)opsAdvPrint(OM,imagery,"opsv"+i,v.bounds);});}'
               // Heatmap page: same view underneath the painted overlay
               +'if(document.getElementById("heatmapbase")){var hm=L.map("heatmapbase",mo);var HP=CP.slice();HD.forEach(function(d){if(!d.e)HP.push([d.lat,d.lng]);});if(HP.length>1){hm.fitBounds(L.latLngBounds(HP).pad(0.2),{animate:false,maxZoom:20});}else if(MB){hm.fitBounds(MB,{padding:[0,0],animate:false});}else{hm.setView(MC,MZ);}imagery(hm);opsLayers(hm);'
               // crowd paint on a canvas sized to the map, projected from GPS
@@ -5882,6 +5904,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('</div></div>');
 
             // S1
+            P.push('<!--S:overview-->');
             P.push(sHd(1,'Operations Overview & Preliminary Assessment'));
             const OW=opWindow(ov);
             P.push(grid(r2('Operation ID',ov.identifier,'Operation Window',OW.dur?OW.dur:'—'),
@@ -5891,10 +5914,13 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               r2('RPAS Fleet',(ov.rpaTypes||[]).map(t=>{const x=(db.fleet||{})[t]||{};const id=[x.registrationNo,x.serial&&('S/N '+x.serial)].filter(Boolean).join(', ');return t+(id?' ('+id+')':'');}).join(', ')||'—','Remote Pilot Station',ov.remotePilotStation||'—'),
               r2('RPIC',ov.rpic+((db.pilots||[]).find(p=>p.name===ov.rpic&&p.arn)?' (ARN '+(db.pilots.find(p=>p.name===ov.rpic).arn)+')':''),'Crew / Support',ov.supportPersonnel),
               r2('Flight Mode',(jsa.operationTypes||[]).join(', ')+(jsa.timeOfDay&&jsa.timeOfDay!=='DAY'?' · '+jsa.timeOfDay.toLowerCase():''),'Client',ov.clientName)));
+            P.push('<!--S:sites-->');
             P.push(sitesHtml);
 
+            P.push('<!--S:prelim-->');
             P.push(sub('Preliminary Assessment Checklist'));
             P.push('<div style="border:1px solid '+S2+';border-radius:4pt;overflow:hidden;margin-bottom:10pt;display:grid;grid-template-columns:1fr 1fr;">'+clHtml+'</div>');
+            P.push('<!--S:map-->');
 
             // Map — always rendered using exact Leaflet view
             {
@@ -5920,6 +5946,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
 
             // v7.9 advanced ops map: its own page with the zones, paths and markers, then the zone limits and checks
+            P.push('<!--S:advmap-->');
             if (opsPrintData) {
               const mo = opsMap, chk = opsChk;
               P.push('<div style="break-before:page;page-break-before:always;">');
@@ -5963,6 +5990,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
 
             // S2
+            P.push('<!--S:jsa-->');
             P.push(sHd(2,'Job Safety Assessment (JSA)'));
             P.push(grid(r2('Airspace Class',(jsa.airspaceClass||'')+(jsa.airspaceSource?' — '+jsa.airspaceSource:''),'Max Height (ft AGL)',jsa.maxOperatingHeightAgl),
               r2('SUA Max Alt (ft AMSL)',jsa.suaMaxAltitudeAmsl,'Time of Day',jsa.timeOfDay==='DAY_NIGHT'?'DAY & NIGHT':jsa.timeOfDay),
@@ -5973,6 +6001,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               cRow('Airspace Hazards & Mitigations',jsa.airspaceHazards),
               cRow('Ground Hazards & Mitigations',jsa.groundHazards)));
             {
+              P.push('<!--S:emergency-->');
               const ec=getEmergency(jsa);
               const rows=(ec.rows||[]).filter(r=>(r.name||'').trim()||(r.phone||'').trim());
               if(ec.enabled&&(rows.length||ec.notes)){
@@ -5982,6 +6011,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               }
             }
             {
+              P.push('<!--S:rf-->');
               const rf=jsa.rfPlan||{};
               if(rf.enabled!==false&&(rf.items||[]).some(i=>rfRanges(i.mhz).length)){
                 P.push('<div style="break-inside:avoid;">'+sub('RF Coordination — Radio & Video Bands'));
@@ -5993,6 +6023,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 P.push('</div>');
               }
             }
+            P.push('<!--S:oonp-->');
             P.push(oonpHtml);
 
             if(oonpMode&&ov.rpaTypes&&ov.rpaTypes.length>0){
@@ -6048,6 +6079,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 +'</div></div>');
             }
 
+            P.push('<!--S:risks-->');
             P.push('<div style="break-before:page;page-break-before:always;"></div>');
             P.push(sub('Risk Assessment Register'));
             P.push(riskMatrixHtml(risks,{pdf:true}));
@@ -6058,6 +6090,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('</tr></thead><tbody>'+rHtml+'</tbody></table>');
 
             // S3
+            P.push('<!--S:approval-->');
             P.push(sHd(3,'Approval & Flight Authorisation'));
             P.push(grid(r2('SOP Mitigates All Hazards',yn(approval.sopMitigatesAll),'JSA Correct',yn(approval.jsaCorrect)),
               r2('RPA Serviceable (release)',yn(approval.releaseServiceable===true?true:approval.releaseServiceable===false?false:null),'Remote Pilot Station',overview.remotePilotStation||'—'),
@@ -6079,6 +6112,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('</div>');
 
             // S4
+            P.push('<!--S:postflight-->');
             P.push(sHd(4,'Post-Flight Log'));
             P.push(sub('Part A — Pre-Flight'));
             P.push(grid(r2('Weather Meets Limitations',yn(log.weatherMeetsLimitations),'Onsite Validation (RP Initials)',log.onsiteValidationInitials),
@@ -6108,6 +6142,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               cRow('Conduct Changes / Deviations',log.conductedChanges),cRow('General Comments / Task Outcome',log.comments),cRow('Defects Noted',log.defects)));
             P.push(sub('Part C — Crew'));
             P.push(grid(r2('Primary RP',log.crewRP,'Second RP',log.crewSecondRP),cRow('Observer / Crew',log.crewObserver)));
+            P.push('<!--S:amendments-->');
             const amends=amendmentsRef.current||[];
             if(amends.length){
               P.push('<div style="break-before:page;page-break-before:always;"></div>');
@@ -6123,9 +6158,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                   +'</tbody></table></div>');
               });
             }
+            P.push('<!--S:flightlog-->');
             P.push('<div style="break-before:page;page-break-before:always;"></div>');
             P.push(sub('Flight Log by RPA'));
             P.push(flightLog||'<p style="font-size:8pt;color:'+S6+';">No RPA types selected.</p>');
+            P.push('<!--S:attachments-->');
             // Attachments appendix — images inline, PDFs listed
             if (siteAttachments.length > 0) {
               P.push('<div style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin:0 0 8pt;break-before:page;"><span style="opacity:0.7;font-size:8pt;">Appendix A</span><span style="font-size:13pt;font-weight:800;margin-left:8pt;">Site Attachments</span></div>');
@@ -6134,6 +6171,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // v7.4: copies of the instruments attached to this job
             {
               const need = jobNeedKinds(jsa, oonpMode);
+              P.push('<!--S:instruments-->');
               const inst = officialAuthList(db).filter(x => authAttached(x, approval, authNeedFor(x).some(k => need.includes(k)), authSelected(approval.officialAuth, x)));
               if (inst.length) {
                 const ex = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -6149,6 +6187,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               }
             }
             // Heatmap page — only if canvas has content or there are heatmap exclusion zones
+            P.push('<!--S:heatmap-->');
             if (hasHeatContent) {
               P.push('<div style="break-before:page;margin-bottom:12pt;">');
               P.push('<div style="background:'+PU+';color:white;padding:7pt 10pt;border-radius:4pt;margin-bottom:8pt;display:flex;justify-content:space-between;align-items:center;">');
@@ -6176,11 +6215,20 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               P.push('</div></div>');
             }
 
+            P.push('<!--S:end-->');
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
             if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner (free edition) · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
-            const html=P.join('\n');
+            let html=P.join('\n');
+            // v7.17: a PDF view keeps only its ticked sections (the standard PDF keeps everything)
+            const vw=opts&&opts.view&&opts.view.sections?opts.view.sections:null;
+            if(vw){
+              const parts=html.split(/<!--S:(\w+)-->/);let out=parts[0];
+              for(let i=1;i<parts.length;i+=2){const k=parts[i],body=parts[i+1]||'';if(k==='end'||vw[k]!==false)out+=body;}
+              html=out;
+              if(opts.view.name) html=html.replace('<body onload="initMap()">','<body onload="initMap()"><div data-pdf-view="'+esc(opts.view.id||'')+'" style="position:fixed;top:-14mm;right:0;font-size:7pt;color:#7c3aed;font-weight:700;">'+esc(opts.view.name)+'</div>');
+            }
             if(opts&&opts.capture) return html;
             const win=window.open('','_blank');
             if(!win){alert('Pop-up blocked — allow pop-ups for this page and try again.');return;}
@@ -6285,9 +6333,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 const pts = [];
                 (md.areaPolygon || []).forEach(p => { if (p.lat != null) pts.push([p.lat, p.lng]); });
                 ['launches', 'recoveries', 'signage'].forEach(k => (md[k] || []).forEach(p => { if (p.lat != null) pts.push([p.lat, p.lng]); }));
-                if (pts.length > 1) m.fitBounds(window.L.latLngBounds(pts).pad(0.25), { animate: false, maxZoom: 19 });
-                else if (pts.length === 1) m.setView(pts[0], Math.max(m.getZoom(), 17), { animate: false });
-                else if (plan.overview?.location) { const c = extractBaseCoords(plan.overview.location); m.setView([c.lat, c.lng], m.getZoom(), { animate: false }); }
+                const c0 = !pts.length && plan.overview?.location ? extractBaseCoords(plan.overview.location) : null;
+                // v7.17: a job opened on another tab (crew land on the flight log) has a hidden, zero-size map — fit it when it's shown
+                mapFitRef.current = { pts, c: c0 };
+                if (m.getSize().x > 0) fitMapTo(m, mapFitRef.current);
               }
               setTimeout(() => { reprojectMapData(); planLoadingRef.current = false; }, 300);
             }, 150);
@@ -6438,6 +6487,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const opsMapRef = React.useRef(null);
           const leafletMapRef = React.useRef(null);   // Leaflet map instance
           const leafletDivRef = React.useRef(null);   // DOM div for Leaflet
+          const mapFitRef = React.useRef(null);       // v7.17: where to fit the map once it can be sized
+          const fitMapTo = (m, f) => { mapFitRef.current = null; const pts = f.pts || [];
+            if (pts.length > 1) m.fitBounds(window.L.latLngBounds(pts).pad(0.25), { animate: false, maxZoom: 19 });
+            else if (pts.length === 1) m.setView(pts[0], Math.max(m.getZoom(), 17), { animate: false });
+            else if (f.c) m.setView([f.c.lat, f.c.lng], Math.max(m.getZoom(), 15), { animate: false }); };
           const [mapZoom, setMapZoom] = React.useState(17);
           const [mapCenter, setMapCenter] = React.useState(null); // {lat,lng} — null = use getCurrentCoords()
           const [mapLocation, setMapLocation] = useState(overview.location || 'Brisbane, Queensland');
@@ -8687,7 +8741,7 @@ View in the Database & Settings tab.`);
           // Leaflet can't size itself while its tab is hidden — refresh when the Preliminary tab is shown
           React.useEffect(() => {
             if (activeTab !== 'preliminary') return;
-            const t = setTimeout(() => { if (leafletMapRef.current) { leafletMapRef.current.invalidateSize(); reprojectMapData(); } }, 150);
+            const t = setTimeout(() => { const m = leafletMapRef.current; if (m) { m.invalidateSize(); if (mapFitRef.current && m.getSize().x > 0) fitMapTo(m, mapFitRef.current); reprojectMapData(); } }, 150);
             return () => clearTimeout(t);
           }, [activeTab]); // eslint-disable-line
 
@@ -9623,6 +9677,7 @@ View in the Database & Settings tab.`);
             const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
             const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
             if (openAipKey) company.openAipKey = openAipKey; // v7.10: one airspace key for the whole company
+            if (Array.isArray(db.pdfViews) && db.pdfViews.length) company.pdfViews = db.pdfViews; // v7.17: the company's PDF views
             const all = loggedTimeStats(db.completedFlights);
             const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
               return { name, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', flights: x.flights, sec: x.sec + (Number(f.priorMinutes) || 0) * 60 }; });
@@ -9649,7 +9704,7 @@ View in the Database & Settings tab.`);
               ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).filter(e => ['exp-reoc', 'exp-insurance'].includes(e.id) && !e.date).forEach(e => setup.push(e.label + ': expiry date (Compliance calendar)'));
               return { items, setup, at };
             })() } }));
-          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths]); // eslint-disable-line
+          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths, db.pdfViews]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
           useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
             h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
@@ -10332,6 +10387,39 @@ View in the Database & Settings tab.`);
                     </div>
                   </div>);
               })()}
+              {pdfMenu && (() => {
+                const views = pdfViewsOf(isCrewRole && crewCloud && crewCloud.company && Array.isArray(crewCloud.company.pdfViews) ? { pdfViews: crewCloud.company.pdfViews } : db);
+                const cu = pdfMenu.custom;
+                const print = (v) => { setPdfMenu(null); setTimeout(() => generatePDF(v ? { view: v } : undefined), 30); };
+                return (
+                  <div className="fixed inset-0 z-[5100] bg-slate-900/50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden" data-testid="pdf-views" onClick={e => { if (e.target === e.currentTarget) setPdfMenu(null); }}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-2 overflow-hidden">
+                      <div className="px-5 py-3 text-white flex items-center gap-3" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
+                        <h3 className="text-lg font-bold flex-1"><i className="fa-solid fa-file-pdf mr-2"></i>{cu ? 'Choose what goes in: ' + cu.name : 'PDF views'}</h3>
+                        <button type="button" onClick={() => setPdfMenu(null)} aria-label="Close" className="text-white/80 hover:text-white text-2xl px-2"><i className="fa-solid fa-xmark"></i></button>
+                      </div>
+                      {!cu ? <div className="p-4 space-y-2">
+                        <button type="button" data-pdf-view="standard" onClick={() => print(null)} className="w-full text-left px-3 py-2.5 rounded-xl border-2 border-violet-300 bg-violet-50 hover:bg-violet-100">
+                          <div className="font-bold text-violet-900 text-sm"><i className="fa-solid fa-file-pdf mr-1.5"></i>Standard PDF</div><div className="text-xs text-slate-600">Everything, exactly as Export PDF.</div></button>
+                        {views.map(v => <div key={v.id} className="flex items-stretch gap-1.5">
+                          <button type="button" data-pdf-view={v.id} onClick={() => print(v)} className="flex-1 text-left px-3 py-2 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50/40">
+                            <div className="font-semibold text-slate-800 text-sm">{v.name}</div>
+                            <div className="text-[11px] text-slate-500">{v.note ? v.note + ' ' : ''}{PDF_SECTIONS.filter(([k]) => v.sections[k] !== false).length} of {PDF_SECTIONS.length} sections</div></button>
+                          <button type="button" data-pdf-view-tweak={v.id} title="Change the sections for this print only" onClick={() => setPdfMenu({ custom: { id: v.id, name: v.name, sections: { ...pdfAll(true), ...v.sections } } })} className="px-3 rounded-xl border border-slate-200 text-xs text-slate-600 hover:bg-slate-50"><i className="fa-solid fa-sliders"></i></button>
+                        </div>)}
+                        <div className="flex items-center justify-between pt-1 text-xs">
+                          <button type="button" data-pdf-view-custom="1" onClick={() => setPdfMenu({ custom: { id: 'custom', name: 'Custom', sections: pdfAll(true) } })} className="text-violet-700 font-semibold underline">Pick sections for this print…</button>
+                          {!isCrewRole && <button type="button" onClick={() => { setPdfMenu(null); setActiveTab('database'); setTimeout(() => jumpToDbSection('dbsec-pdf-views'), 350); }} className="text-slate-500 underline">Edit views in Settings</button>}
+                        </div>
+                      </div> : <div className="p-4">
+                        <p className="text-xs text-slate-500 mb-2">For this print only. Change a view for good in Database &amp; Settings › PDF views.</p>
+                        <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">{PDF_SECTIONS.map(([k, l, d]) => <label key={k} className="flex items-start gap-2 text-sm py-0.5 cursor-pointer"><input type="checkbox" className="mt-1" data-pdf-sec={k} checked={cu.sections[k] !== false} onChange={e => setPdfMenu({ custom: { ...cu, sections: { ...cu.sections, [k]: e.target.checked } } })} /><span><span className="text-slate-800">{l}</span>{d && <span className="block text-[11px] text-slate-500 leading-tight">{d}</span>}</span></label>)}</div>
+                        <div className="flex gap-2 mt-3"><button type="button" data-pdf-custom-print="1" onClick={() => print({ id: cu.id, name: cu.name + (cu.id === 'custom' ? '' : ' (adjusted)'), sections: cu.sections })} className="flex-1 px-4 py-2 rounded-lg bg-violet-700 text-white font-bold text-sm"><i className="fa-solid fa-print mr-1.5"></i>Make the PDF</button>
+                          <button type="button" onClick={() => setPdfMenu({ custom: null })} className="px-4 py-2 rounded-lg border border-slate-300 text-sm">Back</button></div>
+                      </div>}
+                    </div>
+                  </div>);
+              })()}
               {signDlg && (() => {
                 const isRp = signDlg.role !== 'crp', win = opWindow(overview);
                 const f = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return d && m && y ? d + '/' + m + '/' + y : iso; };
@@ -10646,9 +10734,12 @@ View in the Database & Settings tab.`);
                     <button onClick={handleSaveDraftPlan} className="shrink-0 relative flex items-center gap-2 bg-amber-700 hover:bg-amber-600 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-amber-600 text-white print:hidden">
                       <i className="fa-solid fa-pen-to-square"></i> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Save</span>{dirty && <span data-save-dot="1" className="sm:hidden absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-300 ring-2 ring-[#2d0a5e]" title="Unsaved changes"></span>}
                     </button>
-                    <button onClick={() => generatePDF()} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors print:hidden">
+                    <div className="shrink-0 flex print:hidden relative">
+                    <button onClick={() => generatePDF()} style={{background:"#7c3aed",border:"1px solid #7c3aed"}} className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-l-lg text-sm font-medium text-white transition-colors">
                       <i className="fa-solid fa-file-pdf"></i> <span className="hidden sm:inline">Export PDF</span><span className="sm:hidden">PDF</span>
                     </button>
+                    <button type="button" data-pdf-views-open="1" aria-label="PDF views" title="PDF views: client, my record, WHS, CASA…" onClick={() => setPdfMenu(pdfMenu ? null : { custom: null })} style={{background:"#6d28d9",border:"1px solid #7c3aed"}} className="px-2 py-2 rounded-r-lg text-sm text-white border-l border-violet-400"><i className="fa-solid fa-caret-down"></i></button>
+                    </div>
                   </div>
                 </div>
               </header>
@@ -15240,6 +15331,28 @@ View in the Database & Settings tab.`);
                         </div>
                         <div data-db-group="lib" className="space-y-2.5" hidden={isCrewRole || undefined}>
                           <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-book text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Libraries</h2><span className="text-xs text-slate-500">templates you reuse</span></div>
+                        {!isCrewRole && dbFold('dbsec-pdf-views', 'PDF views', 'fa-file-pdf', <span>{pdfViewsOf(db).map(v => v.name).join(' · ')} · the standard PDF stays as it is</span>, (() => {
+                          const views = pdfViewsOf(db), save = (list) => updateDb('pdfViews', list);
+                          const upd = (i, patch) => save(views.map((v, j) => j === i ? { ...v, ...patch } : v));
+                          return (<div className="space-y-3" data-pdf-views-editor="1">
+                            <p className="text-xs text-slate-500">Pick a view from the arrow beside <b>Export PDF</b>. Each view prints only the sections ticked here. The standard PDF (the Export PDF button itself) always has everything. Views are shared with your crew.</p>
+                            {views.map((v, i) => (
+                              <div key={v.id} className="border border-slate-200 rounded-xl p-3 bg-white" data-pdf-view-edit={v.id}>
+                                <div className="flex flex-wrap items-center gap-2 mb-2">
+                                  <input value={v.name} onChange={e => upd(i, { name: e.target.value })} data-pdf-view-name={v.id} className="font-semibold text-sm px-2 py-1 border border-slate-300 rounded-md flex-1 min-w-[10rem]" />
+                                  <button type="button" onClick={() => generatePDF({ view: v })} className="text-xs px-2.5 py-1 rounded-md border border-violet-300 text-violet-800 font-semibold"><i className="fa-solid fa-eye mr-1"></i>Try it</button>
+                                  <button type="button" onClick={() => save([...views.slice(0, i + 1), { ...v, id: 'v' + Date.now().toString(36), name: v.name + ' (copy)' }, ...views.slice(i + 1)])} className="text-xs px-2.5 py-1 rounded-md border border-slate-300">Copy</button>
+                                  <button type="button" data-pdf-view-del={v.id} onClick={() => { if (window.confirm(`Delete the "${v.name}" view?`)) save(views.filter((_, j) => j !== i)); }} className="text-xs px-2 py-1 rounded-md text-slate-400 hover:text-red-600"><i className="fa-solid fa-trash-can"></i></button>
+                                </div>
+                                <input value={v.note || ''} onChange={e => upd(i, { note: e.target.value })} placeholder="What it's for (optional)" className="w-full text-xs px-2 py-1 border border-slate-200 rounded-md mb-2" />
+                                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-0.5">{PDF_SECTIONS.map(([k, l]) => <label key={k} className="flex items-center gap-2 text-xs py-0.5 cursor-pointer"><input type="checkbox" data-pdf-view-sec={v.id + ':' + k} checked={v.sections[k] !== false} onChange={e => upd(i, { sections: { ...v.sections, [k]: e.target.checked } })} />{l}</label>)}</div>
+                              </div>))}
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" data-pdf-view-add="1" onClick={() => save([...views, { id: 'v' + Date.now().toString(36), name: 'New view', note: '', sections: pdfAll(true) }])} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Add a view</button>
+                              <button type="button" onClick={() => { if (window.confirm('Put the four standard views (Client, My record, WHS inspector, CASA) back and remove your changes?')) save(DEFAULT_PDF_VIEWS); }} className="text-xs px-3 py-1.5 rounded-md border border-slate-300">Reset to the standard views</button>
+                            </div>
+                          </div>);
+                        })())}
                         {dbFold('dbsec-risk-library', 'Risk assessment library', 'fa-triangle-exclamation', <span>{Object.keys(db.customRiskTemplates || {}).length} saved risk templates · import and export</span>, (<>
                         {/* ── Risk Assessment Library (v5.50) ── */}
                         {(() => {
