@@ -4,12 +4,13 @@
 import Dashboard, { Access as CrewAccess, Shared as CrewShared } from '../dashboard/Dashboard.jsx';
 import crewFormScript from '../crew/crewFormScript.js?raw';
 import qrcode from 'qrcode-generator';
-import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister } from '../observer/Observer.jsx';
+import { ObserverPanel, CrpObserverReview, CrewObserverBar, ObserverRegister, useJobSignatures, SigList } from '../observer/Observer.jsx';
 import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import OpsMap from '../opsmap/OpsMap.jsx';
 import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
 import Registers from '../compliance/Registers.jsx';
 import SignDialog from '../cloud/SignDialog.jsx';
+import { CommentsPanel, SharePanel, refreshLinkSnapshots } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
@@ -182,7 +183,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.17';
+        const APP_VERSION = '7.18';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1485,13 +1486,15 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           ['postflight', 'Post-flight log', 'Section 4: pre-flight checks, post-flight answers, crew'], ['amendments', 'Record of amendments', 'Changes after first save'],
           ['flightlog', 'Flight log by RPA', 'Each flight, batteries, telemetry'], ['attachments', 'Site attachments', 'Appendix: photos and files'],
           ['instruments', 'CASA instruments', 'Appendix: approvals and instruments'], ['heatmap', 'Crowd density map', 'Painted crowd density and exclusion zones'],
+          ['comments', 'Comments & suggested edits', 'From the live link and crew (open the job\'s comments first)'],
         ];
         const pdfAll = (on) => Object.fromEntries(PDF_SECTIONS.map(([k]) => [k, on]));
+        const pdfSecOn = (sections, k) => k === 'comments' ? (sections || {})[k] === true : (sections || {})[k] !== false; // comments only when ticked
         const pdfOnly = (keys) => Object.fromEntries(PDF_SECTIONS.map(([k]) => [k, keys.includes(k)]));
         const DEFAULT_PDF_VIEWS = [
           { id: 'client', name: 'Client view', note: 'What the client needs: the plan, maps, risks and sign-off. No internal checklists, logs or crew records.', sections: pdfOnly(['overview', 'sites', 'map', 'advmap', 'emergency', 'risks', 'approval', 'heatmap']) },
           { id: 'record', name: 'My record', note: 'Everything, for your own files.', sections: pdfAll(true) },
-          { id: 'whs', name: 'WHS inspector', note: 'Safety planning and controls: JSA, risks, OONP, emergency contacts, sign-off and what happened on the day.', sections: pdfOnly(['overview', 'sites', 'prelim', 'map', 'advmap', 'jsa', 'emergency', 'oonp', 'risks', 'approval', 'postflight', 'amendments', 'heatmap']) },
+          { id: 'whs', name: 'WHS inspector', note: 'Safety planning and controls: JSA, risks, OONP, emergency contacts, sign-off and what happened on the day.', sections: pdfOnly(['overview', 'sites', 'prelim', 'map', 'advmap', 'jsa', 'emergency', 'oonp', 'risks', 'approval', 'postflight', 'amendments', 'heatmap', 'comments']) },
           { id: 'casa', name: 'CASA', note: 'The full operational record, including the flight log, amendments and instruments.', sections: pdfAll(true) },
         ];
         const pdfViewsOf = (db) => (Array.isArray(db && db.pdfViews) && db.pdfViews.length ? db.pdfViews : DEFAULT_PDF_VIEWS);
@@ -1506,7 +1509,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           </div>);
         const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy) => {
           const ap = { ...(approval || {}) };
-          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig'].forEach(k => delete ap[k]);
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig', 'obsSigs'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           // v7.14: the CRP's crew-record bypasses are admin, not part of what the RPIC signs (adding one doesn't void a signature)
@@ -5378,6 +5381,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           };
 
           React.useEffect(() => { generatePDFRef.current = () => generatePDF(); });
+          const generatePDFRef2 = React.useRef(null), dbRef2 = React.useRef(null);
+          React.useEffect(() => { generatePDFRef2.current = (o) => generatePDF(o); dbRef2.current = db; });
           const [pdfMenu, setPdfMenu] = useState(null); // v7.17: { custom: null | { name, sections } }
           const generatePDF = (opts) => {
             // Capture heatmap canvas snapshot before opening new window
@@ -6110,6 +6115,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned,null,approval.crpSignedBy,approval.crpSig));
             P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy,approval.rpRemote?null:approval.rpSig));
             P.push('</div>');
+            const obsRow=(k,t)=>{const L=(approval.obsSigs||[]).filter(x=>x.kind===k);if(!L.length)return'';return '<div data-pdf-obs-sigs="'+k+'" style="margin-top:8pt;border:1px solid '+S2+';border-radius:4pt;padding:6pt 8pt;break-inside:avoid;"><div style="font-size:8pt;font-weight:700;color:'+NV+';margin-bottom:3pt;">'+esc(t)+'</div>'
+              +L.map(x=>'<div style="display:flex;gap:10pt;align-items:center;border-top:1px solid '+S2+';padding:3pt 0;"><div style="width:110pt;">'+(x.signature&&x.signature.image?'<img src="'+x.signature.image+'" style="max-height:24pt;max-width:110pt;">':'<span style="font-family:\'Brush Script MT\',cursive;font-size:13pt;">'+esc((x.signature&&x.signature.typed)||x.name)+'</span>')+'</div><div style="font-size:7pt;"><b>'+esc(x.name)+'</b> · EVLOS observer · '+esc(new Date(x.signed_at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+'<div style="color:'+S6+';">'+esc(x.declaration||'')+(x.note?' · '+esc(x.note):'')+'</div></div></div>').join('')+'</div>';};
+            P.push(obsRow('brief','Observers signed on for this job'));
 
             // S4
             P.push('<!--S:postflight-->');
@@ -6142,6 +6150,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               cRow('Conduct Changes / Deviations',log.conductedChanges),cRow('General Comments / Task Outcome',log.comments),cRow('Defects Noted',log.defects)));
             P.push(sub('Part C — Crew'));
             P.push(grid(r2('Primary RP',log.crewRP,'Second RP',log.crewSecondRP),cRow('Observer / Crew',log.crewObserver)));
+            P.push(obsRow('post_flight','Observers signed after the flight'));
             P.push('<!--S:amendments-->');
             const amends=amendmentsRef.current||[];
             if(amends.length){
@@ -6215,17 +6224,28 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               P.push('</div></div>');
             }
 
+            P.push('<!--S:comments-->');
+            { const wc=window.wdComments, cl=(wc&&wc.list)||[];
+              if(cl.length&&cloudJobIdFor(ov.uid)===wc.jobId){
+                const roots=cl.filter(c=>!c.parent_id);
+                P.push('<div style="break-before:page;page-break-before:always;"></div>'+sub('Comments & suggested edits'));
+                P.push('<table style="width:100%;border-collapse:collapse;font-size:7pt;"><tr><th style="text-align:left;padding:3pt;border-bottom:1px solid '+S2+';width:16%;">Section</th><th style="text-align:left;padding:3pt;border-bottom:1px solid '+S2+';width:20%;">From</th><th style="text-align:left;padding:3pt;border-bottom:1px solid '+S2+';">Comment / suggestion and replies</th><th style="text-align:left;padding:3pt;border-bottom:1px solid '+S2+';width:12%;">Status</th></tr>');
+                roots.forEach(c=>{const reps=cl.filter(r=>r.parent_id===c.id);const sg=c.kind==='suggestion'&&c.suggestion?('<div style="color:#92400e;">Suggested: '+esc(c.suggestion.kind==='new_risk'?'add a risk: '+((c.suggestion.risk||{}).hazard||''):(c.suggestion.label||'change')+' → '+(c.suggestion.to||''))+'</div>'):'';
+                  P.push('<tr style="break-inside:avoid;"><td style="padding:3pt;border-bottom:1px solid '+S2+';vertical-align:top;">'+esc((PDF_SECTIONS.find(x=>x[0]===c.section)||[0,c.section])[1])+'</td><td style="padding:3pt;border-bottom:1px solid '+S2+';vertical-align:top;">'+esc(c.author_name)+'<br><span style="color:'+S6+';">'+esc(new Date(c.created_at).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}))+'</span></td><td style="padding:3pt;border-bottom:1px solid '+S2+';vertical-align:top;white-space:pre-wrap;">'+esc(c.body)+sg+reps.map(r=>'<div style="margin-top:2pt;padding-left:5pt;border-left:2px solid '+S2+';"><b>'+esc(r.author_name)+':</b> '+esc(r.body)+'</div>').join('')+'</td><td style="padding:3pt;border-bottom:1px solid '+S2+';vertical-align:top;">'+esc({open:'Open',resolved:'Resolved',accepted:'Accepted',declined:'Declined'}[c.status]||c.status)+(c.decided_by?'<br><span style="color:'+S6+';">'+esc(c.decided_by)+'</span>':'')+'</td></tr>');});
+                P.push('</table>');
+              } }
             P.push('<!--S:end-->');
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
             if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner (free edition) · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
             let html=P.join('\n');
+            if(!(opts&&opts.view)) html=html.replace(/<!--S:comments-->[\s\S]*?(?=<!--S:end-->)/,'');
             // v7.17: a PDF view keeps only its ticked sections (the standard PDF keeps everything)
             const vw=opts&&opts.view&&opts.view.sections?opts.view.sections:null;
             if(vw){
               const parts=html.split(/<!--S:(\w+)-->/);let out=parts[0];
-              for(let i=1;i<parts.length;i+=2){const k=parts[i],body=parts[i+1]||'';if(k==='end'||vw[k]!==false)out+=body;}
+              for(let i=1;i<parts.length;i+=2){const k=parts[i],body=parts[i+1]||'';if(k==='end'||(k==='comments'?vw[k]===true:vw[k]!==false))out+='<!--S:'+k+'-->'+body;}
               html=out;
               if(opts.view.name) html=html.replace('<body onload="initMap()">','<body onload="initMap()"><div data-pdf-view="'+esc(opts.view.id||'')+'" style="position:fixed;top:-14mm;right:0;font-size:7pt;color:#7c3aed;font-weight:700;">'+esc(opts.view.name)+'</div>');
             }
@@ -9631,6 +9651,51 @@ View in the Database & Settings tab.`);
           // ── v7.4 Chunk 2b: cloud jobs ──────────────────────────────────────────────────────────
           // The account panel does the cloud calls (src/cloud/cloudJobs.js); the planner talks to it with window events.
           const isCrpCloud = IS_HOSTED && signedIn && auth.role === 'crp' && WD_NS === '';
+          // v7.18: comments, suggested edits and live links work on jobs in the cloud
+          const cloudJobIdFor = (uid) => { if (!uid) return null;
+            if (isCrewRole) { if (cloudJob && cloudJob.uid === uid) return cloudJob.id; const j = ((crewCloud && crewCloud.jobs) || []).find(x => x.plan_uid === uid); return j ? j.id : null; }
+            const j = (window.wdCloudJobs || []).find(x => x.plan_uid === uid); return j ? j.id : null; };
+          const [collab, setCollab] = useState(null); // { kind: 'comments' | 'share', section, jobId }
+          const collabWant = useRef(null);
+          const [openComments, setOpenComments] = useState(() => window.wdOpenComments || []);
+          useEffect(() => { const h = () => setOpenComments(window.wdOpenComments || []); window.addEventListener('wd-open-comments', h); return () => window.removeEventListener('wd-open-comments', h); }, []);
+          const openCollab = async (kind, section) => {
+            if (!IS_HOSTED || !signedIn) { alert('Comments and live links work in the online planner when you\'re signed in.'); return; }
+            const id = cloudJobIdFor(overview.uid);
+            if (id) { setCollab({ kind, section, jobId: id }); return; }
+            if (isCrewRole) { alert('Comments work on company jobs: open this job from My jobs on Home.'); return; }
+            if (!isCrpCloud) return;
+            if (!window.confirm('The job needs to be saved to the cloud first. Save the draft now?')) return;
+            collabWant.current = { kind, section, uid: overview.uid };
+            const d = await handleSaveDraftPlan({ quiet: true }); if (!d) { collabWant.current = null; return; }
+            const ov = d.overview || {};
+            window.dispatchEvent(new CustomEvent('wd-job-saved', { detail: { uid: ov.uid, opId: ov.identifier || d.id || null, title: getOpTitle(ov) || d.title || '', status: 'draft', startDate: isoDay(ov.operationDate), endDate: isoDay(ov.operationEndDate) || isoDay(ov.operationDate), plan: d, crew: planCrew(d) } }));
+          };
+          // live links show the plan as saved: refresh them each time the open job is saved to the cloud
+          useEffect(() => { if (!isCrpCloud) return; const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.jobId || d.uid !== fpStateRef.current.overview.uid) return;
+              setTimeout(() => refreshLinkSnapshots(d.jobId, (v) => generatePDFRef2.current({ capture: true, view: v }), pdfViewsOf(dbRef2.current)), 300); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, [isCrpCloud]); // eslint-disable-line
+          useEffect(() => { const h = (e) => { const d = e.detail || {}, w = collabWant.current; if (!w || d.uid !== w.uid) return; collabWant.current = null;
+              if (!d.ok || !d.jobId) { alert('Couldn\'t put the job in the cloud: ' + (d.error || 'unknown error')); return; }
+              setCollab({ kind: w.kind, section: w.section, jobId: d.jobId }); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, []);
+          const commentCount = (() => { const id = cloudJobIdFor(overview.uid); return id ? (openComments || []).filter(c => c.job_id === id && !c.parent_id && c.status === 'open').length : 0; })();
+          const CommentChip = ({ sec }) => (IS_HOSTED && signedIn) ? <button type="button" data-allow-locked="1" data-comment-chip={sec} onClick={() => openCollab('comments', sec)} title="Comments on this section" className="ml-2 align-middle text-xs font-semibold px-2 py-0.5 rounded-full border border-violet-200 text-violet-700 hover:bg-violet-50 print:hidden"><i className="fa-regular fa-comment"></i>{(() => { const id = cloudJobIdFor(overview.uid); const n = id ? (openComments || []).filter(c => c.job_id === id && !c.parent_id && c.status === 'open' && c.section === sec).length : 0; return n ? ' ' + n : ''; })()}</button> : null;
+          // a crew member's suggestion accepted by the CRP: change the plan here (they save it as usual)
+          const getPlanValue = (path) => { const [a, b] = String(path || '').split('.'); const src = { overview, jsa, approval }[a]; return src && b ? (src[b] == null ? '' : src[b]) : null; };
+          const applySuggestion = (sg) => {
+            if (approval.flightAuthApproved) return 'This job is approved and locked. Amend the plan first (Authorisation tab), then accept the suggestion.';
+            if (cloudJobIdFor(overview.uid) !== (collab && collab.jobId)) return 'Open this job first.';
+            if (sg.kind === 'new_risk') { const r = sg.risk || {}; setRisks(prev => [...prev.filter(x => String(x.hazard || '').trim()), { ...cleanRisk({ hazard: r.hazard, riskDescription: r.riskDescription, existingControls: r.controls }, 0), refNo: String(prev.filter(x => String(x.hazard || '').trim()).length + 1).padStart(3, '0') }]); return true; }
+            const m = /^risks:([^.]+)\.(\w+)$/.exec(sg.path || '');
+            if (m) { let hit = false; setRisks(prev => prev.map(r => { if (String(r.refNo) !== m[1]) return r; hit = true; const v = m[2] === 'resL' ? (normL(sg.to) || r.resL) : m[2] === 'resC' ? (normC(sg.to) || r.resC) : sg.to; return { ...r, [m[2]]: v }; }));
+              return risks.some(r => String(r.refNo) === m[1]) ? true : 'That risk is no longer in the register.'; }
+            const [a, b] = String(sg.path || '').split('.');
+            const set = { overview: setOverview, jsa: setJsa, approval: setApproval }[a];
+            if (!set || !b) return 'This suggestion can\'t be applied automatically: make the change by hand and mark it done.';
+            set(prev => ({ ...prev, [b]: sg.to }));
+            return true;
+          };
           const [cloudReady, setCloudReady] = useState(() => !!window.__wdCloudReady);
           useEffect(() => { const h = () => setCloudReady(!!window.__wdCloudReady); h(); window.addEventListener('wd-cloud-ready', h); return () => window.removeEventListener('wd-cloud-ready', h); }, []);
           const lsJson = (k, dflt) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } };
@@ -9802,6 +9867,16 @@ View in the Database & Settings tab.`);
               return [n ? `${n} flight${n === 1 ? '' : 's'}` : '', pf ? 'post-flight answers' : ''].filter(Boolean).join(' and ') + ` from ${g.who}`; })(), sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
             (obsWaiting || []).forEach(r => aw.push({ kind: 'obs-signed', icon: 'fa-binoculars', color: 'text-violet-600', label: `${(r.people && r.people.full_name) || (r.answers && r.answers.name) || 'An observer'} signed as EVLOS observer${r.job ? ': ' + r.job.title : ''}`,
               sub: r.answers && r.answers.via === 'login' ? 'Reviewed the plan in the planner' : 'Signed on their phone', cta: 'Countersign', act: () => setObsReview({ ...r, job_title: r.job && r.job.title }) }));
+            // v7.18: open comments and suggested edits, per job
+            { const byJ = {}; (openComments || []).filter(c => !c.parent_id && c.status === 'open').forEach(c => { (byJ[c.job_id] = byJ[c.job_id] || []).push(c); });
+              Object.entries(byJ).forEach(([jid, cs]) => { const j = (window.wdCloudJobs || []).find(x => x.id === jid) || {}; const ns = cs.filter(c => c.kind === 'suggestion').length;
+                aw.push({ kind: 'comments', icon: 'fa-comments', color: 'text-violet-600', label: `${cs.length - ns ? (cs.length - ns) + ' comment' + (cs.length - ns === 1 ? '' : 's') : ''}${cs.length - ns && ns ? ' and ' : ''}${ns ? ns + ' suggested edit' + (ns === 1 ? '' : 's') : ''} on ${j.title || 'a job'}`,
+                  sub: 'From ' + [...new Set(cs.map(c => c.author_name))].slice(0, 3).join(', '), cta: 'Review', act: () => {
+                    const local = cloudJobsList().find(x => x.uid === j.plan_uid);
+                    const go = () => setTimeout(() => setCollab({ kind: 'comments', section: 'all', jobId: jid }), 500);
+                    if (overview.uid === j.plan_uid) { go(); return; }
+                    if (dirty && !window.confirm(`Open “${j.title || 'the job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
+                    if (local) { handleLoadPlan(local.p, { silent: true }); go(); } else openJobFromCloud(jid, j.plan_uid, go); } }); }); }
             const AREA = { fleet: 'fleet management', batteries: 'battery management', records: 'job records', planning: 'flight planning' };
             (accessReqs || []).filter(r => r.status === 'requested').forEach(r => aw.push({ kind: 'access', icon: 'fa-key', color: 'text-amber-600', label: `${r.who} asks for ${AREA[r.area] || r.area}`, sub: r.note || 'Access request',
               cta: 'Grant', act: () => window.dispatchEvent(new CustomEvent('wd-decide-access', { detail: { id: r.id, status: 'granted' } })),
@@ -9854,6 +9929,12 @@ View in the Database & Settings tab.`);
             return () => clearTimeout(t);
           }, [signAfterLoad, overview.uid, approval.rpName, approval.rpSigned]); // eslint-disable-line
           const onCloudJob = !!(cloudJob && isCrewRole && overview.uid && cloudJob.uid === overview.uid);
+          // v7.18: observers' short per-job signatures (brief / post-flight), kept with the plan for the PDF
+          const jobSigs = useJobSignatures(IS_HOSTED && signedIn ? cloudJobIdFor(overview.uid) : null);
+          useEffect(() => { if (!isCrpCloud || !jobSigs || planLoadingRef.current) return;
+            const slim = jobSigs.map(r => ({ id: r.id, name: r.name, kind: r.kind, signature: r.signature, signed_at: r.signed_at, note: r.note || '', declaration: r.declaration || '' }));
+            if (JSON.stringify(slim) !== JSON.stringify(approval.obsSigs || [])) setApproval(prev => ({ ...prev, obsSigs: slim })); }, [jobSigs]); // eslint-disable-line
+          const obsSigRows = (jobSigs && jobSigs.length) ? jobSigs : (approval.obsSigs || []);
           const isObserverOnJob = onCloudJob && ((((crewCloud && crewCloud.jobs) || []).find(j => j.id === cloudJob.id) || {}).myRole === 'observer'
             || [jsa.evlosObserver, jsa.bvlosObserver, jsa.nvlosObserver, overview.supportPersonnel, log.crewObserver].some(n => String(n || '').split(/[,;/&]|\band\b/).some(x => sameName(x, auth.name))));
           // v7.5.7: the post-flight answers (weather, conducted as planned, serviceable, defects, crew…) go to the CRP too
@@ -10387,6 +10468,12 @@ View in the Database & Settings tab.`);
                     </div>
                   </div>);
               })()}
+              {collab && collab.kind === 'comments' && <CommentsPanel jobId={collab.jobId} jobTitle={getOpTitle(overview)} me={{ name: signName || auth.email }} isCrp={!isCrewRole}
+                startSection={collab.section || 'all'} risks={(risks || []).filter(r => String(r.hazard || '').trim())} current={getPlanValue}
+                onApply={(sg) => { const r = applySuggestion(sg); if (r === true) setTimeout(() => alert('Change made in the plan. Save the job to keep it' + (approval.rpSigned ? ' (the RPIC will need to sign again).' : '.')), 50); return r; }}
+                onClose={() => { setCollab(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
+              {collab && collab.kind === 'share' && <SharePanel jobId={collab.jobId} jobTitle={getOpTitle(overview)} views={pdfViewsOf(db)}
+                makeSnapshot={(v) => generatePDF({ capture: true, view: v })} onClose={() => setCollab(null)} />}
               {pdfMenu && (() => {
                 const views = pdfViewsOf(isCrewRole && crewCloud && crewCloud.company && Array.isArray(crewCloud.company.pdfViews) ? { pdfViews: crewCloud.company.pdfViews } : db);
                 const cu = pdfMenu.custom;
@@ -10404,16 +10491,16 @@ View in the Database & Settings tab.`);
                         {views.map(v => <div key={v.id} className="flex items-stretch gap-1.5">
                           <button type="button" data-pdf-view={v.id} onClick={() => print(v)} className="flex-1 text-left px-3 py-2 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50/40">
                             <div className="font-semibold text-slate-800 text-sm">{v.name}</div>
-                            <div className="text-[11px] text-slate-500">{v.note ? v.note + ' ' : ''}{PDF_SECTIONS.filter(([k]) => v.sections[k] !== false).length} of {PDF_SECTIONS.length} sections</div></button>
-                          <button type="button" data-pdf-view-tweak={v.id} title="Change the sections for this print only" onClick={() => setPdfMenu({ custom: { id: v.id, name: v.name, sections: { ...pdfAll(true), ...v.sections } } })} className="px-3 rounded-xl border border-slate-200 text-xs text-slate-600 hover:bg-slate-50"><i className="fa-solid fa-sliders"></i></button>
+                            <div className="text-[11px] text-slate-500">{v.note ? v.note + ' ' : ''}{PDF_SECTIONS.filter(([k]) => pdfSecOn(v.sections, k)).length} of {PDF_SECTIONS.length} sections</div></button>
+                          <button type="button" data-pdf-view-tweak={v.id} title="Change the sections for this print only" onClick={() => setPdfMenu({ custom: { id: v.id, name: v.name, sections: { ...pdfAll(true), comments: false, ...v.sections } } })} className="px-3 rounded-xl border border-slate-200 text-xs text-slate-600 hover:bg-slate-50"><i className="fa-solid fa-sliders"></i></button>
                         </div>)}
                         <div className="flex items-center justify-between pt-1 text-xs">
-                          <button type="button" data-pdf-view-custom="1" onClick={() => setPdfMenu({ custom: { id: 'custom', name: 'Custom', sections: pdfAll(true) } })} className="text-violet-700 font-semibold underline">Pick sections for this print…</button>
+                          <button type="button" data-pdf-view-custom="1" onClick={() => setPdfMenu({ custom: { id: 'custom', name: 'Custom', sections: { ...pdfAll(true), comments: false } } })} className="text-violet-700 font-semibold underline">Pick sections for this print…</button>
                           {!isCrewRole && <button type="button" onClick={() => { setPdfMenu(null); setActiveTab('database'); setTimeout(() => jumpToDbSection('dbsec-pdf-views'), 350); }} className="text-slate-500 underline">Edit views in Settings</button>}
                         </div>
                       </div> : <div className="p-4">
                         <p className="text-xs text-slate-500 mb-2">For this print only. Change a view for good in Database &amp; Settings › PDF views.</p>
-                        <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">{PDF_SECTIONS.map(([k, l, d]) => <label key={k} className="flex items-start gap-2 text-sm py-0.5 cursor-pointer"><input type="checkbox" className="mt-1" data-pdf-sec={k} checked={cu.sections[k] !== false} onChange={e => setPdfMenu({ custom: { ...cu, sections: { ...cu.sections, [k]: e.target.checked } } })} /><span><span className="text-slate-800">{l}</span>{d && <span className="block text-[11px] text-slate-500 leading-tight">{d}</span>}</span></label>)}</div>
+                        <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">{PDF_SECTIONS.map(([k, l, d]) => <label key={k} className="flex items-start gap-2 text-sm py-0.5 cursor-pointer"><input type="checkbox" className="mt-1" data-pdf-sec={k} checked={pdfSecOn(cu.sections, k)} onChange={e => setPdfMenu({ custom: { ...cu, sections: { ...cu.sections, [k]: e.target.checked } } })} /><span><span className="text-slate-800">{l}</span>{d && <span className="block text-[11px] text-slate-500 leading-tight">{d}</span>}</span></label>)}</div>
                         <div className="flex gap-2 mt-3"><button type="button" data-pdf-custom-print="1" onClick={() => print({ id: cu.id, name: cu.name + (cu.id === 'custom' ? '' : ' (adjusted)'), sections: cu.sections })} className="flex-1 px-4 py-2 rounded-lg bg-violet-700 text-white font-bold text-sm"><i className="fa-solid fa-print mr-1.5"></i>Make the PDF</button>
                           <button type="button" onClick={() => setPdfMenu({ custom: null })} className="px-4 py-2 rounded-lg border border-slate-300 text-sm">Back</button></div>
                       </div>}
@@ -10773,6 +10860,8 @@ View in the Database & Settings tab.`);
                       {when && <span className="text-xs text-slate-500 shrink-0" data-job-bar-date="1">{when}</span>}
                       <span className="hidden sm:block flex-1"></span>
                       {status && <span className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${status[1]}`} data-job-bar-status={status[0]}>{status[0]}</span>}
+                      {IS_HOSTED && signedIn && <button type="button" data-allow-locked="1" data-job-comments="1" onClick={() => openCollab('comments', 'all')} title="Comments & suggested edits" className="shrink-0 text-xs font-semibold px-2 py-1 rounded-md border border-slate-200 text-slate-700 hover:bg-violet-50"><i className="fa-regular fa-comments"></i><span className="hidden sm:inline ml-1">Comments</span>{commentCount ? <span className="ml-1 px-1.5 rounded-full bg-amber-500 text-white" data-job-comments-n={commentCount}>{commentCount}</span> : null}</button>}
+                      {isCrpCloud && <button type="button" data-allow-locked="1" data-job-share="1" onClick={() => openCollab('share')} title="Share a live link with your client or crew" className="shrink-0 text-xs font-semibold px-2 py-1 rounded-md bg-violet-600 text-white hover:bg-violet-700"><i className="fa-solid fa-link"></i><span className="hidden sm:inline ml-1">Share</span></button>}
                     </div>
                   </div>
                 );
@@ -10904,7 +10993,7 @@ View in the Database & Settings tab.`);
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print:border-none print:shadow-none">
                       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center gap-2 print:bg-white print:px-0 print:hidden">
                         <i className="fa-solid fa-file-lines text-lg text-blue-600 print:hidden"></i>
-                        <h2 className="text-lg font-semibold text-slate-800">Section 1: Operations Overview & Preliminary Assessment</h2>
+                        <h2 className="text-lg font-semibold text-slate-800">Section 1: Operations Overview & Preliminary Assessment<CommentChip sec="overview" /></h2>
                       </div>
                       <ReqStrip tab="preliminary" />
 
@@ -11907,7 +11996,7 @@ View in the Database & Settings tab.`);
                       <div className={`px-6 py-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden ${isJsaRequired ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
                         <div className="flex items-center gap-2">
                           <i className={`fa-solid fa-shield-halved text-xl ${isJsaRequired ? 'text-amber-600' : 'text-slate-600'}`}></i>
-                          <h2 className="text-lg font-semibold text-slate-800">Section 2: Job Safety Assessment (JSA)</h2>
+                          <h2 className="text-lg font-semibold text-slate-800">Section 2: Job Safety Assessment (JSA)<CommentChip sec="jsa" /></h2>
                         </div>
                       </div>
                       <ReqStrip tab="jsa" />
@@ -13072,7 +13161,7 @@ View in the Database & Settings tab.`);
                           <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-4 mb-4 pb-2 border-b border-gray-200">
                             <div>
                               <h3 data-req-anchor="risks" className="text-md font-semibold text-slate-800 flex items-center gap-2">
-                                Risk Assessment Register<ReqMark why={reqWhy('risks')} />
+                                Risk Assessment Register<ReqMark why={reqWhy('risks')} /><CommentChip sec="risks" />
                               </h3>
                               <p className="text-sm text-slate-500 mt-1">Identify hazards and apply the Likelihood/Consequence matrix to calculate risk.</p>
                             </div>
@@ -13466,7 +13555,7 @@ View in the Database & Settings tab.`);
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print:border-none print:shadow-none">
                       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center gap-2 print:hidden">
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
-                        <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation</h2>
+                        <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation<CommentChip sec="approval" /></h2>
                       </div>
                       <ReqStrip tab="approval" />
                       {isCrpCloud && (() => {
@@ -13933,6 +14022,7 @@ View in the Database & Settings tab.`);
                               {rpSignBlocked && !approval.rpSigned && <div className="text-xs text-slate-500 print:hidden" data-sign-note="rp"><i className="fa-solid fa-lock mr-1"></i>{rpSignBlocked}</div>}
                               {approval.rpSigned && approval.rpSignedBy && !approval.rpRemote && <div className="text-[11px] text-slate-500 print:hidden"><i className="fa-solid fa-user-check mr-1 text-emerald-600"></i>Signed in the planner by {approval.rpSignedBy.name || approval.rpSignedBy.email} ({approval.rpSignedBy.email})</div>}
                               {approval.rpSigned && approval.rpSig && !approval.rpRemote && <SigShown sig={approval.rpSig} name={approval.rpName} role="rp" />}
+                              <SigList rows={obsSigRows} kind="brief" title="Observers signed on for this job" />
                               {/* Remote signing (v5.51) */}
                               <div data-rp-remote="1" className="print:hidden border-t border-slate-100 pt-3">
                                 {approval.rpSigned && approval.rpRemote ? (
@@ -14041,7 +14131,8 @@ View in the Database & Settings tab.`);
                      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print:border-none print:shadow-none">
                       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center gap-2 print:hidden">
                         <i className="fa-solid fa-clipboard-list text-lg text-blue-600"></i>
-                        <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log</h2>
+                        <h2 className="text-lg font-semibold text-slate-800">Section 4: Post-Flight Log<CommentChip sec="postflight" /></h2>
+                        <div className="mt-2"><SigList rows={obsSigRows} kind="post_flight" title="Observers signed after the flight" /></div>
                       </div>
                       <ReqStrip tab="log" title="to complete the record" />
                       {isCrpCloud && <div data-log-invite-bar="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 flex items-center gap-3 flex-wrap">
@@ -15345,7 +15436,7 @@ View in the Database & Settings tab.`);
                                   <button type="button" data-pdf-view-del={v.id} onClick={() => { if (window.confirm(`Delete the "${v.name}" view?`)) save(views.filter((_, j) => j !== i)); }} className="text-xs px-2 py-1 rounded-md text-slate-400 hover:text-red-600"><i className="fa-solid fa-trash-can"></i></button>
                                 </div>
                                 <input value={v.note || ''} onChange={e => upd(i, { note: e.target.value })} placeholder="What it's for (optional)" className="w-full text-xs px-2 py-1 border border-slate-200 rounded-md mb-2" />
-                                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-0.5">{PDF_SECTIONS.map(([k, l]) => <label key={k} className="flex items-center gap-2 text-xs py-0.5 cursor-pointer"><input type="checkbox" data-pdf-view-sec={v.id + ':' + k} checked={v.sections[k] !== false} onChange={e => upd(i, { sections: { ...v.sections, [k]: e.target.checked } })} />{l}</label>)}</div>
+                                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-0.5">{PDF_SECTIONS.map(([k, l]) => <label key={k} className="flex items-center gap-2 text-xs py-0.5 cursor-pointer"><input type="checkbox" data-pdf-view-sec={v.id + ':' + k} checked={pdfSecOn(v.sections, k)} onChange={e => upd(i, { sections: { ...v.sections, [k]: e.target.checked } })} />{l}</label>)}</div>
                               </div>))}
                             <div className="flex flex-wrap gap-2">
                               <button type="button" data-pdf-view-add="1" onClick={() => save([...views, { id: 'v' + Date.now().toString(36), name: 'New view', note: '', sections: pdfAll(true) }])} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Add a view</button>
@@ -15611,7 +15702,7 @@ View in the Database & Settings tab.`);
           );
         }
 
-        const root = (window.__WD_CREW_MODE || window.__WD_OBS_MODE) ? null : ReactDOM.createRoot(document.getElementById('root'));
+        const root = (window.__WD_CREW_MODE || window.__WD_OBS_MODE || window.__WD_PLAN_MODE) ? null : ReactDOM.createRoot(document.getElementById('root'));
         if (root) root.render(
           <ErrorBoundary>
             <FlightRecordApp />

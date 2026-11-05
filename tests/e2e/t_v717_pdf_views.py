@@ -39,7 +39,7 @@ with sync_playwright() as p:
     wh = pg.evaluate('window.__pdfs')[-1]
     R.check('WHS view: JSA, risks and post-flight in; flight log out', 'Job Safety Assessment (JSA)' in wh and 'Post-Flight Log' in wh and 'Flight Log by RPA' not in wh)
     pg.click('[data-pdf-views-open]'); pg.wait_for_timeout(300); pg.click('[data-pdf-view-tweak=casa]'); pg.wait_for_timeout(300)
-    R.check('tweak starts from the view', pg.locator('[data-pdf-sec]:checked').count() == 17)
+    R.check('tweak starts from the view', pg.locator('[data-pdf-sec]:checked').count() == 18)
     pg.uncheck('[data-pdf-sec=risks]'); pg.uncheck('[data-pdf-sec=map]'); pg.click('[data-pdf-custom-print]'); pg.wait_for_timeout(2500)
     tw = pg.evaluate('window.__pdfs')[-1]
     R.check('one-off print leaves out the unticked sections', 'Risk Assessment Register' not in tw and 'Operations Area Map' not in tw and 'Flight Log by RPA' in tw and 'CASA (adjusted)' in tw)

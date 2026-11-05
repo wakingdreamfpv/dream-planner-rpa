@@ -356,6 +356,50 @@ export function SelfObserverSheet({ jobId, jobTitle, summary, name, onOpenPlan, 
   );
 }
 
+// v7.18: an observer already trained (current EVLOS observer sign-off) signs each job with one short tick:
+// a brief before flying, and optionally a sign after the flight. The long declaration belongs to the training sign-off.
+export const BRIEF_TEXT = { brief: 'I have been briefed for this job, I am fit for duty, and I will follow the Remote Pilot\'s lawful directions.',
+  post_flight: 'The operation was conducted as briefed, and I have reported any incident or concern to the RPIC.' };
+export function BriefPart({ name, kind: kind0 = 'brief', signed = [], summary, onSubmit, busy, error, due }) {
+  const [kind, setKind] = useState(signed.includes('brief') && !signed.includes('post_flight') ? 'post_flight' : kind0);
+  const [ok, setOk] = useState(false), [sig, setSig] = useState(null), [note, setNote] = useState('');
+  return (
+    <div className="space-y-4" data-brief-part={kind}>
+      <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900" data-brief-current="1"><i className="fa-solid fa-circle-check mr-1"></i>You're a trained EVLOS observer{due ? ' (current to ' + fmtD(due) + ')' : ''}. Just sign for this job.</div>
+      <div className="grid grid-cols-2 gap-1.5">{[['brief', 'Before the job', signed.includes('brief')], ['post_flight', 'After the flight', signed.includes('post_flight')]].map(([k, l, done]) =>
+        <button key={k} type="button" data-brief-kind={k} onClick={() => { setKind(k); setOk(false); }} className={`px-3 py-2 rounded-lg border text-sm font-semibold ${kind === k ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300'}`}>{l}{done ? ' ✓' : ''}</button>)}</div>
+      {kind === 'brief' && summary && <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">The job</div><JobSummary s={summary} /></div>}
+      {kind === 'brief' && <div className="rounded-xl bg-violet-50 border border-violet-200 p-3"><ul className="space-y-1 text-sm text-violet-950">{OBS_TLDR.map((t, i) => <li key={i} className="flex gap-2"><span className="text-violet-500 font-bold">{i + 1}.</span><span>{t}</span></li>)}</ul></div>}
+      <Tick checked={ok} onChange={setOk} testid="brief-ok">{BRIEF_TEXT[kind]}</Tick>
+      {kind === 'post_flight' && <textarea className={input} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything to note (optional)" data-brief-note="1" />}
+      <div className="rounded-xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Your signature</div><SignaturePad name={name} value={sig} onChange={setSig} testid="brief-sig" /></div>
+      {error && <div className="text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700" data-brief-error="1">{error}</div>}
+      <button type="button" data-brief-submit="1" disabled={!ok || !sig || busy} onClick={() => onSubmit({ kind, signature: { ...sig, name }, note: note.trim() || null })}
+        className={btn + ' w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-base py-3'}>{busy ? 'Sending…' : kind === 'brief' ? 'Sign for this job' : 'Sign after the flight'}</button>
+    </div>
+  );
+}
+// The CRP's (and crew's) view of the observers who signed a job
+export function useJobSignatures(jobId) {
+  const [rows, setRows] = useState(null);
+  const load = async () => { if (!jobId) { setRows([]); return; } try { const { data, error } = await getSupabase().from('job_signatures').select('id,name,kind,declaration,note,signature,via,signed_at').eq('job_id', jobId).order('signed_at', { ascending: true }); if (error) throw error; setRows(data || []); } catch (e) { setRows([]); } };
+  useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-job-sigs', h); window.addEventListener('wd-cloud-refresh', h); return () => { window.removeEventListener('wd-job-sigs', h); window.removeEventListener('wd-cloud-refresh', h); }; }, [jobId]); // eslint-disable-line
+  return rows;
+}
+export function SigList({ rows, kind, title }) {
+  const list = (rows || []).filter((r) => r.kind === kind);
+  if (!list.length) return null;
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2" data-obs-sigs={kind}>
+      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">{title}</div>
+      {list.map((r) => <div key={r.id} className="flex items-center gap-3 py-1 border-t border-slate-100 first:border-0" data-obs-sig={r.name}>
+        <div className="w-28 shrink-0">{r.signature && r.signature.image ? <img src={r.signature.image} alt="" className="h-8 bg-white" /> : <span className="text-lg" style={{ fontFamily: '"Brush Script MT","Segoe Script",cursive' }}>{(r.signature && r.signature.typed) || r.name}</span>}</div>
+        <div className="text-xs text-slate-600 min-w-0"><b className="text-slate-800">{r.name}</b> · EVLOS observer · {fmtDT(r.signed_at)}{r.note ? <div className="text-slate-500">{r.note}</div> : null}</div>
+      </div>)}
+    </div>
+  );
+}
+
 // ── Standalone page for the QR / link (no login, observer's own phone) ───────────────────────────────
 export function ObserverLinkApp({ token }) {
   const sb = getSupabase();
@@ -379,6 +423,23 @@ export function ObserverLinkApp({ token }) {
     setBusy(false);
   };
   const d = st.data;
+  // v7.18: who are you? A trained observer signs the short job brief; anyone else does the full sign-off
+  const [who, setWho] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_obs_who') || 'null') || { name: '', phone: '' }; } catch (e) { return { name: '', phone: '' }; } });
+  const [stat, setStat] = useState(null); // null = not asked, { current, due, signed }
+  const [briefDone, setBriefDone] = useState('');
+  const check = async () => {
+    setErr(''); try { localStorage.setItem('wd_obs_who', JSON.stringify(who)); } catch (e) {}
+    try { const { data, error } = await sb.rpc('observer_link_status', { p_token: token, p_name: who.name.trim(), p_phone: who.phone.trim() }); if (error) throw error; setStat(data || { current: false }); }
+    catch (e) { setStat({ current: false }); }
+  };
+  const sendBrief = async (o) => {
+    setBusy(true); setErr('');
+    const { error } = await sb.rpc('sign_job_brief_link', { p_token: token, p_name: who.name.trim(), p_phone: who.phone.trim(), p_kind: o.kind, p_signature: o.signature, p_note: o.note });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setBriefDone(o.kind);
+  };
+  const jobLink = d && !d.error && !d.training && !st.offline;
   return (
     <div className="min-h-[100dvh] bg-slate-100" data-observer-app="1">
       <div className="text-white px-4 py-4" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
@@ -391,8 +452,16 @@ export function ObserverLinkApp({ token }) {
           : done ? <div className="bg-white rounded-2xl p-6 text-center space-y-2" data-obs-link-done="1"><i className="fa-solid fa-circle-check text-emerald-500 text-5xl"></i><h2 className="text-lg font-bold text-slate-800">Thanks, {done.split(' ')[0]}.</h2><p className="text-sm text-slate-600">Your sign-off has gone to the Chief Remote Pilot, who will check it with you before the flight.</p></div>
           : d && d.error ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{d.error}</div>
           : !d ? <div className="bg-white rounded-2xl p-6 text-center text-slate-700" data-obs-link-error="1">{st.error}</div>
+          : briefDone ? <div className="bg-white rounded-2xl p-6 text-center space-y-2" data-brief-done={briefDone}><i className="fa-solid fa-circle-check text-emerald-500 text-5xl"></i><h2 className="text-lg font-bold text-slate-800">Thanks, {who.name.split(' ')[0]}.</h2><p className="text-sm text-slate-600">{briefDone === 'brief' ? 'You\'re signed on for this job. Keep this link: after the flight you can sign off here too.' : 'Your post-flight sign-off has gone to the CRP.'}</p>{briefDone === 'brief' && <button type="button" onClick={() => { setBriefDone(''); setStat({ ...stat, signed: [...((stat && stat.signed) || []), 'brief'] }); }} className="text-sm underline text-violet-700">Sign after the flight</button>}</div>
+          : jobLink && !stat ? <div className="bg-white rounded-2xl p-4 sm:p-5 space-y-3" data-obs-who="1">
+              <div className="text-sm text-slate-700">First, who are you?</div>
+              <input className={input} placeholder="Full name" value={who.name} onChange={e => setWho({ ...who, name: e.target.value })} data-obs-who-name="1" autoComplete="name" />
+              <input className={input} placeholder="Mobile" inputMode="tel" value={who.phone} onChange={e => setWho({ ...who, phone: e.target.value })} data-obs-who-phone="1" autoComplete="tel" />
+              <button type="button" data-obs-who-go="1" disabled={!who.name.trim() || !who.phone.trim()} onClick={check} className={btn + ' w-full bg-violet-600 text-white disabled:opacity-40'}>Continue</button>
+              <p className="text-xs text-slate-500">Already trained as an EVLOS observer with us? You'll just sign for this job. Otherwise you'll do the observer sign-off.</p></div>
+          : jobLink && stat && stat.current ? <div className="bg-white rounded-2xl p-4 sm:p-5"><BriefPart name={who.name.trim()} signed={stat.signed || []} due={stat.due} summary={d} onSubmit={sendBrief} busy={busy} error={err} /></div>
           : <div className="bg-white rounded-2xl p-4 sm:p-5">{st.offline && <div className="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-900 mb-3">No signal: showing the job saved on this phone. You can fill it in; it sends when you have reception.</div>}
-              <ObserverPart mode="link" summary={d.training ? null : d} manual={{ ...(d.manual || {}), extract: d.extract || '' }} token={token} training={!!d.training} onSubmit={send} busy={busy} error={err} /></div>}
+              <ObserverPart mode="link" summary={d.training ? null : d} defaults={stat ? who : {}} manual={{ ...(d.manual || {}), extract: d.extract || '' }} token={token} training={!!d.training} onSubmit={send} busy={busy} error={err} /></div>}
       </div>
     </div>
   );
@@ -402,8 +471,23 @@ export function ObserverLinkApp({ token }) {
 export function CrewObserverBar({ jobId, jobTitle, summary, name, onOpenPlan }) {
   const sb = getSupabase();
   const [rec, setRec] = useState(undefined), [open, setOpen] = useState(false);
+  const [cur, setCur] = useState(null), [brief, setBrief] = useState(null), [bBusy, setBBusy] = useState(false), [bErr, setBErr] = useState('');
+  const sigs = useJobSignatures(jobId);
+  useEffect(() => { (async () => { try { const { data } = await sb.rpc('my_observer_status'); setCur(data || { current: false }); } catch (e) { setCur({ current: false }); } })(); }, [jobId]); // eslint-disable-line
+  const mine = (sigs || []).filter((r) => r.name && name && r.name.trim().toLowerCase() === String(name).trim().toLowerCase()).map((r) => r.kind);
+  const signBrief = async (o) => { setBBusy(true); setBErr(''); const { error } = await sb.rpc('sign_job_brief', { p_job_id: jobId, p_kind: o.kind, p_signature: o.signature, p_note: o.note }); setBBusy(false);
+    if (error) { setBErr(error.message); return; } setBrief(null); window.dispatchEvent(new Event('wd-job-sigs')); };
   const load = async () => { if (!jobId) return; const { data } = await sb.from('signoff_records').select('id,status,person_signed_at,crp_signed_at').eq('type', 'evlos_observer').eq('job_id', jobId).order('created_at', { ascending: false }).limit(1); setRec((data && data[0]) || null); };
   useEffect(() => { load(); const h = () => load(); window.addEventListener('wd-obs-self-signed', h); return () => window.removeEventListener('wd-obs-self-signed', h); }, [jobId]); // eslint-disable-line
+  if (cur && cur.current) return (
+    <div className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 flex items-center gap-3 flex-wrap" data-obs-crew-bar={mine.includes('brief') ? 'briefed' : 'to-brief'}>
+      <i className="fa-solid fa-binoculars text-violet-600 text-lg"></i>
+      <div className="flex-1 min-w-[12rem] text-sm text-violet-900">{mine.includes('brief') ? <><b>Signed on for this job.</b>{mine.includes('post_flight') ? ' Post-flight signed too.' : ' After the flight, sign off here.'}</> : <><b>You're the observer on this job.</b> Review the plan, then sign for this job (one tick).</>}</div>
+      {!mine.includes('brief') && <button type="button" data-brief-open="brief" onClick={() => setBrief('brief')} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold"><i className="fa-solid fa-signature mr-1"></i>Sign for this job</button>}
+      {mine.includes('brief') && !mine.includes('post_flight') && <button type="button" data-brief-open="post_flight" onClick={() => setBrief('post_flight')} className="px-3 py-2 rounded-lg border border-violet-300 bg-white text-violet-800 text-sm font-semibold">Sign after the flight</button>}
+      {brief && <Sheet title={brief === 'brief' ? 'Sign for this job' : 'After the flight'} sub={jobTitle} onClose={() => setBrief(null)} testid="brief-sheet">
+        <BriefPart name={name} kind={brief} signed={mine} due={cur.due} summary={null} onSubmit={signBrief} busy={bBusy} error={bErr} /></Sheet>}
+    </div>);
   if (rec === undefined) return null;
   const st = rec && rec.status;
   return (

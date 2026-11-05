@@ -8,3 +8,6 @@ window.ReactDOM = { ...ReactDOMLegacy, ...ReactDOMClient };
 
 // Chunk 4: a QR / link for an observer (#observer=<token>) shows only the observer sign-off page
 window.__WD_OBS_MODE = typeof location !== 'undefined' && /^#observer=[a-f0-9]{40,80}$/i.test(location.hash);
+
+// v7.18: a live plan link (#plan=<token>) shows only the plan and its comments
+window.__WD_PLAN_MODE = typeof location !== 'undefined' && /^#plan=[a-f0-9]{40,80}$/i.test(location.hash);

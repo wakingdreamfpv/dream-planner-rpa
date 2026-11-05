@@ -59,6 +59,9 @@ export function useCloudJobs(sb, me) {
         // Chunk 4: observer sign-offs waiting for the CRP to countersign
         try { const { data: ob } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,job_id,people:person_id (full_name, phone, email)').eq('type', 'evlos_observer').eq('status', 'awaiting_crp').order('person_signed_at', { ascending: false });
           publish('wdObsWaiting', (ob || []).map(r => ({ ...r, job: jById[r.job_id] || null })), 'wd-obs-waiting'); } catch (e) {}
+        // v7.18: open comments and suggested edits on every job
+        try { const { data: cm } = await sb.from('plan_comments').select('id,job_id,section,kind,status,author_name,parent_id,created_at').eq('status', 'open').order('created_at', { ascending: false }).limit(300);
+          publish('wdOpenComments', cm || [], 'wd-open-comments'); } catch (e) {}
       } catch (e) { /* offline: try again later */ }
     };
     // the job + who is on it, in the cloud; returns the job id
@@ -193,6 +196,7 @@ export function useCloudJobs(sb, me) {
           if (mySig[j.id] && !(asked && String(asked) > String(mySig[j.id]))) return { signState: 'with_crp', mySignedAt: mySig[j.id] };
           return { signState: 'to_sign', toSign: true, askedAt: asked || null };
         };
+        try { const { data: cm } = await sb.from('plan_comments').select('id,job_id,section,kind,status,author_name,parent_id,created_at').eq('status', 'open').limit(300); publish('wdOpenComments', cm || [], 'wd-open-comments'); } catch (e) {}
         publish('wdCrew', { personId, name: (pe && pe.full_name) || me.full_name || '', role: me.role, inductionHours: pe && pe.total_hours,
           company: sh.company || null, shared: sh, jobs: (jobs || []).map(j => { const { plan, approval, ...rest } = j; return { ...rest, myRole: role[j.id] || null, ...sign(j) }; }), hours: hours || [], grants: grants || [] }, 'wd-crew');
       } catch (e) { /* offline */ }
