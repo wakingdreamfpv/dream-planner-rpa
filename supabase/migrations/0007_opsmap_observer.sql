@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.9 · migration 0007_opsmap_observer.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA v7.9 — observers with a job link also see the advanced ops map (zones with their limits, buffers,
 -- flight paths, take-off / emergency landing points and cautions). The floor-plan picture itself is left out to keep
 -- the link light on mobile data. Safe to run more than once. Builds on 0006.

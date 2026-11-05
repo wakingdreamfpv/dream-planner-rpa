@@ -1,3 +1,5 @@
+// ═══ Dream Planner RPA · edge function "digest" · last changed in v7.14 ═══
+// Paste into: Supabase › Edge Functions › digest › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — digest (Supabase Edge Function), v7.11
 // A weekly or fortnightly email of compliance issues and setup still to do, plus a one-off alert 7 days before a
 // certification expires. Each login chooses in Database & Settings › Email notifications.

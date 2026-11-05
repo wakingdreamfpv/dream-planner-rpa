@@ -1,3 +1,5 @@
+-- ═══ Dream Planner RPA v7.15 · migration 0009_records_import_backup.sql ═══
+-- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again.
 -- Dream Planner RPA v7.15 — Chunk 9: import the Google Forms registers, keep "date last engaged" up to date for the
 -- 7-year retention rule, and daily backups. Safe to run more than once. Builds on 0001–0008.
 
