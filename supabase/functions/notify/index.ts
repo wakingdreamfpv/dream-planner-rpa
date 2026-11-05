@@ -2,7 +2,7 @@
 // Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
-//   induction_submitted → every active CRP ("Ben has submitted his induction")
+//   induction_submitted → every active CRP ("<the pilot's name> has submitted their induction")
 //   induction_certified → the pilot ("You're certified" or "not yet competent")
 // Secrets (Supabase › Edge Functions › Secrets): RESEND_API_KEY (required), NOTIFY_FROM, APP_URL (optional).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
