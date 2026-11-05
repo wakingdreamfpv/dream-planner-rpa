@@ -1,3 +1,4 @@
+# v7.20: tabs like the planner's side menu, risk register as the planner's table, KE in Client view, pick sections when sharing.
 # v7.19: the live link shows the plan in the planner's look (no PDF): section cards, 2D map, 3D ops map, KE tool, risks,
 # signatures; only the chosen view's sections are in the shared data.
 import sys, os, json; sys.path.insert(0, os.path.dirname(__file__))
@@ -23,14 +24,22 @@ with sync_playwright() as p:
         pg.click('[data-job-share]'); pg.wait_for_timeout(800)
         pg.click('[data-share-aud=' + aud + ']'); pg.select_option('[data-share-view]', view); pg.fill('[data-share-label]', aud); pg.click('[data-share-make]'); pg.wait_for_timeout(1500)
         cr = [c for c in pg.evaluate('window.__calls') if c.get('rpc') == 'create_plan_link']
-        snaps[aud] = json.loads(cr[-1]['args']['p_snapshot'])
+        snaps[aud] = json.loads(cr[-1]['args']['p_snapshot']); R.check(aud + ': default view kept (not edited)', cr[-1]['args']['p_view_id'] == view, cr[-1]['args']['p_view_id'])
         pg.click('[data-testid=share-panel] button[aria-label=Close]'); pg.wait_for_timeout(300)
+    # pick what they see: start from Client view, untick KE, tick the preliminary checklist
+    pg.click('[data-job-share]'); pg.wait_for_timeout(800); pg.click('[data-share-aud=client]'); pg.click('[data-share-pick-open]'); pg.wait_for_timeout(200)
+    R.check('picker starts ticked as the Client view', pg.is_checked('[data-share-sec=ke]') and pg.is_checked('[data-share-sec=risks]') and not pg.is_checked('[data-share-sec=prelim]') and not pg.is_checked('[data-share-sec=jsa]'))
+    pg.uncheck('[data-share-sec=ke]'); pg.check('[data-share-sec=prelim]'); pg.fill('[data-share-label]', 'picked'); pg.click('[data-share-make]'); pg.wait_for_timeout(1500)
+    a = [c for c in pg.evaluate('window.__calls') if c.get('rpc') == 'create_plan_link'][-1]['args']; pk = [s['key'] for s in json.loads(a['p_snapshot'])['sections']]
+    R.check('picked sections shared (prelim in, KE out) and remembered on the link', 'prelim' in pk and 'ke' not in pk and 'risks' in pk and a['p_view_id'].startswith('pick:client:') and 'edited' in a['p_view_name'], (pk, a['p_view_id']))
+    pg.click('[data-testid=share-panel] button[aria-label=Close]'); pg.wait_for_timeout(300)
     cl = snaps['client']; keys = [s['key'] for s in cl['sections']]
     R.check('shared as the live view data, not a PDF', cl.get('v') == 2 and 'Stadium Show' in cl['title'], cl.get('v'))
     R.check('client view: plan, map, 3D, risks and approval', all(k in keys for k in ['overview', 'map', 'advmap', 'risks', 'approval']), keys)
-    R.check('client view leaves out what the client PDF leaves out', not any(k in keys for k in ['prelim', 'jsa', 'oonp', 'ke', 'postflight', 'flightlog']), keys)
+    R.check('client view leaves out what the client PDF leaves out', not any(k in keys for k in ['prelim', 'jsa', 'oonp', 'postflight', 'flightlog']), keys)
+    R.check('client view has the energy transfer (KE) tool', 'ke' in keys, keys)
     raw = json.dumps(cl)
-    R.check("client data has no JSA text or KE numbers", 'Crowd and stage' not in raw and '"ke"' not in raw)
+    R.check("client data has no JSA text", 'Crowd and stage' not in raw)
     wk = [s['key'] for s in snaps['crew']['sections']]
     R.check('WHS view: JSA, emergency, OONP, energy transfer (KE) tool, risks', all(k in wk for k in ['jsa', 'emergency', 'oonp', 'ke', 'risks']), wk)
     ke = next(s for s in snaps['crew']['sections'] if s['key'] == 'ke')
@@ -45,12 +54,21 @@ with sync_playwright() as p:
         pg, errs, dl = ctx_for(b, 'anon', {}, extra=RPC + 'window.__LINK=' + json.dumps(link) + ';')
         pg.set_viewport_size({'width': 390, 'height': 844}) if aud == 'client' else None
         pg.goto(URL + '#plan=' + 'e' * 64); pg.wait_for_timeout(4000)
-        R.check(aud + ': rendered in the app look (cards, no PDF frame)', pg.locator('[data-plan-viewer]').count() == 1 and pg.locator('[data-plan-frame]').count() == 0 and pg.locator('[data-pv-section]').count() == len(snaps[aud]['sections']))
+        R.check(aud + ': rendered in the app look (no PDF frame)', pg.locator('[data-plan-viewer]').count() == 1 and pg.locator('[data-plan-frame]').count() == 0)
+        tab = lambda g: (pg.locator('[data-pv-tab="%s"]:visible' % g).click(), pg.wait_for_timeout(300))
+        groups = sorted(set(s['group'] for s in snaps[aud]['sections'])); seen = 0
+        R.check(aud + ': a menu tab per section group, like the planner', pg.locator('[data-pv-tab]:visible').count() == len(groups), groups)
         R.check(aud + ': 2D map is live (Leaflet)', pg.locator('[data-pv-map2d] .leaflet-container').count() == 1)
-        R.check(aud + ': risk with its ratings', pg.locator('[data-pv-risk="001"]').count() == 1 and '4B' in pg.inner_text('[data-pv-risk="001"]') and '2C' in pg.inner_text('[data-pv-risk="001"]'))
+        R.check(aud + ': Section 1 card header as in the planner', 'Section 1: Operations Overview' in pg.inner_text('[data-pv-group="1"]'))
         if aud == 'client':
             pg.locator('[data-pv-3d-open]').scroll_into_view_if_needed(); pg.click('[data-pv-3d-open]'); pg.wait_for_timeout(3000)
             R.check('3D ops map opens (the 3D engine loads from the internet; offline in tests)', pg.locator('[data-pv-3d-on] [data-ops-3d]').count() == 1)
+        for g in groups: tab(g); seen += pg.locator('[data-pv-section]').count()
+        R.check(aud + ': every shared section is under a tab', seen == len(snaps[aud]['sections']), (seen, len(snaps[aud]['sections'])))
+        tab('2')
+        R.check(aud + ': risk register as the planner table (L/C, ratings)', pg.locator('[data-pv-risk="001"]').count() == 1 and '4B' in pg.inner_text('[data-pv-risk="001"]') and '2C' in pg.inner_text('[data-pv-risk="001"]') and 'Hazardous' in pg.inner_text('[data-pv-risk="001"]') and 'initial risk' in pg.inner_text('[data-pv-risks]').lower())
+        R.check(aud + ': KE tool shows', pg.locator('[data-pv-ke="DJI Avata 2"]').count() == 1)
+        if aud == 'client':
             pg.click('[data-pv-comment=risks]'); pg.wait_for_timeout(300)
             R.check('comment button on a section opens comments for it', pg.locator('[data-plan-comments]').count() == 1 and pg.input_value('[data-plan-section]') == 'risks')
             pg.fill('[data-plan-name]', 'Sarah'); pg.fill('[data-composer-body]', 'Where do marshals stand?'); pg.click('[data-composer-send]'); pg.wait_for_timeout(500)

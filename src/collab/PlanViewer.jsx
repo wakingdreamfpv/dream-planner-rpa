@@ -1,3 +1,5 @@
+// v7.20: laid out like the planner itself — the side menu (Preliminary, JSA & Risk, Authorisation, Flight Log), one card per
+// section with the planner's header bar, sub-headings in the planner's style, and the risk register as the planner's table.
 // v7.19: the live link shows the plan in the planner's own look (read-only): cards per section, the 2D map you can pan
 // and zoom, the advanced ops map in 3D you can turn, the risk register with its ratings, signatures. Only the sections of
 // the chosen view are in the data (the planner leaves the rest out before it's shared).
@@ -5,8 +7,38 @@ import React, { Suspense, useState } from 'react';
 import { JobMap } from '../observer/Observer.jsx';
 
 const Ops3D = React.lazy(() => import('../opsmap/Ops3D.jsx'));
-const GROUPS = { 1: ['Section 1', 'Operations Overview & Preliminary Assessment', 'fa-clipboard-list'], 2: ['Section 2', 'Job Safety Assessment & Risk', 'fa-triangle-exclamation'],
-  3: ['Section 3', 'Approval & Flight Authorisation', 'fa-file-signature'], 4: ['Section 4', 'Post-Flight Log', 'fa-plane-arrival'], A: ['Appendix', 'Attachments', 'fa-paperclip'] };
+// [menu label, menu icon, card title, card icon] — the same as the planner's side menu and section headers
+const GROUPS = { 1: ['Preliminary', 'fa-circle-check', 'Section 1: Operations Overview & Preliminary Assessment', 'fa-file-lines text-blue-600'],
+  2: ['JSA & Risk', 'fa-triangle-exclamation', 'Section 2: Job Safety Assessment (JSA)', 'fa-shield-halved text-slate-600'],
+  3: ['Authorisation', 'fa-file-signature', 'Section 3: Approval & Flight Authorisation', 'fa-file-signature text-blue-600'],
+  4: ['Flight Log', 'fa-clipboard-list', 'Section 4: Post-Flight Log', 'fa-clipboard-list text-blue-600'],
+  A: ['Attachments', 'fa-paperclip', 'Appendix: Site Attachments', 'fa-paperclip text-blue-600'] };
+const LMAP = { 5: 'Frequent', 4: 'Occasional', 3: 'Remote', 2: 'Improbable', 1: 'Ext. Impr.' }, CMAP = { A: 'Catastrophic', B: 'Hazardous', C: 'Moderate', D: 'Minor', E: 'Negligible' };
+const TH = ({ w, bg, col, center } = {}) => ({ padding: '5px 6px', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.05em', border: '1px solid #94a3b8', background: bg || '#e2e8f0', color: col || '#1e293b', verticalAlign: 'middle', textAlign: center ? 'center' : 'left', ...(w ? { width: w } : {}) });
+const TD = (extra = {}) => ({ padding: '4px 5px', border: '1px solid #e2e8f0', verticalAlign: 'top', fontSize: '0.72rem', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', ...extra });
+const LC = (v, map, border, tint) => <div style={{ border: '1px solid ' + border, borderRadius: 4, background: 'white', padding: '3px 2px 2px', minHeight: '2.4rem' }}><div style={{ fontSize: '0.95rem', fontWeight: 800, color: tint, lineHeight: 1.1 }}>{v || '–'}</div><div style={{ fontSize: '0.55rem', color: '#475569', lineHeight: 1.15 }}>{map[v] || ''}</div></div>;
+const Rating = (r) => <div style={{ background: r.bg, color: r.fg, fontWeight: 700, padding: '4px 2px', borderRadius: 4, fontSize: '0.7rem' }}>{r.code}<div style={{ fontSize: '0.58rem', fontWeight: 400 }}>{r.label}</div></div>;
+function RiskTable({ rows }) {
+  return (
+    <div className="overflow-x-auto border border-gray-200 rounded-lg shadow-sm" data-pv-risks={rows.length}>
+      <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+        <thead>
+          <tr><th rowSpan={2} style={TH({ w: '4%' })}>Ref</th><th rowSpan={2} style={TH({ w: '7%' })}>Date Added</th><th rowSpan={2} style={TH({ w: '10%' })}>Hazard</th><th rowSpan={2} style={TH({ w: '10%' })}>Risk Description</th><th rowSpan={2} style={TH({ w: '12%' })}>Existing Controls</th>
+            <th colSpan={3} style={TH({ bg: '#c7d2fe', col: '#1e3a8a', center: true })}>Initial Risk</th><th rowSpan={2} style={TH({ w: '12%' })}>Additional Controls</th><th colSpan={3} style={TH({ bg: '#bbf7d0', col: '#14532d', center: true })}>Residual Risk</th><th rowSpan={2} style={TH({ w: '7%' })}>Risk Owner</th></tr>
+          <tr>{[['#dde4fb', '#1e3a8a'], ['#dcfce7', '#14532d']].flatMap(([bg, col], g) => [['L', '6.5%'], ['C', '6.5%'], ['Rating', '5.5%']].map(([t, w]) => <th key={g + t} style={TH({ w, bg, col, center: true })}>{t}</th>))}</tr>
+        </thead>
+        <tbody>{rows.map((r, i) => (
+          <tr key={i} data-pv-risk={r.ref} style={{ background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
+            <td style={TD({ textAlign: 'center', fontSize: '0.65rem' })}>{r.ref}</td><td style={TD({ fontSize: '0.62rem' })}>{r.date}</td>
+            <td style={TD()}>{r.hazard}</td><td style={TD()}>{r.risk}</td><td style={TD()}>{r.existing}</td>
+            <td style={TD({ background: '#eef2ff', textAlign: 'center' })}>{LC(r.iL, LMAP, '#c7d2fe', '#1e3a8a')}</td><td style={TD({ background: '#eef2ff', textAlign: 'center' })}>{LC(r.iC, CMAP, '#c7d2fe', '#1e3a8a')}</td><td style={TD({ textAlign: 'center' })}>{Rating(r.init)}</td>
+            <td style={TD()}>{r.extra}</td>
+            <td style={TD({ background: '#f0fdf4', textAlign: 'center' })}>{LC(r.rL, LMAP, '#86efac', '#14532d')}</td><td style={TD({ background: '#f0fdf4', textAlign: 'center' })}>{LC(r.rC, CMAP, '#86efac', '#14532d')}</td><td style={TD({ textAlign: 'center' })}>{Rating(r.res)}</td>
+            <td style={TD({ fontSize: '0.65rem' })}>{r.owner}</td>
+          </tr>))}</tbody>
+      </table>
+    </div>);
+}
 const fmtT = (d) => { const x = new Date(d); return isNaN(x) ? '' : x.toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
 const script = { fontFamily: '"Brush Script MT","Segoe Script","Snell Roundhand",cursive' };
 
@@ -34,19 +66,7 @@ function Block({ b }) {
       <div>{b.title && <div className="text-sm font-bold text-slate-800 mb-1">{b.title}</div>}
         <div className="overflow-x-auto border border-slate-200 rounded-xl"><table className="w-full text-sm"><thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr>{b.head.map((h) => <th key={h} className="text-left px-3 py-2">{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">{b.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className="px-3 py-2 align-top whitespace-pre-wrap">{b.tel === j && c ? <a href={'tel:' + String(c).replace(/[^\d+]/g, '')} className="text-violet-700 font-semibold">{c}</a> : c}</td>)}</tr>)}</tbody></table></div></div>);
-    case 'risks': return b.rows.length === 0 ? <p className="text-sm text-slate-500">No risks recorded.</p> : (
-      <div className="space-y-2" data-pv-risks={b.rows.length}>{b.rows.map((r, i) => (
-        <div key={i} className="rounded-xl border border-slate-200 p-3" data-pv-risk={r.ref}>
-          <div className="flex items-start gap-2 flex-wrap">
-            <span className="text-xs font-mono text-slate-400 pt-0.5">{r.ref}</span><b className="text-slate-800 flex-1 min-w-[10rem]">{r.hazard}</b>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded" style={{ background: r.init.bg, color: r.init.fg }} title="Before controls">{r.init.code} {r.init.label}</span>
-            <i className="fa-solid fa-arrow-right text-slate-400 text-xs pt-1"></i>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded" style={{ background: r.res.bg, color: r.res.fg }} title="After controls">{r.res.code} {r.res.label}</span>
-          </div>
-          {r.risk && <p className="text-sm text-slate-600 mt-1">{r.risk}</p>}
-          {(r.existing || r.extra) && <div className="mt-1.5 text-sm"><span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Controls</span><p className="text-slate-800 whitespace-pre-wrap">{[r.existing, r.extra].filter(Boolean).join('\n')}</p></div>}
-          {r.owner && <div className="text-xs text-slate-500 mt-1">Owner: {r.owner}</div>}
-        </div>))}</div>);
+    case 'risks': return b.rows.length === 0 ? <p className="text-sm text-slate-500">No risks recorded.</p> : <RiskTable rows={b.rows} />;
     case 'sigs': return (
       <div className="space-y-3">
         {b.sigs.length > 0 && <div className="grid sm:grid-cols-2 gap-3">{b.sigs.map((g, i) => (
@@ -109,31 +129,55 @@ function Map3D({ doc, checks }) {
   );
 }
 
-export default function PlanViewer({ model, counts = {}, onComment, commentsOpen }) {
+export default function PlanViewer({ model, counts = {}, onComment }) {
   const groups = [];
   model.sections.forEach((s) => { let g = groups.find((x) => x.id === s.group); if (!g) { g = { id: s.group, items: [] }; groups.push(g); } g.items.push(s); });
-  const go = (key) => { const el = document.getElementById('pv-' + key); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  const [tab, setTab] = useState(groups[0] ? groups[0].id : '1');
+  const cur = groups.find((g) => g.id === tab) || groups[0];
+  const gCount = (g) => g.items.reduce((t, s) => t + (counts[s.key] || 0), 0);
+  const pick = (id) => { setTab(id); try { const el = document.querySelector('[data-plan-scroll]'); (el || window).scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} };
+  const navBtn = (g, wide) => { const G = GROUPS[g.id] || [g.id, 'fa-file'], on = cur && g.id === cur.id, n = gCount(g); return (
+    <button key={g.id} type="button" data-pv-tab={g.id} onClick={() => pick(g.id)}
+      className={wide ? `w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${on ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`
+        : `shrink-0 flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg ${on ? 'bg-blue-50 text-blue-700' : 'text-slate-600'}`}>
+      <i className={`fa-solid ${G[1]} ${wide ? 'text-lg w-6' : ''}`}></i> {G[0]}
+      {n > 0 && <span className="ml-auto bg-violet-100 text-violet-700 py-0.5 px-2 rounded-full text-xs font-bold">{n}</span>}
+    </button>); };
   return (
-    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 space-y-5" data-plan-viewer="1">
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5">
-        <div className="text-[11px] font-semibold uppercase tracking-widest text-violet-700">{model.company}{model.reoc ? ' · ' + model.reoc : ''}</div>
-        <h1 className="text-xl sm:text-2xl font-bold text-slate-800 mt-0.5">{model.title}</h1>
-        <div className="text-sm text-slate-500 mt-0.5">{[model.opId, model.when, model.location].filter(Boolean).join(' · ')}</div>
-        <div className="flex flex-wrap gap-1.5 mt-3 sticky">{model.sections.map((s) => <button key={s.key} type="button" onClick={() => go(s.key)} data-pv-nav={s.key} className="text-xs px-2.5 py-1 rounded-full border border-slate-200 text-slate-600 hover:border-violet-300 hover:text-violet-800">{s.title}{counts[s.key] ? <span className="ml-1 text-violet-700 font-bold">· {counts[s.key]}</span> : null}</button>)}</div>
+    <div data-plan-viewer="1">
+      <div className="bg-white border-b border-slate-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-widest text-violet-700">{model.company}{model.reoc ? ' · ' + model.reoc : ''}</div>
+          <h1 className="text-lg sm:text-xl font-bold text-slate-800">{model.title}</h1>
+          <div className="text-sm text-slate-500">{[model.opId, model.when, model.location].filter(Boolean).join(' · ')}</div>
+        </div>
+        <nav className="md:hidden flex gap-1 overflow-x-auto px-2 pb-2" data-pv-tabs-mobile="1">{groups.map((g) => navBtn(g, false))}</nav>
       </div>
-      {groups.map((g) => { const G = GROUPS[g.id] || ['', g.id, 'fa-file']; return (
-        <div key={g.id} className="space-y-3">
-          <div className="flex items-center gap-2 px-1"><i className={`fa-solid ${G[2]} text-violet-600`}></i><h2 className="text-lg font-semibold text-slate-800">{G[0] ? G[0] + ': ' : ''}{G[1]}</h2></div>
-          {g.items.map((s) => (
-            <section key={s.key} id={'pv-' + s.key} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden scroll-mt-20" data-pv-section={s.key}>
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100">
-                <h3 className="font-semibold text-slate-800 flex-1 min-w-0">{s.title}</h3>
-                <button type="button" data-pv-comment={s.key} onClick={() => onComment(s.key)} className="text-xs font-semibold px-2.5 py-1 rounded-full border border-violet-200 text-violet-700 hover:bg-violet-50"><i className="fa-regular fa-comment mr-1"></i>{counts[s.key] ? counts[s.key] + ' · ' : ''}Comment</button>
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-3 md:mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-8 pb-10">
+        <div className="hidden md:block md:col-span-1">
+          <nav className="md:sticky md:top-4 space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200" data-pv-nav-side="1">{groups.map((g) => navBtn(g, true))}</nav>
+        </div>
+        <div className="md:col-span-3 min-w-0">
+          {cur && (() => { const G = GROUPS[cur.id] || [cur.id, 'fa-file', cur.id, 'fa-file text-blue-600']; return (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-pv-group={cur.id}>
+              <div className="bg-slate-50 px-4 sm:px-6 py-4 border-b border-slate-200 flex items-center gap-2">
+                <i className={`fa-solid ${G[3]} text-lg`}></i><h2 className="text-lg font-semibold text-slate-800">{G[2]}</h2>
               </div>
-              <div className="p-4 space-y-4">{s.blocks.map((b, i) => <Block key={i} b={b} />)}</div>
-            </section>))}
-        </div>); })}
-      <p className="text-center text-xs text-slate-400 pb-6">Shared from Dream Planner RPA{model.view ? ' · ' + model.view : ''}. This page updates when the plan is saved.</p>
+              <div className="p-4 sm:p-6 space-y-8">
+                {cur.items.map((s) => (
+                  <section key={s.key} id={'pv-' + s.key} className="scroll-mt-20" data-pv-section={s.key}>
+                    <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-200">
+                      <h3 className="text-md font-semibold text-slate-800 flex items-center gap-2 flex-1 min-w-0">{s.title}
+                        <button type="button" data-pv-comment={s.key} onClick={() => onComment(s.key)} title="Comments on this section" className="ml-2 align-middle text-xs font-semibold px-2 py-0.5 rounded-full border border-violet-200 text-violet-700 hover:bg-violet-50"><i className="fa-regular fa-comment mr-1"></i>{counts[s.key] ? counts[s.key] : 'Comment'}</button>
+                      </h3>
+                    </div>
+                    <div className="space-y-4">{s.blocks.map((b, i) => <Block key={i} b={b} />)}</div>
+                  </section>))}
+              </div>
+            </div>); })()}
+          <p className="text-center text-xs text-slate-400 py-6">Shared from Dream Planner RPA{model.view ? ' · ' + model.view : ''}. This page updates when the plan is saved.</p>
+        </div>
+      </div>
     </div>
   );
 }

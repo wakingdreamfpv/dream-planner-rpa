@@ -183,7 +183,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.19';
+        const APP_VERSION = '7.20';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1481,7 +1481,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           ['overview', 'Operation overview', 'Section 1: operation details, crew, RPA, client'], ['sites', 'Launch, recovery & sites', 'Site list and photos'],
           ['prelim', 'Preliminary assessment checklist', 'The yes / no checklist'], ['map', 'Operations area map', 'Full-page satellite map'],
           ['advmap', 'Advanced ops map', 'Zones, paths, checks and saved views'], ['jsa', 'JSA', 'Section 2: airspace, weather, hazards, CASA checks'],
-          ['emergency', 'Emergency contacts', ''], ['rf', 'RF coordination', 'Radio & video bands'], ['oonp', 'OONP', 'Equipment, logistics, energy tables, ballistic area'],
+          ['emergency', 'Emergency contacts', ''], ['rf', 'RF coordination', 'Radio & video bands'], ['oonp', 'OONP', 'Equipment, logistics, consent, per-drone limits'], ['ke', 'Energy transfer (KE)', 'KE charts and tables, ballistic splash area'],
           ['risks', 'Risk assessment register', 'Matrix and register'], ['approval', 'Approval & signatures', 'Section 3: authorisation, NOTAMs, CRP and RPIC signatures'],
           ['postflight', 'Post-flight log', 'Section 4: pre-flight checks, post-flight answers, crew'], ['amendments', 'Record of amendments', 'Changes after first save'],
           ['flightlog', 'Flight log by RPA', 'Each flight, batteries, telemetry'], ['attachments', 'Site attachments', 'Appendix: photos and files'],
@@ -1492,9 +1492,9 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const pdfSecOn = (sections, k) => k === 'comments' ? (sections || {})[k] === true : (sections || {})[k] !== false; // comments only when ticked
         const pdfOnly = (keys) => Object.fromEntries(PDF_SECTIONS.map(([k]) => [k, keys.includes(k)]));
         const DEFAULT_PDF_VIEWS = [
-          { id: 'client', name: 'Client view', note: 'What the client needs: the plan, maps, risks and sign-off. No internal checklists, logs or crew records.', sections: pdfOnly(['overview', 'sites', 'map', 'advmap', 'emergency', 'risks', 'approval', 'heatmap']) },
+          { id: 'client', name: 'Client view', note: 'What the client needs: the plan, maps, risks and sign-off. No internal checklists, logs or crew records.', sections: pdfOnly(['overview', 'sites', 'map', 'advmap', 'emergency', 'ke', 'risks', 'approval', 'heatmap']) },
           { id: 'record', name: 'My record', note: 'Everything, for your own files.', sections: pdfAll(true) },
-          { id: 'whs', name: 'WHS inspector', note: 'Safety planning and controls: JSA, risks, OONP, emergency contacts, sign-off and what happened on the day.', sections: pdfOnly(['overview', 'sites', 'prelim', 'map', 'advmap', 'jsa', 'emergency', 'oonp', 'risks', 'approval', 'postflight', 'amendments', 'heatmap', 'comments']) },
+          { id: 'whs', name: 'WHS inspector', note: 'Safety planning and controls: JSA, risks, OONP, emergency contacts, sign-off and what happened on the day.', sections: pdfOnly(['overview', 'sites', 'prelim', 'map', 'advmap', 'jsa', 'emergency', 'oonp', 'ke', 'risks', 'approval', 'postflight', 'amendments', 'heatmap', 'comments']) },
           { id: 'casa', name: 'CASA', note: 'The full operational record, including the flight log, amendments and instruments.', sections: pdfAll(true) },
         ];
         const pdfViewsOf = (db) => (Array.isArray(db && db.pdfViews) && db.pdfViews.length ? db.pdfViews : DEFAULT_PDF_VIEWS);
@@ -5426,10 +5426,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               const bal = ballistic && ballistic.enabled ? (() => { const h = parseFloat(ballistic.height) || 0, v = parseFloat(ballistic.speed) || 0, t = Math.sqrt(2 * h / KE_G); const L = drones[0] ? computeKeLimits(keFor(drones[0].rpa)) : null;
                 return kv([['Fall height', h + ' m'], ['Speed at failure', v + ' m/s (' + Math.round(v * 3.6) + ' kph)'], ['Fall time', t.toFixed(2) + ' s'], ['Throw distance', (v * t).toFixed(1) + ' m'], ['Impact energy' + (drones[0] ? ' (' + drones[0].rpa + ')' : ''), L ? L.energy(h, v).toFixed(1) + ' J' : '']]); })() : null;
               const kb = [drones.length ? { t: 'ke', drones } : null, bal ? { t: 'sub', text: 'Ballistic splash area' } : null, bal].filter(Boolean);
-              if ((oonpMode || (keData && keData.enabled)) && on('oonp') && kb.length) S.push({ key: 'ke', title: 'Energy transfer (KE) & ballistic splash', group: '2', blocks: kb });
+              if ((oonpMode || (keData && keData.enabled) || (jsa.operationTypes || []).includes('OONP') || (extraKe || []).length || (ballistic && ballistic.enabled)) && on('ke') && kb.length) S.push({ key: 'ke', title: 'Energy transfer (KE) & ballistic splash', group: '2', blocks: kb });
             }
             add('risks', 'Risk assessment register', '2', [{ t: 'risks', rows: (risks || []).filter(r => String(r.hazard || '').trim()).map(r => { const bi = RISK_BANDS[riskLevel(r.initL, r.initC)], br = RISK_BANDS[riskLevel(r.resL, r.resC)];
-              return { ref: r.refNo, hazard: r.hazard, risk: r.riskDescription, existing: r.existingControls, extra: r.additionalControls, owner: r.riskOwner, init: { code: (r.initL || '') + (r.initC || ''), label: riskLevel(r.initL, r.initC), bg: bi.bg, fg: bi.fg }, res: { code: (r.resL || '') + (r.resC || ''), label: riskLevel(r.resL, r.resC), bg: br.bg, fg: br.fg } }; }) }]);
+              return { ref: r.refNo, date: fd(r.dateAdded), iL: r.initL || '', iC: r.initC || '', rL: r.resL || '', rC: r.resC || '', hazard: r.hazard, risk: r.riskDescription, existing: r.existingControls, extra: r.additionalControls, owner: r.riskOwner, init: { code: (r.initL || '') + (r.initC || ''), label: riskLevel(r.initL, r.initC), bg: bi.bg, fg: bi.fg }, res: { code: (r.resL || '') + (r.resC || ''), label: riskLevel(r.resL, r.resC), bg: br.bg, fg: br.fg } }; }) }]);
             { const ns = summariseNotams(approval.notams, { maxNotams: 40, maxLines: 400 });
               const sig = (who, name, arn, date, signed, sg, remote, by) => ({ who, name: name || '', arn: arn || '', date: fd(date), signed: !!signed, method: remote ? (remote.signatureImage ? 'drawn' : 'typed') : (sg && sg.method) || (signed ? 'click' : ''), image: remote ? remote.signatureImage || '' : (sg && sg.image) || '', typed: remote ? remote.typedSignature || '' : (sg && sg.typed) || '', by: by && by.email ? (by.name || by.email) : '' });
               add('approval', 'Approval & Flight Authorisation', '3', [{ t: 'status', ok: !!approval.flightAuthApproved, text: approval.flightAuthApproved ? 'Approved for flight' + (approval.approvedAt ? ' · ' + new Date(approval.approvedAt).toLocaleDateString('en-AU') : '') : 'Not yet approved for flight' },
@@ -6100,6 +6100,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
 
             // Kinetic energy charts — copied from the live charts so the PDF matches the software exactly
+            P.push('<!--S:ke-->'); // v7.20: its own section, so a view can show KE without the rest of OONP
             const liveKe=[...document.querySelectorAll('[data-pdf-ke]')];
             if(liveKe.length){
               liveKe.forEach((el,ki)=>{
