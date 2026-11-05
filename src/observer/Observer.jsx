@@ -7,6 +7,7 @@ import qrcode from 'qrcode-generator';
 import SignaturePad, { SignatureView } from '../cloud/SignaturePad.jsx';
 import { getSupabase } from '../cloud/client.js';
 import { ManualViewer } from '../cloud/Manual.jsx';
+import { RecordVersions, CorrectSignoff } from '../compliance/Versions.jsx';
 
 export const OBS_TLDR = [
   'Stand beside the pilot and watch the drone. Nothing else while it flies: no phone, no filming, no radio.',
@@ -255,9 +256,10 @@ export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refre
   const [list, setList] = useState(null), [queue, setQueue] = useState(qGet), [qr, setQr] = useState(null), [device, setDevice] = useState(null), [review, setReview] = useState(null), [msg, setMsg] = useState('');
   const load = async () => {
     if (!jobId) { setList([]); return; }
-    const { data } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,crp_signature,crp_signed_at,people:person_id (full_name, phone, email)').eq('type', 'evlos_observer').eq('job_id', jobId).order('created_at', { ascending: false });
-    setList(data || []);
+    const { data } = await sb.from('signoff_records').select('id,status,answers,person_signature,person_signed_at,crp_signature,crp_signed_at,locked,version,chain_id,superseded_by,people:person_id (full_name, phone, email)').eq('type', 'evlos_observer').eq('job_id', jobId).order('created_at', { ascending: false });
+    setList((data || []).filter(r => !r.superseded_by)); // v7.21: corrected sign-offs show their latest version
   };
+  const [openV, setOpenV] = useState(null), [fix, setFix] = useState(null), [vKey, setVKey] = useState(0);
   useEffect(() => { load(); }, [jobId, refreshKey]); // eslint-disable-line
   useEffect(() => { const h = () => setQueue(qGet()); const on = () => syncObserverQueue(sb).then(() => { setQueue(qGet()); load(); });
     window.addEventListener('wd-obs-queue', h); window.addEventListener('online', on); on();
@@ -296,7 +298,9 @@ export function ObserverPanel({ jobUid, jobId, jobTitle, summary, crpName, refre
               <span className="flex-1 min-w-0"><b className="text-slate-800">{p.full_name || (r.answers && r.answers.name)}</b><span className="text-xs text-slate-500"> · {r.answers && r.answers.via === 'login' ? 'signed in the planner' : r.answers && r.answers.via === 'link' ? 'signed on their phone' : 'signed on your device'} {fmtDT(r.person_signed_at)}</span></span>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s[1]}`}>{s[0]}</span>
               {r.status === 'awaiting_crp' && <button type="button" data-obs-countersign={r.id} onClick={() => setReview(r)} className="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-600 text-white">Countersign</button>}
-            </div>; })}
+              {r.locked && <button type="button" data-obs-record={r.id} onClick={() => setOpenV(openV === r.id ? null : r.id)} title="Locked copy, verify, correct" className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600"><i className="fa-solid fa-lock mr-1"></i>{r.version > 1 ? 'v' + r.version : 'Record'}</button>}
+            </div>; }).flatMap((el, i) => { const r = list[i]; return openV === r.id ? [el, <RecordVersions key={'v' + r.id} sb={sb} kind="signoff" chainId={r.chain_id || r.id} isCrp reloadKey={vKey} canCorrect onCorrect={() => setFix(r)} title={'Locked copies — ' + ((r.people || {}).full_name || 'observer')} />] : [el]; })}
+        {fix && <CorrectSignoff sb={sb} rec={fix} onClose={() => setFix(null)} onDone={(nid) => { setFix(null); setOpenV(nid); setVKey(k => k + 1); load(); }} />}
       </div>
       {qr && <LinkSheet qr={qr} setQr={setQr} title={jobTitle} />}
       {device && <Sheet title={device.step === 1 ? 'Hand this device to the observer' : 'CRP check and signature'} sub={jobTitle} onClose={() => { if (device.step === 1 || window.confirm('Discard this observer sign-off?')) setDevice(null); }} testid="obs-device-sheet">

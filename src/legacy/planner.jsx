@@ -9,6 +9,8 @@ import { ManualAdmin, ManualViewer } from '../cloud/Manual.jsx';
 import OpsMap from '../opsmap/OpsMap.jsx';
 import { checkJobCrew, crewItemOk, flightCountRows, STATUS_LABEL as CUR_STATUS, compLabel as curCompLabel } from '../compliance/currency.js';
 import Registers from '../compliance/Registers.jsx';
+import { RecordVersions } from '../compliance/Versions.jsx';
+import { getSupabase as wdSb } from '../cloud/client.js';
 import SignDialog from '../cloud/SignDialog.jsx';
 import { CommentsPanel, SharePanel, refreshLinkSnapshots } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
@@ -183,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.20';
+        const APP_VERSION = '7.21';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9735,9 +9737,29 @@ View in the Database & Settings tab.`);
             const ov = d.overview || {};
             window.dispatchEvent(new CustomEvent('wd-job-saved', { detail: { uid: ov.uid, opId: ov.identifier || d.id || null, title: getOpTitle(ov) || d.title || '', status: 'draft', startDate: isoDay(ov.operationDate), endDate: isoDay(ov.operationEndDate) || isoDay(ov.operationDate), plan: d, crew: planCrew(d) } }));
           };
+          // v7.21 (Chunk 5): each time the plan is approved and saved to the cloud, the database keeps a locked copy (the plan
+          // as stored plus the full standard PDF) with SHA-256 fingerprints. Re-approval after an amendment is the next version.
+          const lockingRef = useRef(false), [jobCopyKey, setJobCopyKey] = useState(0);
+          const lockJobCopy = async (jobId) => {
+            const ap = fpStateRef.current.approval || {}; if (!ap.flightAuthApproved || lockingRef.current) return;
+            const sb = wdSb(); if (!sb) return; lockingRef.current = true;
+            try {
+              const key = ap.approvedAt || 'approved';
+              const { data: vs, error } = await sb.from('record_versions').select('id, version, approvedAt:data->plan->approval->>approvedAt').eq('kind', 'job').eq('job_id', jobId).order('version', { ascending: false }).limit(1);
+              if (error) return; // migration 0011 not run yet
+              const last = (vs || []).slice().sort((x, y) => y.version - x.version)[0], lastKey = last && (last.approvedAt !== undefined ? last.approvedAt : ((((last.data || {}).plan || {}).approval || {}).approvedAt));
+              if (last && (lastKey || 'approved') === key) return;
+              const al = (ap.amendLog || []), a = al[al.length - 1];
+              const reason = last ? 'Re-approved after an amendment' + (a && a.reason ? ': ' + a.reason : '') : (al.length ? 'Approved after ' + al.length + ' amendment' + (al.length === 1 ? '' : 's') + ' (copies start from v7.21)' : null);
+              let copy = ''; try { copy = generatePDFRef2.current({ capture: true }) || ''; } catch (e) { copy = ''; }
+              const { error: e2 } = await sb.rpc('snapshot_job', { p_job_id: jobId, p_reason: reason, p_copy: copy || null });
+              if (!e2) { setJobCopyKey(k => k + 1); if (typeof showToast === 'function') showToast('Locked copy of the approved plan kept' + (last ? ' (version ' + (last.version + 1) + ')' : '')); }
+            } catch (e) { /* tried again on the next save */ } finally { lockingRef.current = false; }
+          };
           // live links show the plan as saved: refresh them each time the open job is saved to the cloud
           useEffect(() => { if (!isCrpCloud) return; const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.jobId || d.uid !== fpStateRef.current.overview.uid) return;
-              setTimeout(() => refreshLinkSnapshots(d.jobId, (v) => JSON.stringify(liveModelRef.current(v)), pdfViewsOf(dbRef2.current)), 300); };
+              setTimeout(() => refreshLinkSnapshots(d.jobId, (v) => JSON.stringify(liveModelRef.current(v)), pdfViewsOf(dbRef2.current)), 300);
+              setTimeout(() => lockJobCopy(d.jobId), 600); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, [isCrpCloud]); // eslint-disable-line
           useEffect(() => { const h = (e) => { const d = e.detail || {}, w = collabWant.current; if (!w || d.uid !== w.uid) return; collabWant.current = null;
               if (!d.ok || !d.jobId) { alert('Couldn\'t put the job in the cloud: ' + (d.error || 'unknown error')); return; }
@@ -14150,6 +14172,9 @@ View in the Database & Settings tab.`);
                               </div>
                             );
                           })()}
+                          {/* v7.21: locked copies of the approved plan (kept when an approved plan is saved to the cloud) */}
+                          {IS_HOSTED && signedIn && cloudJobIdFor(overview.uid) && (approval.flightAuthApproved || jobCopyKey > 0 || approval.amendLog) && <div className="mt-4 print:hidden" data-job-versions="1">
+                            <RecordVersions sb={wdSb()} kind="job" jobId={cloudJobIdFor(overview.uid)} isCrp={auth.role === 'crp'} reloadKey={jobCopyKey} title="Locked copies of the approved plan" /></div>}
                         </div>
 
                         {/* ── OONP: Pre-Flight Event Sign-offs ── screen only, not in PDF ── */}
