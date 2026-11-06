@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.24';
+        const APP_VERSION = '7.25';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1620,6 +1620,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           oonpEvlosDay: 'OONP + EVLOS — Day', oonpP1EvlosSet: 'OONP Pathway 1 + EVLOS — Controlled set with talent (guarded cinewhoops)',
           oonpP1EvlosVessel: 'OONP Pathway 1 + EVLOS — Vessel / Whale watching', oonpEvlosNight: 'OONP + EVLOS — Night',
           oonpP2EvlosNightVenue: 'OONP Pathway 2 + EVLOS — Night / Covered festival venue, open roof (limited GPS, SFX/pyro)',
+          oonpP2NightEventLifter: 'OONP Pathway 2 — Night outdoor event (mini-lifter away from people + small drones with consent)',
           oonpIndoorEvlos: 'OONP Indoor / EVLOS (Festivals)', motorsport: 'Motorsport / Track Events',
         };
         const RISK_CSV_COLS = [['refNo', 'Ref'], ['hazard', 'Hazard'], ['riskDescription', 'Risk Description'], ['existingControls', 'Existing Controls'], ['initL', 'Initial L'], ['initC', 'Initial C'], ['additionalControls', 'Additional Controls'], ['resL', 'Residual L'], ['resC', 'Residual C'], ['riskOwner', 'Risk Owner']];
@@ -7228,6 +7229,90 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 existingControls:"Consent signage visible. Filming contained within the OONP zone. Footage reviewed post-event.",
                 initL:'1', initC:'D', resL:'1', resC:'E',
                 additionalControls:"Mask non-consenting individuals in post-production." },
+            ],
+            // v7.25: night outdoor event (e.g. a garden light show): a prop-guarded mini-lifter kept away from people, and
+            // small drones flown near people under OONP Pathway 2 with informed consent; includes the night OONP hold point
+            oonpP2NightEventLifter: [
+              { refNo:'001', id:Date.now()+1, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Night OONP without CASA's written confirmation (CASA.OONP.0079 Schedule 1.3)",
+                riskDescription:"Schedule 1.3 excludes night, EVLOS and swarm operations from OONP. Flying near or over people at night before CASA confirms in writing that the Ops Manual approval covers it would be outside the instrument.",
+                existingControls:"HOLD POINT: no flight within 30 m of people at night until CASA's written confirmation is held and filed with the ops plan. Until then, all aircraft keep 30 m from anyone not part of the operation (standard conditions). Ops Manual night (NVLOS) procedures followed.",
+                initL:'3', initC:'B', resL:'1', resC:'D',
+                additionalControls:"CRP confirms the hold point is cleared at the pre-flight brief and records it in the approval section." },
+              { refNo:'002', id:Date.now()+2, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Mini-lifter (≈1.5 kg, prop-guarded) impact with a person",
+                riskDescription:"Blunt trauma or lacerations even with guards. At 1.5 kg it passes 34 J at about 6.7 m/s or from a 2.3 m drop, so it is not eligible for OONP.",
+                existingControls:"ELIMINATE exposure: mini-lifter flown only in areas closed to the public or cleared by event staff; never within 30 m of anyone not part of the operation; never over people. Flight paths planned away from crowd areas with the emergency landing spot on the far side from people. Prop guards checked each flight; payload double-retained.",
+                initL:'3', initC:'B', resL:'1', resC:'B',
+                additionalControls:"Spotters at every access point call \"Hold\" if anyone enters; RPIC holds or lands immediately. Climb-out RTH disabled." },
+              { refNo:'003', id:Date.now()+3, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Small drone impact with members of the public (non-consenting)",
+                riskDescription:"Injury to the public, including children, from a small drone flown near the crowd.",
+                existingControls:"No flight over the public. Within 30 m of non-participants only at or under 15 J, with speed and height capped in the flight controller (KE chart: e.g. Avata 2 ≤4 m/s at ≤3 m; sub-250 g ≤5 m/s at ≤3 m). Only after the night OONP hold point is cleared.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"Extra separation from children, queues and seating. Spotters watch for people stepping into the path; RPIC diverts or holds." },
+              { refNo:'004', id:Date.now()+4, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"OONP Pathway 2 flights near consenting participants (up to 34 J)",
+                riskDescription:"Impact with a participant, or a participant moving into the flight path; eye injury.",
+                existingControls:"Only consenting, briefed participants inside the flight area, with signed informed consent. Up to 34 J with consent, ≤15 J otherwise, per the KE chart; speeds capped in the controller. Ducted or fully guarded small drones only. Passes rehearsed first.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"Participants told not to reach for or look up at the drone during a pass. Public held back by barriers and spotters." },
+              { refNo:'005', id:Date.now()+5, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Collision with obstacles that can't be seen at night",
+                riskDescription:"Trees, light strings, catenary wires, guy lines, poles and temporary installations are hard to see in FPV at night.",
+                existingControls:"Daylight walk-through and fly-through of every route, repeated at dusk. Obstacles photographed and marked on the ops map with heights. Routes keep at least 3 m clear of wires and light strings. Any route not surveyed in daylight is not flown.",
+                initL:'4', initC:'C', resL:'2', resC:'D',
+                additionalControls:"Each route has a lit TOLZ and a pre-planned emergency landing spot clear of people and water." },
+              { refNo:'006', id:Date.now()+6, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Low-light FPV image, glare and disorientation",
+                riskDescription:"Noisy or dark FPV image, flare from event lighting, strobes or lasers; misjudged distance or lost orientation in unlit sections.",
+                existingControls:"Camera settings tested at dusk and on the night. Routes only through lit sections or with aircraft lighting. No flying through strobing or laser effects. Speed reduced in low-light sections. VO keeps visual contact and calls hazards.",
+                initL:'3', initC:'C', resL:'1', resC:'C',
+                additionalControls:"RPIC lands immediately if the image degrades or flares." },
+              { refNo:'007', id:Date.now()+7, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Video or control link loss from event RF congestion",
+                riskDescription:"Event LED controllers, wireless DMX, radio mics and crowd phones congest 2.4 / 5.8 GHz, causing video breakup or failsafe.",
+                existingControls:"Spectrum scan on site; video and control channels coordinated with the event AV team. Failsafe set to disarm/land in place (no climb-out RTH) and tested. Range and link check at each TOLZ before every flight.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"RPIC lands at the first sign of breakup." },
+              { refNo:'008', id:Date.now()+8, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"GNSS loss under tree canopy",
+                riskDescription:"Position hold drift or an unsafe return-to-home under canopy.",
+                existingControls:"GPS not relied on: aircraft flown manually. RTH / GPS rescue disabled or set to land in place.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"Abort on any uncommanded drift." },
+              { refNo:'009', id:Date.now()+9, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Public entering the TOLZ or a closed flight area",
+                riskDescription:"People wandering into the take-off area or a mini-lifter area in the dark.",
+                existingControls:"TOLZ fenced or taped with reflective barrier and signage; crew-only area with a marshal at the entry. Mini-lifter areas closed or cleared by event staff before each flight; spotters with radios at access points.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"Agreed radio calls: \"Area clear\", \"Hold\", \"Land now\"." },
+              { refNo:'010', id:Date.now()+10, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Crew slips, trips and falls in the dark",
+                riskDescription:"Uneven ground, garden edges, steps, cables and water edges at night.",
+                existingControls:"Hi-vis with reflective strips, closed shoes and head torches for all crew. Cables taped or run along edges; cases off walkways. Routes between TOLZs walked in daylight. No retrieving aircraft from water, garden beds or restricted areas at night.",
+                initL:'3', initC:'D', resL:'2', resC:'E',
+                additionalControls:"Red-light head torches to protect night vision; low-glare work lights pointed down at the TOLZ." },
+              { refNo:'011', id:Date.now()+11, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"LiPo battery fire at the charging station or after a crash",
+                riskDescription:"Fire or swelling while charging or after an impact; mulch and dry vegetation nearby.",
+                existingControls:"Charging station away from the public and flammables on a non-combustible surface, never unattended. LiPo bags, extinguisher and sand at the station. Packs checked after every flight; damaged packs isolated outdoors.",
+                initL:'2', initC:'B', resL:'1', resC:'C',
+                additionalControls:"Storage-charge at pack-down." },
+              { refNo:'012', id:Date.now()+12, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Bird or bat strike; disturbing wildlife",
+                riskDescription:"Flying foxes, possums and birds active at dusk and night in park settings.",
+                existingControls:"Watch for wildlife at dusk; hold or land when wildlife is near the route. Avoid roost trees and nesting areas noted in the recce.",
+                initL:'3', initC:'D', resL:'2', resC:'D',
+                additionalControls:"" },
+              { refNo:'013', id:Date.now()+13, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Conflict with low-flying helicopters at night",
+                riskDescription:"Emergency, police or news helicopters operating low over the city, including hospital HLS arrivals.",
+                existingControls:"Flights kept low and within the ops area. VO and spotters watch and listen for helicopters; RPIC lands immediately when one approaches. Airspace and NOTAMs checked each night; nearby HLS noted.",
+                initL:'2', initC:'A', resL:'1', resC:'B',
+                additionalControls:"" },
+              { refNo:'014', id:Date.now()+14, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Weather: wind gusts, rain, storms and lightning",
+                riskDescription:"Spring storms; gusts through gardens; rain on electronics.",
+                existingControls:"BoM forecast and radar checked before and during the shift; limits per the Ops Manual. Stop flying for lightning within 10 km, rain, or gusts above the aircraft limit.",
+                initL:'3', initC:'C', resL:'1', resC:'D',
+                additionalControls:"" },
+              { refNo:'015', id:Date.now()+15, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Crew fatigue on a night shift",
+                riskDescription:"Reduced judgement and reaction time late at night.",
+                existingControls:"Rest before the shift; no alcohol within 8 hours; fitness check at the brief. Breaks between flight blocks; RPIC can stand down at any time.",
+                initL:'3', initC:'C', resL:'2', resC:'D',
+                additionalControls:"" },
+              { refNo:'016', id:Date.now()+16, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Filming members of the public, including children, without consent",
+                riskDescription:"Privacy complaints or a breach outside the consent area.",
+                existingControls:"Shots planned to avoid close-ups of identifiable members of the public, especially children, unless consent is held. Signage at the event where agreed with the client; footage handled per the client agreement.",
+                initL:'2', initC:'D', resL:'1', resC:'E',
+                additionalControls:"Blur non-consenting individuals in post if needed." },
             ],
 
             // ─────────────────────────────────────────────────────────────────
@@ -13432,6 +13517,7 @@ View in the Database & Settings tab.`);
                                   <option value="oonpP1EvlosSet">OONP Pathway 1 + EVLOS — Controlled set with talent (guarded cinewhoops)</option>
                                   <option value="oonpEvlosNight">OONP + EVLOS — Night</option>
                                   <option value="oonpP2EvlosNightVenue">OONP Pathway 2 + EVLOS — Night / Covered festival venue, open roof (limited GPS, SFX/pyro)</option>
+                                  <option value="oonpP2NightEventLifter">OONP Pathway 2 — Night outdoor event (mini-lifter away from people + small drones with consent)</option>
                                   <option value="oonpIndoorEvlos">OONP Indoor / EVLOS (Festivals)</option>
                                 </optgroup>
                                 <optgroup label="Specialist">

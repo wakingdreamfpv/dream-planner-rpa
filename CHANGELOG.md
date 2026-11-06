@@ -1,5 +1,19 @@
 # Planner changelog
 
+## v7.25 — 6 Nov 2026 — New risk template: night outdoor event with a mini-lifter and OONP Pathway 2
+- **New built-in risk template** under JSA & Risk › Risk assessment register › OONP Operations: **"OONP Pathway 2 — Night outdoor event (mini-lifter away from people + small drones with consent)"**. Written for jobs like the Enchanted Garden: a prop-guarded ~1.5 kg mini-lifter kept in closed or cleared areas and never within 30 m of the public, plus small drones near people under Pathway 2 (≤15 J near the public, up to 34 J with informed consent).
+- **16 risks:**
+  - The **night OONP hold point** (no flight within 30 m of people at night until CASA's written confirmation on CASA.OONP.0079 Schedule 1.3 is held).
+  - The mini-lifter.
+  - Small drones near the public and near consenting participants.
+  - Unseen obstacles (light strings, wires), low-light FPV and glare.
+  - Event RF congestion, GNSS loss under canopy, and the public entering the TOLZ.
+  - Slips and trips in the dark, LiPo fire, wildlife, helicopters, weather, fatigue and privacy.
+  Each has controls, additional controls and initial / residual ratings on the planner's matrix (all residuals Low).
+- Load it as is, or load it and edit, then save it as your own template.
+- **Supabase:** nothing to do.
+- **Tests:** new template suite (3 checks); everything else passes.
+
 ## v7.24 — 6 Nov 2026 — Calc AMSL keeps working when the elevation service is down
 - **Fixed: "Could not fetch elevation data … HTTP 503".** Calc AMSL used one free elevation service (Open-Elevation), which goes down from time to time. It now asks **Open-Meteo** first (free, no key, very reliable) and falls back to Open-Elevation, each with an 8-second limit. You only see a message if both are down, and it says so plainly, with the by-hand formula.
 - **Supabase:** nothing to do.
