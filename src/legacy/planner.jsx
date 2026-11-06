@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.22';
+        const APP_VERSION = '7.23';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9203,16 +9203,23 @@ View in the Database & Settings tab.`);
                 const bbox = `${Math.min(...lo) - d},${Math.min(...la) - d},${Math.max(...lo) + d},${Math.max(...la) + d}`;
                 // OpenAIP takes bbox as minLon,minLat,maxLon,maxLat; fall back to a position search if a bbox query fails.
                 // The key goes as ?apiKey= (no preflight); older keys / proxies may want it as a header instead.
+                // v7.23: the header retries need the browser's permission check, which OpenAIP can refuse; that used to surface
+                // as "Failed to fetch". Now a refused retry keeps the first answer, so a wrong key says so, and a real
+                // connection failure says that instead.
                 const call = async (u) => {
-                  let r = await fetch(u + '&apiKey=' + encodeURIComponent(aipKey));
-                  if (r.status === 401 || r.status === 403) r = await fetch(u, { headers: { 'x-openaip-api-key': aipKey } });
-                  if (r.status === 401 || r.status === 403) r = await fetch(u, { headers: { 'x-openaip-client-id': aipKey } });
+                  let r;
+                  try { r = await fetch(u + '&apiKey=' + encodeURIComponent(aipKey)); }
+                  catch (e) { throw new Error("couldn't connect to api.core.openaip.net. OpenAIP may be down for a moment, or something on this device or network (an ad or privacy blocker, a VPN, work Wi-Fi) is blocking it. Try again in a few minutes, or in a private window"); }
+                  for (const h of ['x-openaip-api-key', 'x-openaip-client-id']) {
+                    if (r.status !== 401 && r.status !== 403) break;
+                    try { r = await fetch(u, { headers: { [h]: aipKey } }); } catch (e) { break; }
+                  }
                   return r;
                 };
                 const get = async (kind) => {
                   let r = await call(`https://api.core.openaip.net/api/${kind}?bbox=${bbox}&limit=500`);
                   if (!r.ok && r.status !== 401 && r.status !== 403) r = await call(`https://api.core.openaip.net/api/${kind}?pos=${lat},${lng}&dist=25000&limit=500`);
-                  if (r.status === 401 || r.status === 403) throw new Error('OpenAIP refused the key (' + r.status + '). Check it in Database & Settings');
+                  if (r.status === 401 || r.status === 403) throw new Error('OpenAIP refused the Client ID (' + r.status + '). It may be mistyped or expired: copy it again from openaip.net › your profile › API clients into Database & Settings');
                   if (!r.ok) throw new Error(`${kind} ${r.status} ${r.statusText}`);
                   return r.json();
                 };
@@ -9226,7 +9233,7 @@ View in the Database & Settings tab.`);
                 setSuggestedAirports(ck.aerodromes.map(a => ({ name: `${a.name}${a.icao ? ' (' + a.icao + ')' : ''} ${fmtBrg(a.brg)}/${fmtDistM(a.dist)}`, freqs: a.freqs.length ? `${a.icao || a.name}: ${a.freqs.map(f => (f.type || f.name) + ' ' + f.value).join(', ')}` : '', dist: a.dist / 1852 })));
             } catch (err) {
                 setAirspaceCheck({ error: err.message });
-                if (!silent) alert(`Couldn't reach OpenAIP: ${err.message}\n\nCheck your internet connection and the OpenAIP Client ID in Database & Settings.`);
+                if (!silent) alert(`Airspace check didn't work: ${err.message}.`);
             } finally {
                 setIsFetchingNaips(false);
             }

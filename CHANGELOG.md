@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.23 — 6 Nov 2026 — Migration 0011 fixed for the live database; clearer airspace check errors
+- **Fixed: migration 0011 stopped with "This sign-off is locked".** An early step filled in a new column on every sign-off, and the lock guard (rightly) refused to touch the ones already locked. The script now pauses the guard for just that one step, so it installs on a database that already has locked sign-offs. Nothing about those records changes, and they stay locked. The first failed run changed nothing, so just run the new file.
+- **Airspace check (OpenAIP) says what actually went wrong.** A wrong or expired Client ID used to show as "Failed to fetch", because the planner's retry got blocked by the browser. It now says "OpenAIP refused the Client ID" with where to copy it from. If OpenAIP can't be reached at all, it says so and suggests what to try (a blocker, VPN or work Wi-Fi, a private window, or a few minutes' wait).
+- **Supabase:** run the new `0011_locked_copies_versions.sql` (first line says v7.23). No edge function changes.
+- **Tests:** database suite now installs 0011 over existing locked sign-offs (44 checks); new airspace-error suite (4); everything else passes.
+
 ## v7.22 — 6 Nov 2026 — Smoother crew invites, admin password resets, crew edits become suggestions, mandatory box at the bottom
 - **Mandatory items box moved to the bottom of each section,** just above Back / Next. Working down a page you only meet it at the end; the sidebar still shows how many are left in each section.
 - **Fixed: invite link "flashing" and losing the password step.** After a first sign-in the planner reloads once to open the person's own space, and that reload dropped the invite details, so there was no password step and some people ended up at the sign-in screen. The details are now kept for that tab, so the welcome still offers the password after the reload.
