@@ -1,5 +1,15 @@
 # Planner changelog
 
+## v7.28 — 6 Nov 2026 — Your company setup follows you to any device; change your password; 3D zones on the ground
+- **Fixed: a new device showing a blank company.** Until now your company setup (company profile, fleet, batteries, crew lists, clients, templates, PDF views, compliance calendar) was kept only on the device you set it up on. Jobs already synced, which is why your iPhone showed the right job but a blank company. Now:
+  - Your setup is saved to your account (CRP only; crew can't see it) and any device you sign in on as CRP loads it. A green note says so, and which device it was last saved on.
+  - If a device has its own, different setup *and* the account copy has also changed, an amber box asks which one to keep. Nothing is shared with crew until you choose.
+  - A blank or not-yet-loaded device never sends anything up. Before this fix, opening the planner on the iPhone could replace the company details your crew see with a blank one. That can't happen now.
+- **Set or change your password any time:** Account & crew now has **Set or change password** for everyone, crew and CRP, while signed in. You no longer need a reset email to change it.
+- **3D zones sit on the terrain:** on sloping ground each zone's walls now start at the ground along its edge and rise to its height limit above that ground. The zone's floor is painted on the satellite ground. Take-off, E-LZ and caution markers sit on the ground too. Before, they were all at take-off height, floating or buried on a slope.
+- **Supabase:** run **0012_crp_store.sql** (SQL Editor › New query › paste › Run). It creates the private place your setup is saved. Until it's run, nothing changes except that a blank device no longer overwrites what crew see.
+- **Tests:** new suite for setup sync, password and 3D-on-terrain (27 checks); new database test for the CRP-only setup store (9 checks); everything else passes.
+
 ## v7.27 — 6 Nov 2026 — Advanced map follows the ground, cleaner map and 3D satellite; live link on one page; amending approved plans
 - **Flight paths follow the ground.** A path's new **Height** setting has two choices:
   - **Follow the ground** (now the default for new paths): set one height, e.g. 3 m, and keep it within 1–5 m. The planner adds a point every 5 m along the path and works out each one's height from free public terrain data, so the drone stays that far above the ground, rising and falling with it. No typing a height for every point. Change the path, the height or a bridge and the heights are worked out again. If the terrain data can't be reached, the path is flown level at that height and the panel says so.

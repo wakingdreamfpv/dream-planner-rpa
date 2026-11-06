@@ -149,6 +149,19 @@ export function useCloudJobs(sb, me) {
     // v7.10: the company's shared settings (e.g. the OpenAIP key) for the CRP's other devices
     const loadCompany = async () => { try { const { data } = await sb.from('shared_data').select('data').eq('area', 'company').maybeSingle(); if (!dead) publish('wdCompanyShared', (data && data.data) || null, 'wd-company-shared'); } catch (e) {} };
     loadCompany();
+    // v7.28: the CRP's whole company setup, saved to the account so every device the CRP signs in on gets it
+    const loadSettings = async () => {
+      try { const { data, error } = await sb.from('crp_store').select('data,hash,device,updated_at').eq('key', 'settings').maybeSingle();
+        if (dead) return; if (error) throw error; publish('wdCrpSettings', data ? { ...data, at: Date.now() } : { none: true, at: Date.now() }, 'wd-crp-settings');
+      } catch (e) { if (!dead) publish('wdCrpSettings', { error: String((e && e.message) || e), at: Date.now() }, 'wd-crp-settings'); }
+    };
+    const onSaveSettings = async (e) => { const d = e.detail || {};
+      try { const { error } = await sb.from('crp_store').upsert({ key: 'settings', data: d.data, hash: d.hash, device: d.device || '' }, { onConflict: 'key' }); if (error) throw error;
+        emit('wd-crp-settings-saved', { ok: true, hash: d.hash });
+      } catch (err) { emit('wd-crp-settings-saved', { ok: false, hash: d.hash, error: String((err && err.message) || err) }); } };
+    const onVis = () => { if (document.visibilityState === 'visible') loadSettings(); };
+    window.addEventListener('wd-crp-settings-save', onSaveSettings); window.addEventListener('wd-crp-settings-load', loadSettings); document.addEventListener('visibilitychange', onVis);
+    loadSettings();
     // v7.11: crew currency (certifications + the 3-flights rule) and logged hours, for job checks and the registers
     const loadCurrency = async () => {
       try {
@@ -164,7 +177,8 @@ export function useCloudJobs(sb, me) {
     loadPeople().then(() => { refreshInbox(); loadCurrency(); }); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
     return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-request-rpic-sign', onAskSign); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
-      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false; };
+      window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false;
+      window.removeEventListener('wd-crp-settings-save', onSaveSettings); window.removeEventListener('wd-crp-settings-load', loadSettings); document.removeEventListener('visibilitychange', onVis); };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
 
   // ── Crew ─────────────────────────────────────────────────────────────────────────────────────

@@ -99,6 +99,21 @@ function SignIn({ sb, onDone }) {
   );
 }
 
+// v7.28: set or change your password any time while signed in (crew and CRP)
+function PasswordBox({ sb }) {
+  const [open, setOpen] = useState(false), [saved, setSaved] = useState(false);
+  return (
+    <div className="rounded-lg border border-slate-200 px-3 py-2.5" data-testid="pw-box">
+      {open ? <SetPassword sb={sb} why="change" onDone={(ok) => { setOpen(false); setSaved(!!ok); }} />
+        : <div className="flex flex-wrap items-center gap-2">
+            <i className="fa-solid fa-key text-slate-400"></i>
+            <span className="flex-1 text-sm text-slate-600">{saved ? <span className="text-emerald-700 font-semibold" data-testid="pw-saved">Password saved. Use it next time you sign in.</span> : 'Password'}</span>
+            <button type="button" onClick={() => { setOpen(true); setSaved(false); }} className={btn + ' border border-slate-300 text-slate-700'} data-testid="pw-change">Set or change password</button>
+          </div>}
+    </div>
+  );
+}
+
 function SetPassword({ sb, onDone, why }) {
   const [pw, setPw] = useState(''), [pw2, setPw2] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('');
   const go = async (e) => {
@@ -108,17 +123,17 @@ function SetPassword({ sb, onDone, why }) {
     setBusy(true);
     const { error } = await sb.auth.updateUser({ password: pw });
     setBusy(false);
-    if (error) setErr(error.message); else onDone();
+    if (error) setErr(/should be different/i.test(error.message) ? 'That is already your password.' : error.message); else onDone(true);
   };
   return (
     <form onSubmit={go} className="space-y-3" data-testid="setpw-form">
-      <p className="text-sm text-slate-600">{why === 'recovery' ? 'Choose a new password.' : 'Welcome! Choose a password so you can sign in any time (or skip and use an emailed link).'}</p>
+      <p className="text-sm text-slate-600">{why === 'recovery' || why === 'change' ? 'Choose a new password.' : 'Welcome! Choose a password so you can sign in any time (or skip and use an emailed link).'}</p>
       <input type="password" autoComplete="new-password" placeholder="New password (10+ characters)" value={pw} onChange={e => setPw(e.target.value)} className={input} />
       <input type="password" autoComplete="new-password" placeholder="Repeat password" value={pw2} onChange={e => setPw2(e.target.value)} className={input} />
       {err && <div className="text-sm text-red-700">{err}</div>}
       <div className="flex gap-2">
         <button type="submit" disabled={busy} className={btn + ' bg-violet-600 text-white hover:bg-violet-700'}>{busy ? 'Saving…' : 'Save password'}</button>
-        {why !== 'recovery' && <button type="button" onClick={onDone} className={btn + ' border border-slate-300 text-slate-600'}>Skip</button>}
+        {why !== 'recovery' && <button type="button" onClick={() => onDone(false)} className={btn + ' border border-slate-300 text-slate-600'}>{why === 'change' ? 'Cancel' : 'Skip'}</button>}
       </div>
     </form>
   );
@@ -402,7 +417,8 @@ function AccountPanel() {
                 {me && me.active && me.role === 'crp' && <CrewAdmin sb={sb} me={me} defaultOpen={!!inlineCtx} />}
                 {me && me.active && me.role === 'pilot' && <PilotInduction sb={sb} me={me} />}
                 {me && me.active && me.role !== 'crp' && <MyProfile sb={sb} me={me} onSaved={() => loadMe(session)} />}
-                <p className="text-[11px] text-slate-400"><i className="fa-solid fa-circle-info mr-1"></i>Jobs and plans are still saved on this device for now; cloud sync of jobs comes in a later update.</p>
+                {me && me.active && <PasswordBox sb={sb} />}
+                <p className="text-[11px] text-slate-400"><i className="fa-solid fa-circle-info mr-1"></i>{me && me.role === 'crp' ? 'Your jobs and your company setup are saved to your account, so they follow you to any device you sign in on.' : 'Your jobs come from your CRP and follow you to any device you sign in on.'}</p>
               </div>
   );
   const inline = slot2 && createPortal(
