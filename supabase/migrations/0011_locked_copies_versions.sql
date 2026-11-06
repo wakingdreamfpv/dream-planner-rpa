@@ -1,4 +1,4 @@
--- ═══ Dream Planner RPA v7.21 · migration 0011_locked_copies_versions.sql ═══
+-- ═══ Dream Planner RPA v7.23 · migration 0011_locked_copies_versions.sql (fixed: runs on a database with locked sign-offs) ═══
 -- Paste into: Supabase › SQL Editor › New query › Run. Safe to run again. Builds on 0001–0010.
 -- Chunk 5 (the rest): when a record locks, the database keeps a copy of it exactly as signed and a fingerprint
 -- (SHA-256 hash) of that copy. Corrections are new versions with a reason; the original is kept. Nobody can change
@@ -12,7 +12,11 @@ alter table public.signoff_records add column if not exists version int not null
 alter table public.signoff_records add column if not exists supersedes uuid references public.signoff_records(id) on delete restrict;
 alter table public.signoff_records add column if not exists superseded_by uuid references public.signoff_records(id) on delete restrict;
 alter table public.signoff_records add column if not exists correction_reason text;
+-- (filling in the new column on records that are already locked: the lock guard is paused for just this one
+-- statement, because it rightly refuses any change to a locked record; nothing else about them changes)
+alter table public.signoff_records disable trigger signoff_guard;
 update public.signoff_records set chain_id = id where chain_id is null;
+alter table public.signoff_records enable trigger signoff_guard;
 
 -- ── The locked copies ─────────────────────────────────────────────────────────────────────────────
 create table if not exists public.record_versions (

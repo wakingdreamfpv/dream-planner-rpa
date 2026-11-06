@@ -28,7 +28,16 @@ await db.exec(rd('0007_opsmap_observer.sql'));
 await db.exec(rd('0008_currency_registers_digest.sql'));
 await db.exec(rd('0009_records_import_backup.sql'));
 await db.exec(rd('0010_comments_links_briefs.sql')); await db.exec(rd('0010_comments_links_briefs.sql'));
+// v7.23: like the live database, there are already locked sign-offs when 0011 is installed
+const preU = (await db.query(`insert into auth.users (email) values ('early@test.com') returning id`)).rows[0].id;
+await db.query(`insert into public.invites (email, full_name, role) values ('early@test.com','Early Pilot','pilot')`).catch(() => {});
+const preP = (await db.query(`insert into public.people (full_name, role) values ('Early Observer','observer') returning id`)).rows[0].id;
+const preS = (await db.query(`insert into public.signoff_records (person_id, type, status, answers, locked) values ($1,'evlos_observer','certified','{"crp":{"callsign":"Old"}}',true) returning id`, [preP])).rows[0].id;
 await db.exec(rd('0011_locked_copies_versions.sql')); await db.exec(rd('0011_locked_copies_versions.sql'));
+const pre = (await db.query(`select s.chain_id, (select count(*)::int from public.record_versions v where v.record_id = s.id) n, (select reason from public.record_versions v where v.record_id = s.id limit 1) r from public.signoff_records s where s.id = $1`, [preS])).rows[0];
+check('installs on a database that already has locked sign-offs; each gets its copy once', pre.chain_id === preS && pre.n === 1 && /installed/.test(pre.r || ''), JSON.stringify(pre));
+const preLock = await db.query(`update public.signoff_records set answers='{}' where id=$1`, [preS]).then(() => 'changed', (e) => e.message);
+check('and they stay locked afterwards', /locked/.test(preLock), preLock);
 check('migrations 0010 and 0011 run twice cleanly', true);
 const newUser = async (email) => (await db.query(`insert into auth.users (email) values ($1) returning id`, [email])).rows[0].id;
 const as = async (uid, fn) => { await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub', '${uid}', false);`); try { return await fn(); } finally { await db.exec(`reset role; select set_config('request.jwt.claim.sub', '', false);`); } };
