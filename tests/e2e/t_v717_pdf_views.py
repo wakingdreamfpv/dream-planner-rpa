@@ -20,7 +20,7 @@ with sync_playwright() as p:
         R.check(role + ': map opens zoomed to the job (not the whole world)', zm and int(zm.group(1)) >= 14, z)
         R.check(role + ': no page errors', not errs, errs[:2])
         pg.context.close()
-    pg, errs, dl = ctx_for(b, 'crp', {})
+    pg, errs, dl = ctx_for(b, 'crp', {'crp_store': [{'key': 'settings', 'data': {'companyProfile': {'name': 'Test Co'}}, 'hash': 'h0'}]})  # v7.28: a blank company is never published
     pg.goto(URL); pg.wait_for_timeout(4000)
     pg.evaluate(JS_INC, 'Save Draft'); pg.wait_for_timeout(800)
     put_plan(pg, PLAN); pg.reload(); pg.wait_for_timeout(5000); open_draft(pg)
