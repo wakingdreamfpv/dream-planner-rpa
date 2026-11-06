@@ -111,6 +111,13 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
       } catch (e) { /* the overlay stays as the flat plane */ }
     }
     if (!alive) return;
+    // v7.28: zone floors (and exclusion buffers) painted onto the ground picture, so they lie exactly on the terrain
+    { const g = canvas.getContext('2d'), hexA = (c, a) => { const n = parseInt(String(c).replace('#', ''), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+      const outline = (z, grow) => { g.beginPath(); if (z.shape === 'circle') { const c0 = toPx(z.c), mpp = (156543.03392 * Math.cos((z.c[0] * Math.PI) / 180)) / 2 ** z0 / kpx; g.arc(c0.x, c0.y, ((Number(z.r) || 0) + grow) / mpp, 0, Math.PI * 2); } else z.pts.forEach((q, i) => { const p = toPx(q); i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); }); g.closePath(); };
+      const z0 = z, toHex = (v) => typeof v === 'number' ? '#' + v.toString(16).padStart(6, '0') : v;
+      [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).forEach((zz) => { if (zz.shape !== 'circle' && (zz.pts || []).length < 3) return; const k = kindStyle(zz.kind, doc.settings);
+        if (zz.kind === 'exclusion' && zz.shape === 'circle') { const b = zoneBuffer(zz); if (b > 0) { outline(zz, b); g.fillStyle = 'rgba(245,158,11,0.28)'; g.fill(); } }
+        outline(zz, 0); g.fillStyle = hexA(toHex(k.color), zz.kind === 'exclusion' ? 0.38 : 0.3); g.fill(); g.lineWidth = Math.max(2, canvas.width / 600); g.strokeStyle = toHex(k.stroke); g.stroke(); }); }
     const tex = keep(new THREE.CanvasTexture(canvas)); tex.minFilter = THREE.LinearFilter;
     const pos = [], uv = [], idx = [];
     for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
@@ -121,35 +128,88 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
     const geo = keep(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, keep(new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })));
     scene.add(mesh); grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
+    if (terr) { // walls, tops and markers follow the ground (bilinear on the same grid as the terrain mesh)
+      const H = terr.h, gAt = (x, zz) => { const fi = ((x - cx + half) / (2 * half)) * N, fj = ((zz - cz + half) / (2 * half)) * N; if (!(fi >= 0 && fj >= 0 && fi <= N && fj <= N)) return null;
+        const i0 = Math.min(N - 1, Math.floor(fi)), j0 = Math.min(N - 1, Math.floor(fj)), ti = fi - i0, tj = fj - j0, v = (i, j) => H[j * (N + 1) + i];
+        return (v(i0, j0) * (1 - ti) + v(i0 + 1, j0) * ti) * (1 - tj) + (v(i0, j0 + 1) * (1 - ti) + v(i0 + 1, j0 + 1) * ti) * tj; };
+      placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
+    }
     groundNote((sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).'));
     req();
   })();
 
-  // zones
+  // zones and markers. v7.28: on real terrain each zone's walls follow the ground along its edge (bottom on the ground,
+  // top at its height limit above that ground) and its floor is painted onto the ground picture; TLZ / E-LZ / caution
+  // markers sit on the ground too. Until terrain loads (or without it) they stand on a flat ground as before.
+  const onGround = new THREE.Group(); scene.add(onGround);
+  const zoneTops = (z) => z.kind === 'exclusion' ? Math.max(maxAlt * 1.3, 10) : Math.min(Number(z.h) > 0 ? Number(z.h) : (z.kind === 'clear' ? Math.max(maxAlt * 1.3, 10) : 2), maxAlt * 2 + 10);
+  const ringOf = (z) => { // the zone's edge in scene x/z, a point every few metres
+    const step = Math.max(0.5, span / 90);
+    if (z.shape === 'circle') { const c = P(z.c), r = Number(z.r) || 0.1, n = Math.max(48, Math.min(160, Math.ceil((2 * Math.PI * r) / step))); return { pts: Array.from({ length: n }, (_, i) => ({ x: c.x + r * Math.cos((2 * Math.PI * i) / n), z: c.z + r * Math.sin((2 * Math.PI * i) / n) })), corners: [] }; }
+    const q = z.pts.map(P), out = [], corners = [];
+    q.forEach((p0, i) => { const p1 = q[(i + 1) % q.length], L = Math.hypot(p1.x - p0.x, p1.z - p0.z), n = Math.max(1, Math.ceil(L / step)); corners.push(out.length); for (let k = 0; k < n; k++) out.push({ x: p0.x + ((p1.x - p0.x) * k) / n, z: p0.z + ((p1.z - p0.z) * k) / n }); });
+    return { pts: out, corners };
+  };
+  const clearGroup = () => { [...onGround.children].forEach((o) => { onGround.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); };
+  const placeOnGround = (gAt) => { // gAt(x, z) → ground height there, or null for the flat ground
+    clearGroup();
+    const G = (x, zz, dflt) => { const g = gAt ? gAt(x, zz) : null; return g == null ? dflt : g; };
+    const add = (o) => { onGround.add(o); return o; };
+    const sorted = [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion'));
+    sorted.forEach((z) => {
+      if (z.shape !== 'circle' && (z.pts || []).length < 3) return;
+      const k = kindStyle(z.kind, doc.settings), base = Number(z.ground) || 0, h = zoneTops(z);
+      const mat = new THREE.MeshLambertMaterial({ color: k.color, transparent: true, opacity: z.kind === 'exclusion' ? 0.32 : 0.22, depthWrite: false, side: THREE.DoubleSide });
+      const line = new THREE.LineBasicMaterial({ color: k.stroke });
+      const cen = z.shape === 'circle' ? P(z.c) : (() => { const q = z.pts.map(P); return { x: q.reduce((t, p) => t + p.x, 0) / q.length, z: q.reduce((t, p) => t + p.z, 0) / q.length }; })();
+      let topY = base + h;
+      if (!gAt) { // flat: one solid block
+        const geo = new THREE.ExtrudeGeometry(shapeOf(z), { depth: h, bevelEnabled: false, curveSegments: 48 }); geo.rotateX(-Math.PI / 2);
+        add(new THREE.Mesh(geo, mat)).position.y = base;
+        add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), line)).position.y = base;
+        if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = add(new THREE.Mesh(new THREE.RingGeometry(z.r, z.r + b, 64), new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, base + 0.03, c.z); } }
+      } else { // on the terrain: walls that follow the ground, a top that follows it too (height limit above own ground)
+        const { pts: R, corners } = ringOf(z), n = R.length, gy = R.map((p) => G(p.x, p.z, base) + 0.05);
+        const pos = [], idx = [];
+        R.forEach((p, i) => { pos.push(p.x, gy[i], p.z, p.x, gy[i] + h, p.z); });
+        for (let i = 0; i < n; i++) { const j = (i + 1) % n, a0 = 2 * i, a1 = 2 * i + 1, b0 = 2 * j, b1 = 2 * j + 1; idx.push(a0, b0, a1, a1, b0, b1); }
+        const tri = THREE.ShapeUtils.triangulateShape(R.map((p) => new THREE.Vector2(p.x, p.z)), []);
+        tri.forEach(([u, v, w]) => idx.push(2 * u + 1, 2 * v + 1, 2 * w + 1));
+        const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+        add(new THREE.Mesh(geo, mat));
+        const lp = []; const seg = (a, b) => lp.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        for (let i = 0; i < n; i++) { const j = (i + 1) % n; seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[j].x, y: gy[j], z: R[j].z }); seg({ x: R[i].x, y: gy[i] + h, z: R[i].z }, { x: R[j].x, y: gy[j] + h, z: R[j].z }); }
+        (corners.length ? corners : [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4)]).forEach((i) => seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[i].x, y: gy[i] + h, z: R[i].z }));
+        const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); add(new THREE.LineSegments(lg, line));
+        topY = G(cen.x, cen.z, base) + h;
+      }
+      // label at the zone's top
+      const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
+      const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); add(sp);
+    });
+    // markers
+    doc.points.forEach((p) => {
+      const c = P([p.lat, p.lng]), g0 = G(c.x, c.z, 0);
+      let mesh = null, txt = p.title || '', top = 1;
+      if (p.kind === 'tlz') { const s = Number(p.size) || 5; mesh = new THREE.Mesh(new THREE.BoxGeometry(s, 0.15, s), new THREE.MeshLambertMaterial({ color: 0x0f172a })); mesh.position.set(c.x, g0 + 0.08, c.z); }
+      else if (p.kind === 'elz') { const r = Number(p.size) || 4; mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.15, 40), new THREE.MeshLambertMaterial({ color: 0xea580c })); mesh.position.set(c.x, g0 + 0.08, c.z); }
+      else if (p.kind === 'poi') { const h = Math.max(1.5, span / 40); mesh = new THREE.Mesh(new THREE.ConeGeometry(h * 0.45, h, 3), new THREE.MeshLambertMaterial({ color: 0xfacc15 })); mesh.position.set(c.x, g0 + h / 2, c.z); top = h; txt = '! ' + txt; }
+      else { mesh = new THREE.Mesh(new THREE.SphereGeometry(rad * 2, 12, 8), new THREE.MeshLambertMaterial({ color: 0xffffff })); mesh.position.set(c.x, g0 + rad * 2, c.z); }
+      add(mesh); mesh.userData.marker = p.kind;
+      if (p.text) txt += '\n' + String(p.text).split('\n').slice(0, 3).join('\n');
+      const sp = label(THREE, txt, { size: 24, border: p.kind === 'poi' ? '#a16207' : '#0f172a' }); { const hh = 0.026 * txt.split('\n').length + 0.01; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(c.x, g0 + top + lblScale * 0.4, c.z); add(sp);
+    });
+  };
   const shapeOf = (z) => {
     const s = new THREE.Shape();
     if (z.shape === 'circle') { const c = prj.to(z.c); s.absarc(c.x, c.y, Number(z.r) || 0.1, 0, Math.PI * 2, false); return s; }
     z.pts.map(prj.to).forEach((p, i) => (i ? s.lineTo(p.x, p.y) : s.moveTo(p.x, p.y))); s.closePath(); return s;
   };
-  const sorted = [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion'));
-  sorted.forEach((z) => {
-    if (z.shape !== 'circle' && (z.pts || []).length < 3) return;
-    const k = kindStyle(z.kind, doc.settings);
-    const ground = Number(z.ground) || 0;
-    const h = z.kind === 'exclusion' ? Math.max(maxAlt * 1.3, 10) : Math.min(Number(z.h) > 0 ? Number(z.h) : (z.kind === 'clear' ? Math.max(maxAlt * 1.3, 10) : 2), maxAlt * 2 + 10);
-    const geo = keep(new THREE.ExtrudeGeometry(shapeOf(z), { depth: h, bevelEnabled: false, curveSegments: 48 })); geo.rotateX(-Math.PI / 2);
-    const mat = keep(new THREE.MeshLambertMaterial({ color: k.color, transparent: true, opacity: z.kind === 'exclusion' ? 0.32 : 0.22, depthWrite: false, side: THREE.DoubleSide }));
-    const mesh = new THREE.Mesh(geo, mat); mesh.position.y = ground; scene.add(mesh);
-    const edges = new THREE.LineSegments(keep(new THREE.EdgesGeometry(geo, 30)), keep(new THREE.LineBasicMaterial({ color: k.stroke }))); edges.position.y = ground; scene.add(edges);
-    if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = new THREE.Mesh(keep(new THREE.RingGeometry(z.r, z.r + b, 64)), keep(new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, 0.03, c.z); scene.add(ring); } }
-    // label at the zone's top
-    const cen = z.shape === 'circle' ? P(z.c) : (() => { const q = z.pts.map(P); return { x: q.reduce((t, p) => t + p.x, 0) / q.length, z: q.reduce((t, p) => t + p.z, 0) / q.length }; })();
-    const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
-    const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, ground + h + lblScale * 0.3, cen.z); scene.add(sp); disposables.push(sp.material.map, sp.material);
-  });
+  const rad = Math.max(0.12, span / 500);
+  placeOnGround(null);
+  if (typeof window !== 'undefined') window.__WD_3D = { group: onGround, scene };
 
   // paths
-  const rad = Math.max(0.12, span / 500);
   doc.paths.forEach((path) => {
     const res = checks && checks.paths[path.id];
     const V = path.pts.map((q) => { const p = P(q); return new THREE.Vector3(p.x, Number(q[2]) || 0, p.z); });
@@ -167,19 +227,6 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
       const t = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
       const sp = label(THREE, t, { size: 24 }); sp.scale.set(0.032 * sp.userData.aspect, 0.032, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
     }
-  });
-
-  // points
-  doc.points.forEach((p) => {
-    const c = P([p.lat, p.lng]);
-    let mesh = null, txt = p.title || '', top = 1;
-    if (p.kind === 'tlz') { const s = Number(p.size) || 5; mesh = new THREE.Mesh(keep(new THREE.BoxGeometry(s, 0.15, s)), keep(new THREE.MeshLambertMaterial({ color: 0x0f172a }))); mesh.position.set(c.x, 0.08, c.z); }
-    else if (p.kind === 'elz') { const r = Number(p.size) || 4; mesh = new THREE.Mesh(keep(new THREE.CylinderGeometry(r, r, 0.15, 40)), keep(new THREE.MeshLambertMaterial({ color: 0xea580c }))); mesh.position.set(c.x, 0.08, c.z); }
-    else if (p.kind === 'poi') { const h = Math.max(1.5, span / 40); mesh = new THREE.Mesh(keep(new THREE.ConeGeometry(h * 0.45, h, 3)), keep(new THREE.MeshLambertMaterial({ color: 0xfacc15 }))); mesh.position.set(c.x, h / 2, c.z); top = h; txt = '! ' + txt; }
-    else { mesh = new THREE.Mesh(keep(new THREE.SphereGeometry(rad * 2, 12, 8)), keep(new THREE.MeshLambertMaterial({ color: 0xffffff }))); mesh.position.set(c.x, rad * 2, c.z); }
-    scene.add(mesh);
-    if (p.text) txt += '\n' + String(p.text).split('\n').slice(0, 3).join('\n');
-    const sp = label(THREE, txt, { size: 24, border: p.kind === 'poi' ? '#a16207' : '#0f172a' }); { const hh = 0.026 * txt.split('\n').length + 0.01; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(c.x, top + lblScale * 0.4, c.z); scene.add(sp); disposables.push(sp.material.map, sp.material);
   });
 
   // camera + orbit
@@ -222,6 +269,6 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
-    alive = false; disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
+    alive = false; clearGroup(); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }

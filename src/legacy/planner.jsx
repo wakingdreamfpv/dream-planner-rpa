@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.27';
+        const APP_VERSION = '7.28';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9985,6 +9985,68 @@ View in the Database & Settings tab.`);
           useEffect(() => { const h = () => setCloudReady(!!window.__wdCloudReady); h(); window.addEventListener('wd-cloud-ready', h); return () => window.removeEventListener('wd-cloud-ready', h); }, []);
           const lsJson = (k, dflt) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } };
           const lsJsonSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+          // ── v7.28: the CRP's company setup follows the account ─────────────────────────────────────
+          // Everything except the jobs (which sync on their own) is saved to the account. A device that signs in with a blank
+          // or unchanged setup loads the saved one; if both have changed, the CRP chooses. Nothing is published for crew, and
+          // nothing is uploaded, until this device's setup has been settled.
+          const JOB_KEYS = ['draftPlans', 'savedPlans', 'completedFlights'];
+          const settingsOf = (d) => { const o = {}; Object.keys(d || {}).forEach(k => { if (!JOB_KEYS.includes(k)) o[k] = d[k]; }); return o; };
+          const settingsHash = (o) => { const str = JSON.stringify(o); let h1 = 0x811c9dc5, h2 = 0; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 16777619) >>> 0; h2 = (h2 * 31 + c) >>> 0; } return h1.toString(16) + '-' + h2.toString(16) + '-' + str.length; };
+          const deviceName = () => { const u = (typeof navigator !== 'undefined' && navigator.userAgent) || ''; const dev = /iPhone/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android' : /Mac/.test(u) ? 'Mac' : /Windows/.test(u) ? 'Windows PC' : 'Computer';
+            const br = /Edg\//.test(u) ? 'Edge' : /CriOS|Chrome\//.test(u) ? 'Chrome' : /FxiOS|Firefox\//.test(u) ? 'Firefox' : /Safari\//.test(u) ? 'Safari' : ''; return dev + (br ? ' · ' + br : ''); };
+          const blankSetup = (d) => !String(((d && d.companyProfile) || {}).name || '').trim();
+          const [setupSync, setSetupSync] = useState(() => isCrpCloud ? 'waiting' : 'off'); // waiting | ready | choose | off
+          const [setupChoice, setSetupChoice] = useState(null); // the saved copy, when the CRP has to choose
+          const [setupNote, setSetupNote] = useState('');
+          const setupOk = !isCrpCloud || setupSync === 'ready' || setupSync === 'off';
+          const cloudSetupRef = useRef({ hash: '', missing: false });
+          const applySavedSetup = (row) => {
+            setDb(prev => parseStoredDb(JSON.stringify({ ...row.data, draftPlans: prev.draftPlans || [], savedPlans: prev.savedPlans || [], completedFlights: prev.completedFlights || [] })));
+            lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); cloudSetupRef.current.hash = row.hash;
+          };
+          useEffect(() => {
+            if (!isCrpCloud) { setSetupSync('off'); return; }
+            setSetupSync(s => s === 'off' ? 'waiting' : s);
+            if (!dbReady) return;
+            const h = () => { const row = window.wdCrpSettings; if (!row) return;
+              if (row.error) { // table not set up yet (migration 0012) or offline: carry on as before, but never upload
+                cloudSetupRef.current = { hash: '', missing: true }; setSetupSync(s => s === 'waiting' ? 'ready' : s); return; }
+              cloudSetupRef.current.missing = false;
+              const mine = settingsHash(settingsOf(dbRefLatest.current)), last = (lsJson('wd_setup_synced', {}) || {}).hash || '';
+              if (row.none) { cloudSetupRef.current.hash = ''; setSetupSync(s => s === 'waiting' ? 'ready' : s); return; } // nothing saved yet: this device uploads its setup
+              cloudSetupRef.current.hash = row.hash;
+              if (row.hash === mine) { lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); setSetupSync(s => s === 'choose' ? s : 'ready'); return; }
+              if (blankSetup(dbRefLatest.current) || freshDbRef.current || (last && last === mine)) {
+                applySavedSetup(row); setSetupNote('Your company setup was loaded from your account' + (row.device ? ' (last saved on ' + row.device + ')' : '') + '.'); setSetupSync('ready'); return; }
+              if (last === row.hash) { setSetupSync(s => s === 'choose' ? s : 'ready'); return; } // only this device changed: it uploads
+              setSetupChoice(row); setSetupSync('choose');
+            };
+            h(); window.addEventListener('wd-crp-settings', h); return () => window.removeEventListener('wd-crp-settings', h);
+          }, [isCrpCloud, dbReady]); // eslint-disable-line
+          const dbRefLatest = useRef(db); dbRefLatest.current = db;
+          // upload this device's setup a few seconds after it changes
+          useEffect(() => {
+            if (!isCrpCloud || setupSync !== 'ready' || cloudSetupRef.current.missing || blankSetup(db)) return;
+            const t = setTimeout(() => { const data = settingsOf(db), hash = settingsHash(data), last = (lsJson('wd_setup_synced', {}) || {}).hash || '';
+              if (hash === last && hash === cloudSetupRef.current.hash) return;
+              window.dispatchEvent(new CustomEvent('wd-crp-settings-save', { detail: { data, hash, device: deviceName() } })); }, 2500);
+            return () => clearTimeout(t);
+          }, [isCrpCloud, setupSync, db]); // eslint-disable-line
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (d.ok) { lsJsonSet('wd_setup_synced', { hash: d.hash, at: Date.now() }); cloudSetupRef.current.hash = d.hash; } };
+            window.addEventListener('wd-crp-settings-saved', h); return () => window.removeEventListener('wd-crp-settings-saved', h); }, []);
+          const SetupChoiceBanner = () => (setupSync === 'choose' && setupChoice) ? (
+            <div data-setup-choice="1" data-allow-locked="1" className="print:hidden m-3 rounded-xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="font-bold mb-1"><i className="fa-solid fa-code-compare mr-1.5"></i>Two different company setups</div>
+              <div className="mb-2">The company setup on this device (company profile, fleet, batteries, crew, templates…) is different from the one saved to your account{setupChoice.device ? <> on <b>{setupChoice.device}</b></> : ''}{setupChoice.updated_at ? <>, {new Date(setupChoice.updated_at).toLocaleString()}</> : ''}. Which one do you want to keep? Your jobs aren't affected. Nothing is shared with crew until you choose.</div>
+              <div className="flex flex-wrap gap-2">
+                <button data-setup-use-saved="1" data-allow-locked="1" className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold" onClick={() => { applySavedSetup(setupChoice); setSetupChoice(null); setSetupSync('ready'); setSetupNote('Loaded the company setup saved to your account.'); }}>Use the one saved to my account</button>
+                <button data-setup-keep-local="1" data-allow-locked="1" className="px-3 py-1.5 rounded-lg border border-amber-600 text-amber-800 font-semibold bg-white" onClick={() => { cloudSetupRef.current.hash = ''; setSetupChoice(null); setSetupSync('ready'); setSetupNote('Keeping this device\'s company setup; it is now saved to your account.'); }}>Keep this device's setup</button>
+              </div>
+            </div>) : setupNote ? (
+            <div data-setup-note="1" className="print:hidden m-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 flex items-start gap-2">
+              <span className="flex-1"><i className="fa-solid fa-cloud-arrow-down mr-1.5"></i>{setupNote}</span>
+              <button data-allow-locked="1" className="text-emerald-700" onClick={() => setSetupNote('')} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+            </div>) : null;
           const planCrew = (p) => { const ov = p.overview || {}, ap = p.approval || {}, lg = p.log || {}, out = [];
             const add = (n, role) => String(n || '').split(/[,;/&]|\band\b/).map(x => x.trim()).filter(Boolean).forEach(name => out.push({ name, role }));
             const js = p.jsa || {};
@@ -10023,7 +10085,7 @@ View in the Database & Settings tab.`);
           }); // eslint-disable-line
           // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
           useEffect(() => {
-            if (!isCrpCloud || !cloudReady || !dbReady) return;
+            if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || blankSetup(db)) return; // v7.28: a blank or unsettled device never overwrites what crew see
             const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
             const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
             if (openAipKey) company.openAipKey = openAipKey; // v7.10: one airspace key for the whole company
@@ -10054,7 +10116,7 @@ View in the Database & Settings tab.`);
               ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).filter(e => ['exp-reoc', 'exp-insurance'].includes(e.id) && !e.date).forEach(e => setup.push(e.label + ': expiry date (Compliance calendar)'));
               return { items, setup, at };
             })() } }));
-          }, [isCrpCloud, cloudReady, dbReady, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths, db.pdfViews]); // eslint-disable-line
+          }, [isCrpCloud, cloudReady, dbReady, setupOk, db.companyProfile, db.fleet, db.batteries, db.rpaBatteries, db.completedFlights, openAipKey, db.compliance, db.officialAuths, db.pdfViews]); // eslint-disable-line
           // CRP: flights crew logged in the cloud, and access requests
           useEffect(() => { const h = () => { if (location.hash === '#awaiting') { setActiveTab('home'); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} window.dispatchEvent(new Event('wd-cloud-refresh')); } };
             h(); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []); // eslint-disable-line
@@ -11202,6 +11264,7 @@ View in the Database & Settings tab.`);
                   <button onClick={() => { try { localStorage.setItem('wd_rec_dismissed', workingOffer.savedAt); } catch (e) {} setWorkingOffer(null); }} className="text-sky-800 underline text-xs" title="Hide this. The copy stays under Database & Settings › Recovery copies for 30 days.">Not now</button>
                 </div>
               )}
+              {SetupChoiceBanner()}
               {tabRole === 'reader' && (
                 <div className="print:hidden sticky top-0 z-[2000] bg-amber-400 text-amber-950 text-sm px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shadow-md" data-testid="readonly-banner">
                   <span><i className="fa-solid fa-lock mr-1.5"></i><b>Read-only:</b> the planner is also open in another tab or window, so this tab can't save to the database. {dirty ? <b>Your edits here are kept and autosaved to Recovery copies.</b> : 'Anything you type is still autosaved to Recovery copies.'}</span>
