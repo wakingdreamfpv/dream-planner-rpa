@@ -1,0 +1,60 @@
+# v7.26: editing an approved plan. The CRP clicks a field -> "Change an approved plan?" with a required reason ->
+# approval and signatures withdrawn, the field is editable, a reminder shows until re-approved. Crew stay locked.
+import sys, os, json; sys.path.insert(0, os.path.dirname(__file__))
+from harness import *
+R = Run(); ensure_server()
+PLAN = {'overview': {'uid': 'uid-a', 'identifier': 'OP-2026-0701', 'operationName': 'Garden Lights', 'location': 'Roma Street Parkland', 'operationDate': '2026-11-20'},
+  'approval': {'crpName': 'Michael Rubio', 'rpName': 'Test Pilot', 'crpSigned': True, 'rpSigned': True, 'flightAuthApproved': True, 'approvedAt': '2026-11-06T01:00:00.000Z'}}
+def open_plan(b, role):
+    pg, errs, dl = ctx_for(b, role); pg.goto(URL); pg.wait_for_timeout(4500)
+    pg.evaluate(JS_INC, 'Save Draft'); pg.wait_for_timeout(800)
+    put_plan(pg, PLAN); pg.reload(); pg.wait_for_timeout(5000); open_draft(pg); pg.wait_for_timeout(1000)
+    pg.evaluate(JS_INC, 'Preliminary'); pg.wait_for_timeout(600)
+    return pg, errs, dl
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    pg, errs, dl = open_plan(b, 'crp')
+    R.check('approved plan is locked with the banner', pg.locator('[data-lock-banner]:visible').count() >= 1 and 'Click any field to change it' in pg.inner_text('[data-lock-banner]:visible >> nth=0'))
+    pg.locator('input[name=location]').click(); pg.wait_for_timeout(400)
+    R.check('clicking a field asks to amend', pg.locator('[data-testid=amend-dialog]').count() == 1 and 'withdraws the flight authorisation' in pg.inner_text('[data-testid=amend-dialog]'))
+    pg.click('[data-amend-cancel]'); pg.wait_for_timeout(300)
+    R.check('Keep it locked: still approved, nothing changed', pg.locator('[data-testid=amend-dialog]').count() == 0 and pg.locator('[data-lock-banner]:visible').count() >= 1)
+    pg.locator('input[name=location]').click(); pg.wait_for_timeout(300)
+    pg.click('[data-amend-ok]'); pg.wait_for_timeout(300)
+    R.check('a reason is required', pg.locator('[data-amend-err]').count() == 1)
+    pg.locator('[data-amend-reason]').type('Launch site moved 50 m west'); pg.wait_for_timeout(100)
+    R.check('typing the reason keeps focus (whole sentence typed)', pg.input_value('[data-amend-reason]') == 'Launch site moved 50 m west')
+    pg.click('[data-amend-ok]'); pg.wait_for_timeout(700)
+    R.check('Amend and edit: unlocked, reminder shown', pg.locator('[data-testid=amend-dialog]').count() == 0 and pg.locator('[data-lock-banner]:visible').count() == 0 and pg.locator('[data-amended-banner]:visible').count() >= 1 and 'Launch site moved 50 m west' in pg.inner_text('[data-amended-banner]:visible >> nth=0'))
+    pg.fill('input[name=location]', 'Roma Street Parkland (west lawn)'); pg.wait_for_timeout(200)
+    R.check('the field is now editable', pg.input_value('input[name=location]') == 'Roma Street Parkland (west lawn)')
+    pg.evaluate(JS_INC, 'Save Draft'); pg.wait_for_timeout(1000)
+    d = get_db(pg); dr = (d.get('draftPlans') or [{}])[0]; ap = dr.get('approval', {})
+    R.check('approval and signatures withdrawn; amendment recorded with the reason', ap.get('flightAuthApproved') is False and not ap.get('crpSigned') and not ap.get('rpSigned') and (ap.get('amendLog') or [{}])[-1].get('reason') == 'Launch site moved 50 m west', ap)
+    R.check('no page errors (CRP)', not errs, errs[:3])
+    pg.context.close()
+    # the banner's Amend plan button opens the same dialog
+    pg, errs, dl = open_plan(b, 'crp')
+    pg.locator('[data-amend]:visible').first.click(); pg.wait_for_timeout(300)
+    R.check('Amend plan button opens the same dialog', pg.locator('[data-testid=amend-dialog]').count() == 1)
+    pg.context.close()
+    # a pilot on a company job: the pop-up offers to suggest changes; saving sends them to the CRP, the approved plan stays
+    JOB = {'id': 'jobs-a', 'plan_uid': 'uid-a', 'title': 'Garden Lights', 'status': 'approved', 'start_date': '2026-11-20', 'plan': PLAN}
+    pg, errs, dl = ctx_for(b, 'pilot', {'jobs': [JOB], 'plan_comments': []}, extra="window.__META={invited_by:'Michael Rubio',welcomed_at:'x'};")
+    pg.goto(URL); pg.wait_for_timeout(4500)
+    pg.evaluate("(p)=>window.dispatchEvent(new CustomEvent('wd-load-cloud-job',{detail:{job:{id:'jobs-a',uid:'uid-a',title:'Garden Lights',status:'approved'},plan:p}}))", PLAN); pg.wait_for_timeout(2000)
+    pg.evaluate(JS_INC, 'Preliminary'); pg.wait_for_timeout(600)
+    R.check('pilot sees the approved plan locked, with "Suggest changes"', pg.locator('[data-lock-banner]:visible').count() >= 1 and 'Click any field to suggest a change' in pg.inner_text('[data-lock-banner]:visible >> nth=0'))
+    pg.locator('input[name=location]').click(); pg.wait_for_timeout(400)
+    R.check('pilot clicking a field gets the suggest pop-up', pg.get_attribute('[data-testid=amend-dialog]', 'data-amend-mode') == 'suggest' and 'only the Chief Remote Pilot can change it' in pg.inner_text('[data-testid=amend-dialog]'))
+    pg.locator('[data-amend-reason]').type('West lawn is drier'); pg.click('[data-amend-ok]'); pg.wait_for_timeout(700)
+    R.check('pilot can now edit; banner says it is a suggestion', pg.locator('[data-amended-banner=suggest]:visible').count() >= 1)
+    pg.fill('input[name=location]', 'Roma Street Parkland (west lawn)'); pg.wait_for_timeout(200)
+    pg.evaluate(JS_INC, 'Save Draft'); pg.wait_for_timeout(2500)
+    cm = pg.evaluate('window.__T.plan_comments')
+    R.check('saving sends the change as a suggestion, with the reason', any(c.get('kind') == 'suggestion' and (c.get('suggestion') or {}).get('path') == 'overview.location' for c in cm) and any('West lawn is drier' in (c.get('body') or '') for c in cm) and not any('approv' in str((c.get('suggestion') or {}).get('path', '')).lower() for c in cm), cm)
+    R.check("the pilot's copy is back to the approved plan, locked", pg.input_value('input[name=location]') == 'Roma Street Parkland' and pg.locator('[data-lock-banner]:visible').count() >= 1)
+    R.check('no page errors (pilot)', not errs, errs[:3])
+    pg.context.close()
+    b.close()
+R.done()
