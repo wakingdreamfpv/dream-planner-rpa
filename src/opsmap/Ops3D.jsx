@@ -2,7 +2,10 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint } from './geo.js';
+import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
+// v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
+// with the site plan overlay blended on top; paths are clean lines with a start flag instead of a label on every point.
 
 let threeP = null;
 const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
@@ -27,7 +30,7 @@ export default function Ops3D({ doc, checks, apiRef, camRef: camProp }) {
     <div className="absolute inset-0 bg-slate-200" data-ops-3d="1">
       <div ref={host} className="absolute inset-0"></div>
       {err && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-700 p-6 text-center">{err}</div>}
-      <div className="absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg px-3 py-2 text-[11px] text-slate-700 max-w-[260px]" data-ops-noprint="1">Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.</div>
+      <div className="absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg px-3 py-2 text-[11px] text-slate-700 max-w-[260px]" data-ops-noprint="1">Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.<span data-ops-3d-ground="1" className="block mt-1 text-slate-500"></span></div>
     </div>
   );
 }
@@ -72,15 +75,55 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
   const maxAlt = Math.max(5, ...doc.paths.flatMap((p) => p.pts.map((q) => Number(q[2]) || 0)), ...doc.zones.map((z) => (Number(z.ground) || 0) + (Number(z.h) || 0)).filter((x) => x < 200));
   const lblScale = span / 22;
 
-  // ground: the plan overlay, else a grid
+  // ground: the plan overlay, else a grid (outdoors this is replaced by the satellite / terrain ground once it loads)
+  let flatOverlay = null;
   if (doc.overlay && doc.overlay.src) {
     const o = doc.overlay, c = P(o.center);
     const tex = keep(new THREE.TextureLoader().load(o.src)); tex.minFilter = THREE.LinearFilter;
     const g = keep(new THREE.PlaneGeometry(o.widthM, o.widthM * (o.aspect || 1)));
     const m = keep(new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: Math.max(0.5, (o.opacity == null ? 60 : o.opacity) / 100) }));
-    const mesh = new THREE.Mesh(g, m); mesh.rotation.x = -Math.PI / 2; mesh.rotation.z = -((o.rot || 0) * Math.PI) / 180; mesh.position.set(c.x, -0.02, c.z); scene.add(mesh);
+    const mesh = new THREE.Mesh(g, m); mesh.rotation.x = -Math.PI / 2; mesh.rotation.z = -((o.rot || 0) * Math.PI) / 180; mesh.position.set(c.x, -0.02, c.z); scene.add(mesh); flatOverlay = mesh;
   }
   const grid = new THREE.GridHelper(span * 1.6, 32, 0x94a3b8, 0xcbd5e1); grid.position.set(cx, -0.05, cz); scene.add(grid);
+  let alive = true;
+  const groundNote = (t) => { const n = el.parentNode && el.parentNode.querySelector('[data-ops-3d-ground]'); if (n) n.textContent = t; };
+  if (doc.mode !== 'plan') (async () => {
+    const half = span * 0.8, N = 48;
+    const corner = (dx, dz) => prj.from({ x: cx + dx, y: -(cz + dz) });
+    const sw = corner(-half, half), ne = corner(half, -half); // [lat, lng]
+    const [sat, terr] = await Promise.all([
+      satelliteCanvas([sw[0], sw[1], ne[0], ne[1]]).catch(() => null),
+      (async () => { const lls = [], rp = (doc.terrain && doc.terrain.ref) || terrainRefPoint(doc); for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) lls.push(corner(-half + (2 * half * i) / N, -half + (2 * half * j) / N));
+        const r = await elevations(rp ? [rp, ...lls] : lls); const ref = rp ? r.elev[0] : Math.min(...r.elev); return { h: (rp ? r.elev.slice(1) : r.elev).map((e) => e - ref), src: r.src }; })().catch(() => null),
+    ]);
+    if (!alive || (!sat && !terr && !(doc.overlay && doc.overlay.src))) { groundNote('Satellite and terrain need an internet connection.'); return; }
+    // texture: the satellite picture (or plain), with the plan overlay blended in at its place, size and turn
+    const z = sat ? sat.z : 19, x0 = sat ? sat.x0 : lngToX(sw[1], 19) * 256, y0 = sat ? sat.y0 : latToY(ne[0], 19) * 256;
+    let canvas = sat && sat.canvas;
+    if (!canvas) { canvas = document.createElement('canvas'); const w = lngToX(ne[1], z) * 256 - x0, h = latToY(sw[0], z) * 256 - y0; const k = Math.min(1, 2048 / Math.max(w, h)); canvas.width = Math.max(2, w * k); canvas.height = Math.max(2, h * k); const g = canvas.getContext('2d'); g.fillStyle = '#e2e8f0'; g.fillRect(0, 0, canvas.width, canvas.height); canvas._k = k; }
+    const kpx = canvas._k || 1, toPx = (ll) => ({ x: (lngToX(ll[1], z) * 256 - x0) * kpx, y: (latToY(ll[0], z) * 256 - y0) * kpx });
+    if (doc.overlay && doc.overlay.src) {
+      try {
+        const o = doc.overlay, img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = o.src; });
+        const c0 = toPx(o.center), mpp = (156543.03392 * Math.cos((o.center[0] * Math.PI) / 180)) / 2 ** z / kpx;
+        const wpx = o.widthM / mpp, hpx = wpx * (o.aspect || 1), g = canvas.getContext('2d');
+        g.save(); g.globalAlpha = (o.opacity == null ? 60 : o.opacity) / 100; g.translate(c0.x, c0.y); g.rotate(((o.rot || 0) * Math.PI) / 180); g.drawImage(img, -wpx / 2, -hpx / 2, wpx, hpx); g.restore();
+      } catch (e) { /* the overlay stays as the flat plane */ }
+    }
+    if (!alive) return;
+    const tex = keep(new THREE.CanvasTexture(canvas)); tex.minFilter = THREE.LinearFilter;
+    const pos = [], uv = [], idx = [];
+    for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+      const dx = -half + (2 * half * i) / N, dz = -half + (2 * half * j) / N, ll = corner(dx, dz), q = toPx(ll);
+      pos.push(cx + dx, terr ? terr.h[j * (N + 1) + i] - 0.05 : -0.03, cz + dz); uv.push(q.x / canvas.width, 1 - q.y / canvas.height);
+    }
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const a = j * (N + 1) + i, b = a + 1, c = a + N + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
+    const geo = keep(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, keep(new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })));
+    scene.add(mesh); grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
+    groundNote((sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).'));
+    req();
+  })();
 
   // zones
   const shapeOf = (z) => {
@@ -115,11 +158,15 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
       const tube = keep(new THREE.TubeGeometry(new THREE.LineCurve3(V[i], V[i + 1]), 1, rad, 8, false));
       scene.add(new THREE.Mesh(tube, keep(new THREE.MeshLambertMaterial({ color: STATUS[st] }))));
     }
-    V.forEach((v, i) => {
-      const s = new THREE.Mesh(keep(new THREE.SphereGeometry(rad * 2.6, 16, 12)), keep(new THREE.MeshLambertMaterial({ color: 0xffffff }))); s.position.copy(v); scene.add(s);
-      const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, 0, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); scene.add(drop);
-      const sp = label(THREE, (i + 1) + ' · ' + (Math.round((Number(path.pts[i][2]) || 0) * 10) / 10) + ' m', { size: 24 }); sp.scale.set(0.034 * sp.userData.aspect, 0.034, 1); sp.position.set(v.x, v.y + lblScale * 0.22, v.z); scene.add(sp); disposables.push(sp.material.map, sp.material);
-    });
+    if (V.length) {
+      [0, V.length - 1].filter((i, k, a) => a.indexOf(i) === k).forEach((i) => {
+        const v = V[i], gy = path.pts[i][3] != null ? Number(path.pts[i][3]) : 0;
+        const s = new THREE.Mesh(keep(new THREE.SphereGeometry(rad * 2.6, 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); scene.add(s);
+        const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, gy, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); scene.add(drop);
+      });
+      const t = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
+      const sp = label(THREE, t, { size: 24 }); sp.scale.set(0.032 * sp.userData.aspect, 0.032, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
+    }
   });
 
   // points
@@ -175,6 +222,6 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
-    disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
+    alive = false; disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }

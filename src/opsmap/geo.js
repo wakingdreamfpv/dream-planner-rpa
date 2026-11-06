@@ -7,6 +7,8 @@ export const KINDS = {
   oonp: { label: 'Over people (direct)', short: 'OVER PEOPLE', color: '#16a34a', stroke: '#15803d', fill: 0.2, limits: true },
   near: { label: 'Near people', short: 'NEAR PEOPLE', color: '#f59e0b', stroke: '#b45309', fill: 0.18, limits: true },
   clear: { label: 'Clear of people', short: 'CLEAR', color: '#b9a6f2', stroke: '#7c5fd6', fill: 0.4 },
+  // v7.27: a bridge or raised deck. Paths that follow the ground ride over it instead of dipping to the water below.
+  surface: { label: 'Bridge / raised surface', short: 'BRIDGE', color: '#94a3b8', stroke: '#334155', fill: 0.35 },
 };
 export const OONP_BLUE = { color: '#2563eb', stroke: '#1d4ed8' };
 export const kindStyle = (kind, settings) => {
@@ -130,6 +132,7 @@ export const zoneTag = (z, settings) => {
   if (L.h != null) parts.push('≤ ' + L.h + ' m');
   if (L.v != null) parts.push(fmtSpeed(L.v));
   if (z.kind === 'exclusion') { const b = zoneBuffer(z); parts.push(z.shielded ? 'shielded ' + b + ' m' : b + ' m buffer'); }
+  if (z.kind === 'surface') parts.push(z.deck === 'raised' ? 'deck ' + (Number(z.raise) || 0) + ' m above the ground' : 'deck level between its ends' + (Number(z.raise) ? ' +' + Number(z.raise) + ' m' : ''));
   return parts.join(' · ');
 };
 
@@ -143,7 +146,7 @@ export const pathLegs = (path) => {
 };
 export const checkOps = (m, keFor) => {
   const ref = refOf(m) || [0, 0], proj = makeProj(m.mode, ref);
-  const zones = (m.zones || []).map((z) => ({ z, l: zoneLocal(z, proj), lim: zoneLimits(z), buf: zoneBuffer(z) }))
+  const zones = (m.zones || []).filter((z) => z.kind !== 'surface').map((z) => ({ z, l: zoneLocal(z, proj), lim: zoneLimits(z), buf: zoneBuffer(z) }))
     .filter((q) => q.l.circle ? q.l.r > 0 : q.l.poly.length > 2);
   const flyZones = zones.filter((q) => q.z.kind !== 'exclusion');
   const out = { paths: {}, issues: [], counts: { stop: 0, warn: 0 } };
@@ -160,7 +163,13 @@ export const checkOps = (m, keFor) => {
       for (let s = 0; s <= n; s++) {
         const t = s / n, p = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
         const alt = (Number(A[2]) || 0) + t * ((Number(B[2]) || 0) - (Number(A[2]) || 0));
-        let ceil = null, ground = 0, inFly = false, inExcl = false;
+        // v7.27: a path that follows the ground carries the ground height (m above take-off) as each point's 4th value
+        const terr = A[3] != null && B[3] != null ? Number(A[3]) + t * (Number(B[3]) - Number(A[3])) : null;
+        let ceil = null, ground = terr != null ? terr : 0, inFly = false, inExcl = false;
+        if (terr != null && path.follow) {
+          const agl = alt - terr, lo = path.aglMin != null ? Number(path.aglMin) : 1, hi = path.aglMax != null ? Number(path.aglMax) : 5;
+          if (agl < lo - 0.05 || agl > hi + 0.05) add('warn', 'band', 'is ' + agl.toFixed(1) + ' m above the ground (planned ' + lo + '–' + hi + ' m)');
+        }
         zones.forEach(({ z, l, lim, buf }) => {
           const d = zoneDistance(p, l);
           if (z.kind === 'exclusion') {
@@ -170,7 +179,7 @@ export const checkOps = (m, keFor) => {
           }
           if (d > 0) return;
           inFly = true;
-          const g = Number(z.ground) || 0; ground = Math.max(ground, g);
+          const g = terr != null ? terr : Number(z.ground) || 0; ground = Math.max(ground, g);
           const agl = alt - g;
           if (lim.h != null) { ceil = ceil == null ? g + lim.h : Math.min(ceil, g + lim.h); if (agl > lim.h + 0.01) add('stop', 'h' + z.id, 'is ' + agl.toFixed(1) + ' m above ground in "' + (z.name || KINDS[z.kind].label) + '" (limit ' + lim.h + ' m)'); }
           if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + fmtSpeed(speed) + ' is over ' + fmtSpeed(lim.v) + ' in "' + (z.name || KINDS[z.kind].label) + '"');
@@ -222,8 +231,9 @@ export const opsSummary = (m, chk) => {
 // what goes into the RPIC / CRP signature fingerprint: everything except the overlay picture itself
 export const opsSignable = (m) => {
   if (!hasOpsContent(m)) return undefined;
-  const { overlay, ...rest } = m;
-  return { ...rest, overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
+  const { overlay, terrain, ...rest } = m;
+  // v7.27: when the ground was last checked doesn't change what was signed; the heights themselves are in the paths
+  return { ...rest, paths: (rest.paths || []).map(({ followKey: fk, terrainSrc: ts, followErr: fe, ...p }) => p), overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
 };
 
 // ── v7.12: freehand flight paths ──
@@ -263,3 +273,51 @@ export const smoothStroke = (pts, level = 2, maxPts = 60) => {
   let e = tol / 5; while (p.length > maxPts && e < 200) { e *= 1.5; p = rdp(p, e); }
   return p;
 };
+
+// ── v7.27: following the ground ──
+// Points every `step` metres along the path (the drawn corners are kept), so the height can follow the terrain.
+export const densify = (pts, proj, step = 5) => {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const A = pts[i]; out.push([A[0], A[1], A[2]]);
+    if (i === pts.length - 1) break;
+    const B = pts[i + 1], a = proj.to(A), b = proj.to(B), len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.floor(len / step);
+    for (let k = 1; k < n; k++) { if (len - (k * len) / n < step * 0.5) break; const t = k / n; const ll = proj.from({ x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }); out.push([ll[0], ll[1], A[2]]); }
+  }
+  return out;
+};
+// the bridges / raised surfaces in local metres, for followGround
+export const surfacesOf = (m, proj) => (m.zones || []).filter((z) => z.kind === 'surface').map((z) => ({ id: z.id, l: zoneLocal(z, proj), mode: z.deck === 'raised' ? 'raised' : 'ends', raise: Number(z.raise) || 0 }))
+  .filter((s) => (s.l.circle ? s.l.r > 0 : s.l.poly.length > 2));
+// Heights for a path that keeps `agl` metres above the ground. elev: ground (m above sea level) at each point; ref: at
+// the take-off. Over a bridge the deck runs level from one end to the other (plus any extra), or sits `raise` metres
+// above the ground below. Returns points as [lat, lng, height above take-off, ground above take-off].
+export const followGround = (pts, elev, ref, agl, surfaces, proj) => {
+  const n = pts.length; if (!n) return [];
+  const xy = pts.map((q) => proj.to(q));
+  const dist = [0]; for (let i = 1; i < n; i++) dist.push(dist[i - 1] + Math.hypot(xy[i].x - xy[i - 1].x, xy[i].y - xy[i - 1].y));
+  // light smoothing: terrain data comes in steps
+  const raw = elev.map((e) => e - ref);
+  let g = raw.map((v, i) => { const a = raw[Math.max(0, i - 1)], c = raw[Math.min(n - 1, i + 1)]; return (a + 2 * v + c) / 4; });
+  const on = xy.map((p) => surfaces.find((s) => zoneDistance(p, s.l) === 0) || null);
+  for (let i = 0; i < n;) {
+    const s = on[i]; if (!s) { i++; continue; }
+    let j = i; while (j + 1 < n && on[j + 1] === s) j++;
+    if (s.mode === 'raised') for (let k = i; k <= j; k++) g[k] += s.raise;
+    else {
+      const ia = i > 0 ? i - 1 : i, ib = j < n - 1 ? j + 1 : j, a = g[ia], b = g[ib], span = dist[ib] - dist[ia] || 1;
+      for (let k = i; k <= j; k++) g[k] = a + ((dist[k] - dist[ia]) / span) * (b - a) + s.raise;
+    }
+    i = j + 1;
+  }
+  const r1 = (v) => Math.round(v * 10) / 10;
+  return pts.map((q, k) => [q[0], q[1], r1(g[k] + agl), r1(g[k])]);
+};
+// where heights are measured from: the first take-off (TLZ) marker, else the start of the first path
+export const terrainRefPoint = (m) => {
+  const t = (m.points || []).find((p) => p.kind === 'tlz'); if (t) return [t.lat, t.lng];
+  const p = (m.paths || []).find((q) => (q.pts || []).length); return p ? [p.pts[0][0], p.pts[0][1]] : null;
+};
+// what a ground-following path's heights depend on (when this changes, they're worked out again)
+export const followKey = (path, m) => JSON.stringify([Number(path.agl) || 0, (path.pts || []).map((q) => [Math.round(q[0] * 1e6), Math.round(q[1] * 1e6)]),
+  (m.zones || []).filter((z) => z.kind === 'surface').map((z) => [z.pts, z.c, z.r, z.deck, z.raise]), terrainRefPoint(m)]);

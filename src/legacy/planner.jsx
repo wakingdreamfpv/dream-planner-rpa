@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.25';
+        const APP_VERSION = '7.27';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5883,7 +5883,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const opsPrintData = !opsHas ? null : { mode: opsMap.mode,
               zones: [...(opsMap.zones || [])].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).filter(z => z.shape === 'circle' ? z.r > 0 : (z.pts || []).length > 2).map(z => { const k = opsKindStyle(z.kind, opsMap.settings);
                 return { shape: z.shape, pts: z.pts, c: z.c, r: z.r, color: k.color, stroke: k.stroke, fill: k.fill, dash: z.kind === 'near' ? '8 6' : null, name: esc(z.name || k.label), tag: esc(opsZoneTag(z, opsMap.settings)), buffer: opsZoneBuffer(z) }; }),
-              paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { pts: p.pts, legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
+              paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { tag: (p.name || 'Path') + (p.follow ? ' · ' + (Number(p.agl) || 0) + ' m above ground' : '') + (p.speed ? ' · ' + p.speed + ' m/s' : ''), pts: p.pts.map(q => [q[0], q[1], q[2]]), legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
               points: (opsMap.points || []).map(p => ({ kind: p.kind, lat: p.lat, lng: p.lng, title: p.title || '', text: p.text || '', size: p.size })),
               views: (opsMap.views || []).map(v => ({ kind: v.kind, title: v.title, bounds: v.bounds || null })),
               overlay: opsMap.overlay ? { src: opsMap.overlay.src, center: opsMap.overlay.center, widthM: opsMap.overlay.widthM, rot: opsMap.overlay.rot || 0, opacity: opsMap.overlay.opacity, aspect: opsMap.overlay.aspect } : null };
@@ -8007,6 +8007,15 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           // so the CRP has to re-approve (ops manual: changes after release mean the CRP re-authorises).
           const planLocked = !!approval.flightAuthApproved;
           const lockNoticeRef = useRef(0);
+          // v7.26: the CRP (or anyone using the planner on their own) can just start editing an approved plan: the planner
+          // asks first, explains it will need re-approval, takes a reason, then unlocks. Crew stay locked (they suggest changes).
+          const [amendAsk, setAmendAsk] = useState(null);
+          const amendTargetRef = useRef(null);
+          const canAmend = true; // v7.26: everyone gets the pop-up; crew on a company job get the "suggest changes" version
+          // (cloudJob is declared further down, so this is only called from handlers and the page itself, never while setting up)
+          const crewSuggestMode = () => !!(isCrewRole && cloudJob && cloudJob.uid === overview.uid);
+          const [crewSuggesting, setCrewSuggesting] = useState(false);
+          const crewNoteRef = useRef('');
           const lockGuard = (e) => {
             if (!planLocked) return;
             const t = e.target;
@@ -8017,6 +8026,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               if (!editable || ['Tab', 'Shift', 'Escape', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(k) && t.tagName !== 'SELECT') return;
             }
             e.preventDefault(); e.stopPropagation();
+            const wantsEdit = t && ((/^(INPUT|TEXTAREA|SELECT|BUTTON|LABEL)$/.test(t.tagName) || t.isContentEditable) || (t.closest && t.closest('button, label, [role=button]')));
+            if (canAmend && wantsEdit && (e.type === 'click' || e.type === 'keydown' || e.type === 'paste' || e.type === 'drop')) {
+              if (!amendAsk) { amendTargetRef.current = t; setAmendAsk({ reason: '' }); }
+              return;
+            }
             if (e.type !== 'keydown' && Date.now() - lockNoticeRef.current > 4000) {
               lockNoticeRef.current = Date.now();
               const el = document.querySelector('[data-lock-banner]:not(.hidden)');
@@ -8024,21 +8038,78 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
           };
           const lockProps = { 'data-locked': planLocked ? '1' : '0', onClickCapture: lockGuard, onMouseDownCapture: lockGuard, onKeyDownCapture: lockGuard, onPasteCapture: lockGuard, onDropCapture: lockGuard, onDragStartCapture: lockGuard };
-          const amendPlan = () => {
-            const by = approval.crpName || 'the CRP';
-            const reason = window.prompt(`Amend this approved plan?\n\nThis withdraws the flight authorisation and clears the CRP and RPIC signatures. ${by} must re-approve before flight.\n\nReason for the amendment (kept in the plan's record):`, '');
-            if (reason === null) return;
+          const doAmend = (reason) => {
             setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null, rpRemote: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: (reason || '').trim(), approvedAt: prev.approvedAt || '' }] }));
+            setDirty(true);
           };
-          const LockBanner = ({ section }) => !planLocked ? null : (
+          const amendPlan = () => { amendTargetRef.current = null; setAmendAsk({ reason: '' }); };
+          const confirmAmend = () => {
+            const r = String((amendAsk && amendAsk.reason) || '').trim(), sug = crewSuggestMode();
+            if (!r && !sug) { setAmendAsk({ ...amendAsk, err: true }); return; }
+            const t = amendTargetRef.current;
+            if (sug) { crewNoteRef.current = r; setCrewSuggesting(true); setApproval(prev => ({ ...prev, flightAuthApproved: false })); } // only this person's copy
+            else doAmend(r);
+            setAmendAsk(null);
+            // back to the field they clicked, now editable
+            setTimeout(() => { try { if (t && t.isConnected) { if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) t.focus(); else t.click(); } } catch (e) { /* ok */ } }, 150);
+          };
+          const AmendDialog = () => !amendAsk ? null : crewSuggestMode() ? (
+            <div className="fixed inset-0 z-[6000] bg-slate-900/50 flex items-start sm:items-center justify-center p-3 print:hidden" data-testid="amend-dialog" data-amend-mode="suggest" data-allow-locked="1" onClick={(e) => { if (e.target === e.currentTarget) setAmendAsk(null); }}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden mt-10 sm:mt-0">
+                <div className="px-5 py-3 bg-violet-50 border-b border-violet-200 flex items-center gap-2"><i className="fa-solid fa-comment-dots text-violet-700"></i><h3 className="font-bold text-violet-900 flex-1">Suggest changes to an approved plan?</h3></div>
+                <div className="p-5 space-y-3 text-sm text-slate-700">
+                  <p>This plan is approved{approval.crpName ? ' by ' + approval.crpName : ''}, so only the Chief Remote Pilot can change it.</p>
+                  <p>You can edit it here. <b>When you save, your changes go to {(approval.crpName || 'the CRP').split(' ')[0]} as suggestions</b> to accept or decline; the approved plan stays as it is until then, and accepted changes mean it is re-approved before flight.</p>
+                  <label className="block text-xs font-semibold text-slate-600">What would you change, and why? (optional, sent with your suggestions)
+                    <textarea autoFocus rows={3} value={amendAsk.reason} onChange={(e) => setAmendAsk({ reason: e.target.value })} data-amend-reason="1" placeholder="e.g. The launch site is flooded, the west lawn is dry" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" /></label>
+                  <div className="flex gap-2 justify-end pt-1">
+                    <button type="button" data-allow-locked="1" data-amend-cancel="1" onClick={() => setAmendAsk(null)} className="px-3 py-2 rounded-lg border border-slate-300 text-sm">Cancel</button>
+                    <button type="button" data-allow-locked="1" data-amend-ok="1" onClick={confirmAmend} className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold">Suggest changes</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="fixed inset-0 z-[6000] bg-slate-900/50 flex items-start sm:items-center justify-center p-3 print:hidden" data-testid="amend-dialog" data-allow-locked="1" onClick={(e) => { if (e.target === e.currentTarget) setAmendAsk(null); }}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden mt-10 sm:mt-0">
+                <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex items-center gap-2"><i className="fa-solid fa-pen-to-square text-amber-700"></i><h3 className="font-bold text-amber-900 flex-1">Change an approved plan?</h3></div>
+                <div className="p-5 space-y-3 text-sm text-slate-700">
+                  <p>This plan was approved for flight{approval.crpName ? ' by ' + approval.crpName : ''}{approval.approvedAt ? ' on ' + new Date(approval.approvedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''}.</p>
+                  <p><b>Changing it withdraws the flight authorisation and clears the CRP and RPIC signatures.</b> It must be re-approved{approval.rpName ? ' and signed again by ' + approval.rpName : ' and re-signed by the RPIC'} before flight. The approved version stays on record{IS_HOSTED && signedIn ? ' as a locked copy' : ''}.</p>
+                  <label className="block text-xs font-semibold text-slate-600">What's changing, and why? (kept in the plan's record of amendments)
+                    <textarea autoFocus rows={3} value={amendAsk.reason} onChange={(e) => setAmendAsk({ reason: e.target.value })} data-amend-reason="1" placeholder="e.g. Launch site moved 50 m west after the site walk" className={`mt-1 w-full px-3 py-2 border rounded-lg text-sm ${amendAsk.err ? 'border-rose-400' : 'border-slate-300'}`} /></label>
+                  {amendAsk.err && <div className="text-xs text-rose-700" data-amend-err="1">Say what's changing so the record shows why it was re-approved.</div>}
+                  <div className="flex gap-2 justify-end pt-1">
+                    <button type="button" data-allow-locked="1" data-amend-cancel="1" onClick={() => setAmendAsk(null)} className="px-3 py-2 rounded-lg border border-slate-300 text-sm">Keep it locked</button>
+                    <button type="button" data-allow-locked="1" data-amend-ok="1" onClick={confirmAmend} className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold">Amend and edit</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+          // after an amendment, until it's re-approved: a reminder on each section
+          const lastAmend = (approval.amendLog || [])[(approval.amendLog || []).length - 1];
+          const AmendedBanner = () => (!planLocked && crewSuggesting) ? (
+            <div data-amended-banner="suggest" className="mx-6 mt-5 mb-1 border border-violet-300 bg-violet-50 rounded-xl px-4 py-2.5 text-sm text-violet-900 flex items-center gap-2 flex-wrap print:hidden">
+              <i className="fa-solid fa-comment-dots text-violet-600"></i>
+              <span className="flex-1 min-w-[14rem]"><b>Suggesting changes to the approved plan.</b> Save when you're done: your changes go to {(approval.crpName || 'the CRP').split(' ')[0]} to accept or decline. The approved plan hasn't changed.</span>
+            </div>
+          ) : (planLocked || !lastAmend || approval.flightAuthApproved) ? null : (
+            <div data-amended-banner="1" className="mx-6 mt-5 mb-1 border border-amber-300 bg-amber-50 rounded-xl px-4 py-2.5 text-sm text-amber-900 flex items-center gap-2 flex-wrap print:hidden">
+              <i className="fa-solid fa-triangle-exclamation text-amber-600"></i>
+              <span className="flex-1 min-w-[14rem]"><b>Amended {new Date(lastAmend.at).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}, not yet re-approved.</b>{lastAmend.reason ? ' ' + lastAmend.reason + '.' : ''} Re-approve in Authorisation before flight.</span>
+              <button type="button" data-allow-locked="1" onClick={() => setActiveTab('approval')} className="text-xs font-bold underline">Go to Authorisation</button>
+            </div>
+          );
+          const LockBanner = ({ section }) => !planLocked ? <AmendedBanner /> : (
             <div data-lock-banner="1" data-allow-locked="1" className="mx-6 mt-5 mb-1 border border-emerald-300 bg-emerald-50 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap print:hidden transition-shadow">
               <i className="fa-solid fa-lock text-emerald-700"></i>
               <div className="flex-1 min-w-[16rem] text-sm text-emerald-900">
                 <b>Approved for flight{approval.crpName ? ' by ' + approval.crpName : ''}{approval.approvedAt ? ' on ' + new Date(approval.approvedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}.</b> {section} is locked.
-                <span className="text-emerald-800"> To change anything in Sections 1–3, amend the plan: approval and signatures are withdrawn and the CRP re-approves. The post-flight log (Section 4) stays open.</span>
+                <span className="text-emerald-800"> {crewSuggestMode() ? 'Only the CRP can change an approved plan. Click any field to suggest a change: your edits go to them when you save.' : 'Click any field to change it: the planner asks you to confirm, because approval and signatures are withdrawn and it must be re-approved.'} The post-flight log (Section 4) stays open.</span>
               </div>
-              <button type="button" data-allow-locked="1" data-amend="1" onClick={amendPlan} className="bg-white border border-emerald-400 text-emerald-800 hover:bg-emerald-100 px-3 py-1.5 rounded-md text-xs font-bold"><i className="fa-solid fa-pen-to-square mr-1"></i>Amend plan</button>
+              <button type="button" data-allow-locked="1" data-amend="1" onClick={amendPlan} className="bg-white border border-emerald-400 text-emerald-800 hover:bg-emerald-100 px-3 py-1.5 rounded-md text-xs font-bold"><i className={`fa-solid ${crewSuggestMode() ? 'fa-comment-dots' : 'fa-pen-to-square'} mr-1`}></i>{crewSuggestMode() ? 'Suggest changes' : 'Amend plan'}</button>
             </div>
           );
 
@@ -10173,6 +10244,7 @@ View in the Database & Settings tab.`);
             const name = auth.name || auth.email || 'Crew';
             const rows = sug.map(d => ({ job_id: row.id, section: d.section, kind: 'suggestion', suggestion: d.suggestion, author_name: name,
               body: d.suggestion.kind === 'new_risk' ? 'Suggested new risk: ' + d.suggestion.risk.hazard : 'Suggested change to ' + d.suggestion.label + ': “' + String(d.suggestion.from).slice(0, 200) + '” → “' + String(d.suggestion.to).slice(0, 400) + '”' }));
+            if (crewNoteRef.current) rows.unshift({ job_id: row.id, section: 'general', kind: 'comment', author_name: name, body: 'Why I\'m suggesting these changes: ' + crewNoteRef.current });
             if (free.length) rows.push({ job_id: row.id, section: free.length === 1 ? free[0].section : 'general', kind: 'suggestion', suggestion: { free: true }, author_name: name,
               body: 'I also changed: ' + [...new Set(free.map(f => f.free))].join('; ') + '. These can\'t be applied automatically; ask me what I changed or reply here.' });
             const { error: e2 } = await sb.from('plan_comments').insert(rows);
@@ -10180,6 +10252,7 @@ View in the Database & Settings tab.`);
             try { await sb.functions.invoke('notify', { body: { event: 'plan_suggestions', job_id: row.id, count: rows.length } }); } catch (e) { /* the CRP still sees them on Home */ }
             // back to the company version (keeping this person's flight log), then save that on this device
             handleLoadPlan({ ...row.plan, log: local.log, title: row.title, status: 'draft' }, { silent: true }); takeCrewBase(row.id);
+            crewNoteRef.current = ''; setCrewSuggesting(false);
             setTimeout(() => handleSaveDraftPlan({ quiet: true, noCrewHook: true }), 300);
             setTimeout(() => alert(`Sent to ${crpFirst}: ${rows.length} suggested change${rows.length === 1 ? '' : 's'}.\n\nYou'll see ${rows.length === 1 ? 'it' : 'them'} in Comments on this job, with ${crpFirst}'s decision. The plan shows the current version until ${rows.length === 1 ? 'it is' : 'they are'} accepted.`), 400);
             return 'handled';
@@ -10719,6 +10792,7 @@ View in the Database & Settings tab.`);
                   </div>
                 );
               })()}
+              {AmendDialog()}
               {showRoleWelcome && (() => {
                 // v7.22: one welcome card: who invited them and to which company, an optional password, and their next step
                 const done = () => {
