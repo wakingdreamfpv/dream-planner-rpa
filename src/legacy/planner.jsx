@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.23';
+        const APP_VERSION = '7.24';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9250,21 +9250,29 @@ View in the Database & Settings tab.`);
             
             setIsFetchingElevation(true);
             try {
-                const res = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lng}`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                if (data && data.results && data.results.length > 0) {
-                    const elevationMeters = data.results[0].elevation;
+                // v7.23: Open-Meteo first (reliable, free, no key), Open-Elevation as the backup; one service being down
+                // (HTTP 503) no longer stops the calculation. Each try gives up after 8 seconds.
+                const tryGet = async (url, pick) => {
+                  const ac = typeof AbortController !== 'undefined' ? new AbortController() : null; const tm = ac ? setTimeout(() => ac.abort(), 8000) : null;
+                  try { const r = await fetch(url, ac ? { signal: ac.signal } : {}); if (!r.ok) throw new Error('HTTP ' + r.status); const v = pick(await r.json()); if (typeof v !== 'number' || !isFinite(v)) throw new Error('no elevation in the answer'); return v; }
+                  finally { if (tm) clearTimeout(tm); }
+                };
+                const tried = []; let elevationMeters = null, srcName = '';
+                for (const [name, url, pick] of [
+                  ['Open-Meteo', `https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lng}`, d => d && d.elevation && d.elevation[0]],
+                  ['Open-Elevation', `https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lng}`, d => d && d.results && d.results[0] && d.results[0].elevation]]) {
+                  try { elevationMeters = await tryGet(url, pick); srcName = name; break; } catch (e) { tried.push(name + ': ' + (e.name === 'AbortError' ? 'no answer in 8 s' : e.message)); }
+                }
+                if (elevationMeters == null) throw new Error(tried.join('; '));
+                {
                     const elevationFt = Math.round(elevationMeters * 3.28084);
                     const amsl = elevationFt + Math.round(agl);
                     setJsa(prev => ({...prev, suaMaxAltitudeAmsl: `${amsl}`, maxOperatingHeightAgl: prev.maxOperatingHeightAgl || String(agl)}));
                     // Show a brief tooltip-style note (non-blocking)
-                    console.info(`Elevation: ${elevationMeters}m (${elevationFt}ft) + ${agl}ft AGL = ${amsl}ft AMSL`);
-                } else {
-                    throw new Error("No elevation data returned.");
+                    console.info(`Elevation (${srcName}): ${elevationMeters}m (${elevationFt}ft) + ${agl}ft AGL = ${amsl}ft AMSL`);
                 }
             } catch (err) {
-                alert(`Could not fetch elevation data for ${lat.toFixed(4)}, ${lng.toFixed(4)}.\n\nPlease calculate manually: Terrain elevation (ft) + Max AGL height (ft) = AMSL.\n\nError: ${err.message}`);
+                alert(`Couldn't get the ground height for ${lat.toFixed(4)}, ${lng.toFixed(4)}: both elevation services are unavailable right now (${err.message}).\n\nTry again in a few minutes, or work it out by hand: ground elevation (ft) + max height (ft AGL) = ft AMSL.`);
             } finally {
                 setIsFetchingElevation(false);
             }

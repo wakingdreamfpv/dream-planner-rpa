@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.24 — 6 Nov 2026 — Calc AMSL keeps working when the elevation service is down
+- **Fixed: "Could not fetch elevation data … HTTP 503".** Calc AMSL used one free elevation service (Open-Elevation), which goes down from time to time. It now asks **Open-Meteo** first (free, no key, very reliable) and falls back to Open-Elevation, each with an 8-second limit. You only see a message if both are down, and it says so plainly, with the by-hand formula.
+- **Supabase:** nothing to do.
+- **Tests:** elevation checks added to the airspace suite (8 checks); everything else passes.
+
 ## v7.23 — 6 Nov 2026 — Migration 0011 fixed for the live database; clearer airspace check errors
 - **Fixed: migration 0011 stopped with "This sign-off is locked".** An early step filled in a new column on every sign-off, and the lock guard (rightly) refused to touch the ones already locked. The script now pauses the guard for just that one step, so it installs on a database that already has locked sign-offs. Nothing about those records changes, and they stay locked. The first failed run changed nothing, so just run the new file.
 - **Airspace check (OpenAIP) says what actually went wrong.** A wrong or expired Client ID used to show as "Failed to fetch", because the planner's retry got blocked by the browser. It now says "OpenAIP refused the Client ID" with where to copy it from. If OpenAIP can't be reached at all, it says so and suggests what to try (a blocker, VPN or work Wi-Fi, a private window, or a few minutes' wait).
