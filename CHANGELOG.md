@@ -1,5 +1,20 @@
 # Planner changelog
 
+## v7.27 — 6 Nov 2026 — Advanced map follows the ground, cleaner map and 3D satellite; live link on one page; amending approved plans
+- **Flight paths follow the ground.** A path's new **Height** setting has two choices:
+  - **Follow the ground** (now the default for new paths): set one height, e.g. 3 m, and keep it within 1–5 m. The planner adds a point every 5 m along the path and works out each one's height from free public terrain data, so the drone stays that far above the ground, rising and falling with it. No typing a height for every point. Change the path, the height or a bridge and the heights are worked out again. If the terrain data can't be reached, the path is flown level at that height and the panel says so.
+  - **Set each point**: works as before.
+  - Existing paths, like your Path A, stay as they were until you choose **Follow the ground**.
+- **Bridges:** new zone tool **Bridge / raised surface**. Draw it over a bridge and ground-following paths ride over the deck instead of dipping to the water below. For most bridges the deck runs level from the ground at one end to the other; for a stage, platform or boardwalk, set a height above the ground.
+- **Less clutter on the map:** no point numbers or "5 m" labels on every point. Each path gets one green start flag with its name and height ("Path A · 3 m above ground"); the selected path shows small handles to drag. **Show › Path point numbers** brings the numbers back when you want them. The PDF and the side-on profile are cleaned up the same way.
+- **3D on satellite:** outdoors, the 3D view's ground is now satellite imagery draped over the real terrain, with your site plan blended on top at its opacity. Paths and the ground share the same take-off height, so the path is seen hugging the ground. It needs the internet; it falls back to the flat view offline.
+- **Live link is one continuous page:** every section, one after another. The side menu (or the row of tabs on a phone) now jumps down the page and highlights the section you're reading.
+- **Changing an approved plan:**
+  - **You (the CRP):** click any field in an approved plan and a **"Change an approved plan?"** pop-up explains that the flight authorisation and the CRP and RPIC signatures are withdrawn and the plan must be re-approved. Give a reason (kept in the record of amendments) and you're editing straight away. An amber reminder shows on each section until it's re-approved.
+  - **Pilots and observers on a company job:** they get **"Suggest changes to an approved plan?"**. Their edits go to you as suggestions when they save, with their reason, and your approved plan doesn't change until you accept.
+- **Supabase:** nothing to do.
+- **Tests:** new suites for the advanced map (14 checks: ground following, bridges, offline fallback, no numbers, PDF flag, 3D satellite on terrain) and amending (16); live-link suite updated for the single page (35); everything else passes.
+
 ## v7.25 — 6 Nov 2026 — New risk template: night outdoor event with a mini-lifter and OONP Pathway 2
 - **New built-in risk template** under JSA & Risk › Risk assessment register › OONP Operations: **"OONP Pathway 2 — Night outdoor event (mini-lifter away from people + small drones with consent)"**. Written for jobs like the Enchanted Garden: a prop-guarded ~1.5 kg mini-lifter kept in closed or cleared areas and never within 30 m of the public, plus small drones near people under Pathway 2 (≤15 J near the public, up to 34 J with informed consent).
 - **16 risks:**

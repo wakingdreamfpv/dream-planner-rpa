@@ -6,7 +6,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   KINDS, POINT_KINDS, kindStyle, emptyOpsMap, makeProj, refOf, zoneTag, zoneBuffer, zoneArea, checkOps,
   presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent, smoothStroke, chaikin, rdp, toKph, fromKph, fmtSpeed, autoZoneLimit,
+  densify, surfacesOf, followGround, terrainRefPoint, followKey,
 } from './geo.js';
+import { elevations } from './terrain.js';
 import { loadPdfJs } from '../cloud/Manual.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -171,7 +173,13 @@ function Profile({ path, res, readOnly, onAlt, onPick, onStart, selPt }) {
       {ceilSegs.map((s, i) => <polyline key={i} points={s.join(' ')} fill="none" stroke="#16a34a" strokeWidth="2" strokeDasharray="7 5" />)}
       {ticks.map((t, i) => <g key={i}><line x1={X0} x2={X1} y1={Y(t)} y2={Y(t)} stroke="#e2e8f0" /><text x={X0 - 6} y={Y(t) + 4} textAnchor="end" fontSize="11" fill="#64748b">{t} m</text></g>)}
       {res.legs.map((l, i) => { const a = path.pts[i], b = path.pts[i + 1]; return <line key={i} x1={X(dists[i])} y1={Y(Number(a[2]) || 0)} x2={X(dists[i + 1])} y2={Y(Number(b[2]) || 0)} stroke={STATUS[l.status]} strokeWidth="3.5" strokeLinecap="round" />; })}
-      {(path.pts || []).map((p, i) => (
+      {/* v7.27: a ground-following path (or one with many points) shows its line over the ground, with distance marks,
+          not a numbered handle on every point */}
+      {(path.follow || (path.pts || []).length > 30) && (() => { const step = total > 2000 ? 500 : total > 800 ? 200 : total > 300 ? 100 : 50, out = [];
+        for (let d = 0; d <= total + 0.1; d += step) out.push(<text key={'d' + d} x={X(d)} y={H - 6} textAnchor="middle" fontSize="11" fill="#64748b">{Math.round(d)} m</text>); return out; })()}
+      {(path.follow || (path.pts || []).length > 30) && <><circle cx={X(0)} cy={Y(Number(path.pts[0][2]) || 0)} r="6" fill="#16a34a" stroke="#fff" strokeWidth="2" />
+        {selPt != null && path.pts[selPt] && <circle cx={X(dists[selPt])} cy={Y(Number(path.pts[selPt][2]) || 0)} r="7" fill="#ede9fe" stroke="#0f172a" strokeWidth="2.5" data-profile-sel="1" />}</>}
+      {!(path.follow || (path.pts || []).length > 30) && (path.pts || []).map((p, i) => (
         <g key={i} style={{ cursor: readOnly ? 'default' : 'ns-resize' }} data-profile-pt={i}
           onPointerDown={(e) => { e.preventDefault(); onPick(i); if (!readOnly) { if (onStart) onStart(); dragRef.current = i; try { svgRef.current.setPointerCapture(e.pointerId); } catch (er) {} } }}>
           <circle cx={X(dists[i])} cy={Y(Number(p[2]) || 0)} r="11" fill={selPt === i ? '#ede9fe' : '#ffffff'} stroke="#0f172a" strokeWidth="2.5" />
@@ -199,7 +207,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const [sel, setSel] = useState(null);
   const [selPt, setSelPt] = useState(null);
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -249,6 +257,41 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const setOverlay = (ch) => patch((d) => ({ ...d, overlay: d.overlay ? { ...d.overlay, ...ch } : d.overlay }));
 
   const checks = useMemo(() => (doc ? checkOps(doc, keFor) : null), [doc, keFor]);
+  // v7.27: paths that follow the ground: points every 5 m, each height = ground under it + the chosen height. Worked
+  // out again whenever the path, its height, a bridge or the take-off point changes (not added to undo history).
+  const [terrMsg, setTerrMsg] = useState({});
+  const inflight = useRef(new Set());
+  const followPath = async (pathId) => {
+    const d0 = docRef.current; const path = d0 && d0.paths.find((p) => p.id === pathId); if (!path || !path.follow || path.pts.length < 2) return;
+    inflight.current.add(pathId); setTerrMsg((m) => ({ ...m, [pathId]: { busy: true } }));
+    try {
+      const prj = makeProj(d0.mode, [path.pts[0][0], path.pts[0][1]]);
+      const dense = densify(path.pts, prj, 5), refPt = terrainRefPoint(d0) || [dense[0][0], dense[0][1]];
+      const { elev, src } = await elevations([refPt, ...dense.map((q) => [q[0], q[1]])]);
+      const out = followGround(dense, elev.slice(1), elev[0], Number(path.agl) || 0, surfacesOf(d0, prj), prj);
+      const cur = docRef.current, now = cur && cur.paths.find((p) => p.id === pathId); if (!now || !now.follow) return;
+      const g = out.map((q) => q[3]), np = { ...now, pts: out, terrainSrc: src, followErr: null };
+      np.followKey = followKey(np, cur);
+      const next = { ...cur, paths: cur.paths.map((p) => (p.id === pathId ? np : p)), terrain: { ref: refPt, refElev: Math.round(elev[0] * 10) / 10, src, at: new Date().toISOString() } };
+      docRef.current = next; setDoc(next); onChange && onChange(next);
+      setTerrMsg((m) => ({ ...m, [pathId]: { ok: true, src, rise: Math.round((Math.max(...g) - Math.min(...g)) * 10) / 10, n: out.length } }));
+    } catch (e) {
+      const cur = docRef.current, now = cur && cur.paths.find((p) => p.id === pathId);
+      if (now) { // can't reach terrain data: fly level at the chosen height, and say so
+        const flat = { ...now, pts: now.pts.map((q) => [q[0], q[1], Number(now.agl) || 0]), followErr: 'Ground heights could not be loaded (no internet, or the terrain service is down), so this path is level at ' + (Number(now.agl) || 0) + ' m above the take-off. Try Update ground heights when online.' };
+        flat.followKey = followKey(flat, cur);
+        const next = { ...cur, paths: cur.paths.map((p) => (p.id === pathId ? flat : p)) }; docRef.current = next; setDoc(next); onChange && onChange(next);
+      }
+      setTerrMsg((m) => ({ ...m, [pathId]: { err: true } }));
+    } finally { inflight.current.delete(pathId); }
+  };
+  useEffect(() => {
+    if (!doc || readOnly || doc.mode === 'plan') return;
+    const todo = doc.paths.filter((p) => p.follow && p.pts.length > 1 && !inflight.current.has(p.id) && p.followKey !== followKey(p, doc));
+    if (!todo.length) return;
+    const t = setTimeout(() => todo.forEach((p) => followPath(p.id)), 350);
+    return () => clearTimeout(t);
+  }, [doc, readOnly]); // eslint-disable-line
   // zones drawn before limits were filled in automatically get them now (once, when the map opens)
   const autoDone = useRef(false);
   useEffect(() => {
@@ -287,7 +330,8 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
       if (d.pts.length < 2) return;
       if (d.extend && cur.paths.some((p) => p.id === d.extend)) { commit({ ...cur, paths: cur.paths.map((p) => (p.id === d.extend ? { ...p, pts: d.pts } : p)) }); setSel({ t: 'path', id: d.extend }); setDraft(null); setTool('select'); return; }
       const n = cur.paths.length + 1;
-      const p = { id: uid(), name: 'Path ' + String.fromCharCode(64 + Math.min(26, n)), drone: drones[0] || '', speed: 5, pts: d.pts };
+      const p = { id: uid(), name: 'Path ' + String.fromCharCode(64 + Math.min(26, n)), drone: drones[0] || '', speed: 5, pts: d.pts,
+        ...(cur.mode !== 'plan' ? { follow: true, agl: settings.defaultAgl != null ? settings.defaultAgl : 3, aglMin: 1, aglMax: 5 } : {}) }; // v7.27
       commit({ ...cur, paths: [...cur.paths, p] }); setSel({ t: 'path', id: p.id }); setSelPt(null);
     }
     setDraft(null); setTool('select');
@@ -461,7 +505,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
     const prj = makeProj(docRef.current.mode, [path.pts[0][0], path.pts[0][1]]);
     let q = path.pts.map((p) => ({ ...prj.to(p), z: Number(p[2]) || 0 }));
     q = how === 'thin' ? rdp(q, 1.5) : rdp(chaikin(q, 1), 0.3);
-    setPath(path.id, { pts: q.map((v) => { const ll = prj.from(v); return [ll[0], ll[1], Math.round(v.z * 2) / 2]; }) });
+    setPath(path.id, { pts: q.map((v) => { const ll = prj.from(v); return [ll[0], ll[1], Math.round(v.z * 2) / 2]; }), followKey: null });
   };
 
   // ── draw everything ──
@@ -530,18 +574,27 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
     if (show.paths) doc.paths.forEach((path) => {
       const res = checks && checks.paths[path.id], on = path.id === selPath;
       path.pts.slice(0, -1).forEach((a, i) => {
-        const b = path.pts[i + 1], stt = res && res.legs[i] ? res.legs[i].status : 'ok';
+        const b = [path.pts[i + 1][0], path.pts[i + 1][1]], stt = res && res.legs[i] ? res.legs[i].status : 'ok'; a = [a[0], a[1]]; // Leaflet only takes [lat, lng]
         L.polyline([a, b], { color: '#ffffff', weight: on ? 10 : 8, opacity: 0.9, interactive: false }).addTo(g);
         const ln = L.polyline([a, b], { color: STATUS[stt], weight: on ? 5 : 4, dashArray: stt === 'warn' ? '10 6' : null });
         ln.on('click', pick('path', path.id)); ln.addTo(g);
         if (res && res.legs[i] && res.legs[i].msgs.length) ln.bindTooltip(res.legs[i].msgs.map((q) => esc(q.text)).join('<br>'));
       });
+      // v7.27: point numbers and heights only when asked for ("Path point numbers"); otherwise a start flag with the path's
+      // name and height, and small handles on the selected path to drag
+      if (path.pts.length) {
+        const st = path.pts[0], tag = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
+        L.marker([st[0], st[1]], { interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div style="margin:-7px 0 0 -7px;width:14px;height:14px;border-radius:50%;background:#16a34a;border:2.5px solid #fff;box-shadow:0 0 0 1.5px #0f172a"></div><div data-ops-path-tag="1" style="position:absolute;left:10px;top:-22px;font:700 11px Inter,sans-serif;color:#0f172a;background:#ffffffe6;border:1px solid #0f172a;border-radius:5px;padding:1px 5px;white-space:nowrap">${esc(tag)}</div>` }), zIndexOffset: 800 }).addTo(g);
+      }
+      if (!on && !show.ptNums) return;
       path.pts.forEach((p, i) => {
-        const html = `<div style="margin:-11px 0 0 -11px;width:22px;height:22px;border-radius:50%;background:${on && selPt === i ? '#ede9fe' : '#fff'};border:2.5px solid #0f172a;font:700 11px/17px Inter,sans-serif;text-align:center;color:#0f172a">${i + 1}</div>`
-          + `<div style="position:absolute;left:12px;top:-20px;font:700 10px Inter,sans-serif;color:#0f172a;background:#ffffffd9;border-radius:4px;padding:0 3px;white-space:nowrap">${r1(Number(p[2]) || 0)} m</div>`;
+        const nums = show.ptNums || (on && selPt === i);
+        const html = nums ? `<div style="margin:-11px 0 0 -11px;width:22px;height:22px;border-radius:50%;background:${on && selPt === i ? '#ede9fe' : '#fff'};border:2.5px solid #0f172a;font:700 11px/17px Inter,sans-serif;text-align:center;color:#0f172a">${i + 1}</div>`
+          + `<div style="position:absolute;left:12px;top:-20px;font:700 10px Inter,sans-serif;color:#0f172a;background:#ffffffd9;border-radius:4px;padding:0 3px;white-space:nowrap">${r1(Number(p[2]) || 0)} m${p[3] != null ? ' (' + r1(Number(p[2]) - Number(p[3])) + ' above ground)' : ''}</div>`
+          : `<div data-ops-handle="1" style="margin:-5px 0 0 -5px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #0f172a"></div>`;
         const mk = L.marker([p[0], p[1]], { draggable: on && !readOnly && tool === 'select', icon: L.divIcon({ className: '', html, iconSize: [0, 0] }), zIndexOffset: 900 });
         mk.on('click', (e) => { if (toolRef.current !== 'select') return; L.DomEvent.stopPropagation(e); setSel({ t: 'path', id: path.id }); setSelPt(i); });
-        mk.on('dragend', (e) => { const ll = e.target.getLatLng(); setPath(path.id, { pts: path.pts.map((q, j) => (j === i ? [ll.lat, ll.lng, q[2]] : q)) }); });
+        mk.on('dragend', (e) => { const ll = e.target.getLatLng(); setPath(path.id, { pts: path.pts.map((q, j) => (j === i ? [ll.lat, ll.lng, q[2], q[3]] : q)) }); });
         if (on && !readOnly && path.pts.length > 2) mk.on('contextmenu', (e) => { L.DomEvent.preventDefault(e); setPath(path.id, { pts: path.pts.filter((q, j) => j !== i) }); });
         mk.addTo(g);
       });
@@ -677,7 +730,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
         <aside className={`w-[210px] shrink-0 bg-white border-r border-slate-200 overflow-y-auto p-2 space-y-3 md:block md:static ${mob === 'tools' ? 'block absolute left-0 top-0 bottom-0 z-[900] shadow-2xl' : 'hidden'}`} data-ops-noprint="1" aria-label="Drawing tools" onClick={(e) => { if (e.target.closest && e.target.closest('[data-ops-tool]')) setMob(null); }}>
           <div className="space-y-0.5"><ToolBtn id="select" icon="fa-arrow-pointer" label="Select / move" /><ToolBtn id="measure" icon="fa-ruler" label="Measure" /></div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Zones</div>
-            <div className="space-y-0.5">{['exclusion', 'oonp', 'near', 'clear'].map((k) => <div key={k} className={zoneToolActive(k) ? 'rounded-md ring-2 ring-violet-500' : ''}>{zoneTool(k)}</div>)}</div>
+            <div className="space-y-0.5">{['exclusion', 'oonp', 'near', 'clear', ...(mode !== 'plan' ? ['surface'] : [])].map((k) => <div key={k} className={zoneToolActive(k) ? 'rounded-md ring-2 ring-violet-500' : ''}>{zoneTool(k)}</div>)}</div>
             {tool === 'zone' && <div className="flex gap-1 mt-1 px-1">{[['poly', 'fa-draw-polygon', 'Shape'], ['circle', 'fa-circle', 'Circle']].map(([s, ic, l]) => <button key={s} type="button" data-ops-shape={s} onClick={() => { setZoneShape(s); setDraft(null); }} className={`${btn} flex-1 justify-center ${zoneShape === s ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 text-slate-600'}`}><i className={`fa-solid ${ic}`}></i>{l}</button>)}</div>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Paths</div><ToolBtn id="path" icon="fa-route" label="Flight path" />
@@ -699,7 +752,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               : <button type="button" onClick={() => setSel({ t: 'overlay' })} className={`w-full text-left text-xs border rounded-md p-2 ${sel && sel.t === 'overlay' ? 'border-violet-600 bg-violet-50' : 'border-slate-200'}`}><b className="block truncate">{doc.overlay.name}</b><span className="text-slate-500">{doc.overlay.locked ? 'Locked' : 'Not locked'} · {doc.overlay.widthM} m wide</span></button>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Show</div>
-            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
+            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
           </div>
           <div className="px-1"><label className={lbl}>Over-people colour</label><div className="flex gap-1">{['green', 'blue'].map((c) => <button key={c} type="button" disabled={readOnly} onClick={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), oonpColour: c } }))} className={`${btn} flex-1 justify-center ${(settings.oonpColour || 'green') === c ? 'border-violet-600 bg-violet-50' : 'border-slate-300'}`}><span className="w-3 h-3 rounded-sm" style={{ background: c === 'blue' ? '#2563eb' : '#16a34a' }}></span>{c === 'blue' ? 'Blue' : 'Green'}</button>)}</div></div>
         </aside>
@@ -730,9 +783,9 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             <div className="flex items-center gap-2 px-3 py-1.5" data-ops-noprint="1">
               <button type="button" onClick={() => setPanel((p) => !p)} className="text-xs font-bold text-slate-700"><i className={`fa-solid ${panel ? 'fa-chevron-down' : 'fa-chevron-up'} mr-1`}></i>Side-on profile{profPath ? ' · ' + profPath.name : ''}</button>
               {profPath && checks && checks.paths[profPath.id] && <span className="text-[11px] text-slate-500">{Math.round(checks.paths[profPath.id].length)} m · {profPath.pts.length} points · {fmtSpeed(profPath.speed || 0)} · {profPath.drone || 'no drone'}</span>}
-              <span className="ml-auto text-[11px] text-slate-400 hidden sm:inline">Drag a point up or down to set its height</span>
+              <span className="ml-auto text-[11px] text-slate-400 hidden sm:inline">{profPath && profPath.follow ? "Follows the ground (grey) at " + (Number(profPath.agl) || 0) + " m" : "Drag a point up or down to set its height"}</span>
             </div>
-            {panel && <div className="px-2 pb-2"><Profile path={profPath} res={profPath && checks ? checks.paths[profPath.id] : null} readOnly={readOnly} selPt={profPath && selPathO ? selPt : null}
+            {panel && <div className="px-2 pb-2"><Profile path={profPath} res={profPath && checks ? checks.paths[profPath.id] : null} readOnly={readOnly || !!(profPath && profPath.follow)} selPt={profPath && selPathO ? selPt : null}
               onPick={(i) => { setSel({ t: 'path', id: profPath.id }); setSelPt(i); }}
               onStart={() => { if (docRef.current) { hist.current.push(docRef.current); if (hist.current.length > 60) hist.current.shift(); } }}
               onAlt={(i, alt) => { const p = docRef.current.paths.find((q) => q.id === profPath.id); if (!p || Number(p.pts[i][2]) === alt) return; const next = { ...docRef.current, paths: docRef.current.paths.map((q) => q.id === p.id ? { ...q, pts: q.pts.map((x, j) => j === i ? [x[0], x[1], alt] : x) } : q) }; docRef.current = next; setDoc(next); onChange && onChange(next); }} /></div>}
@@ -762,7 +815,13 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
                 <div><label className={lbl} htmlFor="oz-sb">Buffer (m)</label><input id="oz-sb" type="number" min="0" className={inp} disabled={readOnly} value={selZone.shieldBuffer == null ? 0 : selZone.shieldBuffer} onChange={(e) => setZone(selZone.id, { shieldBuffer: Number(e.target.value) || 0 })} /></div>
                 <div><label className={lbl} htmlFor="oz-sn">What shields it</label><input id="oz-sn" className={inp} disabled={readOnly} value={selZone.shieldNote || ''} onChange={(e) => setZone(selZone.id, { shieldNote: e.target.value })} placeholder="e.g. stand roof, safety net" /></div></div>}
             </div>}
-            {selZone.kind !== 'exclusion' && <div><label className={lbl} htmlFor="oz-g">Ground level (m above take-off)</label><input id="oz-g" type="number" step="0.5" className={inp} disabled={readOnly} value={selZone.ground || 0} onChange={(e) => setZone(selZone.id, { ground: Number(e.target.value) || 0 })} /><p className="text-[10px] text-slate-500 mt-1">For raised stages, stands or hills: heights in this zone are measured from this level.</p></div>}
+            {selZone.kind === 'surface' && <div className="space-y-2" data-ops-bridge="1">
+              <p className="text-[11px] text-slate-600">Paths that follow the ground ride over this at their height above the deck, instead of dipping to the ground or water below.</p>
+              <label className="flex items-start gap-2 text-sm"><input type="radio" name="oz-deck" className="mt-1" disabled={readOnly} checked={selZone.deck !== 'raised'} onChange={() => setZone(selZone.id, { deck: 'ends' })} /><span><b>Level between its ends</b> (most bridges): the deck runs straight from the ground at one end to the other.</span></label>
+              <label className="flex items-start gap-2 text-sm"><input type="radio" name="oz-deck" className="mt-1" disabled={readOnly} checked={selZone.deck === 'raised'} onChange={() => setZone(selZone.id, { deck: 'raised' })} /><span><b>Raised above the ground</b> by a set height (a stage, platform or boardwalk).</span></label>
+              <div><label className={lbl} htmlFor="oz-raise">{selZone.deck === 'raised' ? 'Deck height above the ground below (m)' : 'Extra height at the deck (m, usually 0)'}</label><input id="oz-raise" type="number" step="0.5" className={inp} disabled={readOnly} value={selZone.raise || 0} onChange={(e) => setZone(selZone.id, { raise: Number(e.target.value) || 0 })} /></div>
+            </div>}
+            {selZone.kind !== 'exclusion' && selZone.kind !== 'surface' && <div><label className={lbl} htmlFor="oz-g">Ground level (m above take-off)</label><input id="oz-g" type="number" step="0.5" className={inp} disabled={readOnly} value={selZone.ground || 0} onChange={(e) => setZone(selZone.id, { ground: Number(e.target.value) || 0 })} /><p className="text-[10px] text-slate-500 mt-1">For raised stages, stands or hills: heights in this zone are measured from this level.</p></div>}
             <div><label className={lbl} htmlFor="oz-note">Notes</label><textarea id="oz-note" rows={2} className={inp} disabled={readOnly} value={selZone.note || ''} onChange={(e) => setZone(selZone.id, { note: e.target.value })} /></div>
           </div>}
 
@@ -773,18 +832,42 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               <div><label className={lbl} htmlFor="op-drone">Drone</label><select id="op-drone" className={inp} disabled={readOnly} value={selPathO.drone || ''} onChange={(e) => setPath(selPathO.id, { drone: e.target.value })}>{drones.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
               <SpeedField id="op-speed" label="Speed" ms={selPathO.speed == null ? '' : selPathO.speed} disabled={readOnly} onMs={(v) => setPath(selPathO.id, { speed: v || 0 })} />
             </div>
-            <div><div className={lbl}>Points (height above take-off) <span className="font-normal text-slate-400">· dot = the leg to the next point: <span style={{ color: '#0f172a' }}>●</span> clear <span style={{ color: '#d97706' }}>●</span> check <span style={{ color: '#dc2626' }}>●</span> fix</span></div>
+            {doc.mode !== 'plan' && <div className="rounded-lg border border-slate-200 p-2.5 space-y-2" data-ops-height-mode={selPathO.follow ? 'follow' : 'manual'}>
+              <div className={lbl}>Height</div>
+              <div className="flex gap-1.5" role="group" aria-label="How the height is set">
+                <button type="button" disabled={readOnly} data-ops-follow="1" onClick={() => setPath(selPathO.id, { follow: true, agl: selPathO.agl != null ? selPathO.agl : 3, aglMin: selPathO.aglMin != null ? selPathO.aglMin : 1, aglMax: selPathO.aglMax != null ? selPathO.aglMax : 5, followKey: null })}
+                  className={`${btn} flex-1 justify-center ${selPathO.follow ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 bg-white text-slate-700'}`}><i className="fa-solid fa-mountain-sun"></i>Follow the ground</button>
+                <button type="button" disabled={readOnly} data-ops-manual="1" onClick={() => setPath(selPathO.id, { follow: false, pts: selPathO.pts.map((q) => [q[0], q[1], q[2]]) })}
+                  className={`${btn} flex-1 justify-center ${!selPathO.follow ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 bg-white text-slate-700'}`}><i className="fa-solid fa-list-ol"></i>Set each point</button>
+              </div>
+              {selPathO.follow && (() => { const tm = terrMsg[selPathO.id] || {}, g = selPathO.pts.map((q) => q[3]).filter((v) => v != null);
+                const lo = selPathO.aglMin != null ? Number(selPathO.aglMin) : 1, hi = selPathO.aglMax != null ? Number(selPathO.aglMax) : 5, a = Number(selPathO.agl) || 0;
+                return (<>
+                  <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                    <div><label className={lbl} htmlFor="op-agl">Height above the ground (m)</label>
+                      <input id="op-agl" type="number" min="0" step="0.5" className={inp} disabled={readOnly} value={selPathO.agl == null ? '' : selPathO.agl} onChange={(e) => setPath(selPathO.id, { agl: e.target.value === '' ? null : Number(e.target.value) })} /></div>
+                    <div className="text-[11px] text-slate-500 pb-2">keep within <input aria-label="Lowest" type="number" step="0.5" className="w-12 px-1 py-0.5 border border-slate-300 rounded" disabled={readOnly} value={lo} onChange={(e) => setPath(selPathO.id, { aglMin: Number(e.target.value) || 0 })} />–<input aria-label="Highest" type="number" step="0.5" className="w-12 px-1 py-0.5 border border-slate-300 rounded" disabled={readOnly} value={hi} onChange={(e) => setPath(selPathO.id, { aglMax: Number(e.target.value) || 0 })} /> m</div>
+                  </div>
+                  {(a < lo || a > hi) && <p className="text-[11px] text-amber-700">{a} m is outside {lo}–{hi} m.</p>}
+                  <p className="text-[11px] text-slate-600" data-ops-terrain={tm.busy ? 'busy' : selPathO.followErr ? 'err' : g.length ? 'ok' : 'none'}>
+                    {tm.busy ? 'Working out the ground under the path…' : selPathO.followErr ? <span className="text-amber-700">{selPathO.followErr}</span>
+                      : g.length ? <>Flies {a} m above the ground the whole way, rising and falling with it{(doc.zones || []).some((z) => z.kind === 'surface') ? ' and riding over bridges' : ''}. Ground along the path varies by {Math.round((Math.max(...g) - Math.min(...g)) * 10) / 10} m ({selPathO.pts.length} points, worked out for you). Ground from {selPathO.terrainSrc || 'terrain data'}: roughly 5–30 m detail, so check low spots and structures on the site walk.</> : 'Ground heights will be worked out from terrain data.'}</p>
+                  {!readOnly && <button type="button" data-ops-terrain-refresh="1" className={`${btn} border-slate-300`} onClick={() => followPath(selPathO.id)}><i className="fa-solid fa-rotate"></i>Update ground heights</button>}
+                </>); })()}
+            </div>}
+            {(!selPathO.follow || doc.mode === 'plan') ? <div><div className={lbl}>Points (height above take-off) <span className="font-normal text-slate-400">· dot = the leg to the next point: <span style={{ color: '#0f172a' }}>●</span> clear <span style={{ color: '#d97706' }}>●</span> check <span style={{ color: '#dc2626' }}>●</span> fix</span></div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-52 overflow-y-auto">{selPathO.pts.map((p, i) => (
                 <div key={i} className={`flex items-center gap-2 px-2 py-1 text-sm ${selPt === i ? 'bg-violet-50' : ''}`} data-ops-pt={i}>
                   <span className="w-6 font-bold text-slate-600">{i + 1}</span>
                   <input type="number" step="0.5" min="0" aria-label={'Height of point ' + (i + 1)} className="w-20 px-1.5 py-1 border border-slate-300 rounded text-sm" disabled={readOnly} value={p[2] == null ? 0 : p[2]} onFocus={() => setSelPt(i)} onChange={(e) => setPath(selPathO.id, { pts: selPathO.pts.map((q, j) => j === i ? [q[0], q[1], Number(e.target.value) || 0] : q) })} /><span className="text-xs text-slate-500">m</span>
                   {checks && checks.paths[selPathO.id] && checks.paths[selPathO.id].legs[i] && <span className="ml-auto w-2.5 h-2.5 rounded-full" title={'Leg ' + (i + 1) + '→' + (i + 2)} style={{ background: STATUS[checks.paths[selPathO.id].legs[i].status] }}></span>}
                   {!readOnly && selPathO.pts.length > 2 && <button type="button" aria-label={'Delete point ' + (i + 1)} onClick={() => setPath(selPathO.id, { pts: selPathO.pts.filter((q, j) => j !== i) })} className={`${checks && checks.paths[selPathO.id] && checks.paths[selPathO.id].legs[i] ? '' : 'ml-auto'} text-slate-400 hover:text-red-600`}><i className="fa-solid fa-xmark"></i></button>}
-                </div>))}</div>
+                </div>))}</div></div> : null}
+            <div>
               {!readOnly && <div className="flex flex-wrap gap-2 mt-2"><button type="button" className={`${btn} border-slate-300`} onClick={() => setPath(selPathO.id, { pts: [...selPathO.pts].reverse() })}><i className="fa-solid fa-arrow-right-arrow-left"></i>Reverse</button>
                 <button type="button" className={`${btn} border-slate-300`} onClick={() => { setTool('path'); setDraft({ type: 'path', pts: selPathO.pts, extend: selPathO.id }); }}><i className="fa-solid fa-plus"></i>{pathMode === 'draw' ? 'Draw more from the end' : 'Add points at the end'}</button>
                 <button type="button" data-ops-smoothpath="1" className={`${btn} border-slate-300`} disabled={selPathO.pts.length < 3} onClick={() => smoothPath(selPathO, 'smooth')}><i className="fa-solid fa-bezier-curve"></i>Smooth</button>
-                <button type="button" data-ops-thinpath="1" className={`${btn} border-slate-300`} disabled={selPathO.pts.length < 4} onClick={() => smoothPath(selPathO, 'thin')}><i className="fa-solid fa-compress"></i>Fewer points</button></div>}
+                <button type="button" data-ops-thinpath="1" className={`${btn} border-slate-300`} disabled={selPathO.pts.length < 4} style={selPathO.follow ? { display: 'none' } : undefined} onClick={() => smoothPath(selPathO, 'thin')}><i className="fa-solid fa-compress"></i>Fewer points</button></div>}
             </div>
           </div>}
 

@@ -63,8 +63,10 @@ with sync_playwright() as p:
         if aud == 'client':
             pg.locator('[data-pv-3d-open]').scroll_into_view_if_needed(); pg.click('[data-pv-3d-open]'); pg.wait_for_timeout(3000)
             R.check('3D ops map opens (the 3D engine loads from the internet; offline in tests)', pg.locator('[data-pv-3d-on] [data-ops-3d]').count() == 1)
-        for g in groups: tab(g); seen += pg.locator('[data-pv-section]').count()
-        R.check(aud + ': every shared section is under a tab', seen == len(snaps[aud]['sections']), (seen, len(snaps[aud]['sections'])))
+        seen = pg.locator('[data-pv-section]').count()
+        R.check(aud + ': one continuous page: every shared section on it at once (v7.27)', seen == len(snaps[aud]['sections']) and pg.locator('[data-pv-group]').count() == len(groups), (seen, len(snaps[aud]['sections'])))
+        tab(groups[-1]); pg.wait_for_timeout(700)
+        R.check(aud + ': menu jumps down the page to a section', pg.evaluate("()=>document.querySelector('[data-plan-scroll]').scrollTop") > 100 or len(groups) < 2)
         tab('2')
         R.check(aud + ': risk register as the planner table (L/C, ratings)', pg.locator('[data-pv-risk="001"]').count() == 1 and '4B' in pg.inner_text('[data-pv-risk="001"]') and '2C' in pg.inner_text('[data-pv-risk="001"]') and 'Hazardous' in pg.inner_text('[data-pv-risk="001"]') and 'initial risk' in pg.inner_text('[data-pv-risks]').lower())
         R.check(aud + ': KE tool shows', pg.locator('[data-pv-ke="DJI Avata 2"]').count() == 1)

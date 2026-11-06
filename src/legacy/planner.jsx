@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.26';
+        const APP_VERSION = '7.27';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5883,7 +5883,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const opsPrintData = !opsHas ? null : { mode: opsMap.mode,
               zones: [...(opsMap.zones || [])].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).filter(z => z.shape === 'circle' ? z.r > 0 : (z.pts || []).length > 2).map(z => { const k = opsKindStyle(z.kind, opsMap.settings);
                 return { shape: z.shape, pts: z.pts, c: z.c, r: z.r, color: k.color, stroke: k.stroke, fill: k.fill, dash: z.kind === 'near' ? '8 6' : null, name: esc(z.name || k.label), tag: esc(opsZoneTag(z, opsMap.settings)), buffer: opsZoneBuffer(z) }; }),
-              paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { pts: p.pts, legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
+              paths: (opsMap.paths || []).map(p => { const r = opsChk && opsChk.paths[p.id]; return { tag: (p.name || 'Path') + (p.follow ? ' · ' + (Number(p.agl) || 0) + ' m above ground' : '') + (p.speed ? ' · ' + p.speed + ' m/s' : ''), pts: p.pts.map(q => [q[0], q[1], q[2]]), legs: p.pts.slice(0, -1).map((a, i) => { const st = r && r.legs[i] ? r.legs[i].status : 'ok'; return { a: [a[0], a[1]], b: [p.pts[i + 1][0], p.pts[i + 1][1]], color: st === 'stop' ? '#dc2626' : st === 'warn' ? '#d97706' : '#0f172a', dash: st === 'warn' ? '8 5' : null }; }) }; }),
               points: (opsMap.points || []).map(p => ({ kind: p.kind, lat: p.lat, lng: p.lng, title: p.title || '', text: p.text || '', size: p.size })),
               views: (opsMap.views || []).map(v => ({ kind: v.kind, title: v.title, bounds: v.bounds || null })),
               overlay: opsMap.overlay ? { src: opsMap.overlay.src, center: opsMap.overlay.center, widthM: opsMap.overlay.widthM, rot: opsMap.overlay.rot || 0, opacity: opsMap.overlay.opacity, aspect: opsMap.overlay.aspect } : null };

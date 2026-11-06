@@ -38,7 +38,8 @@ export function opsAdvPrint(OM, imagery, elId, fit) {
   });
   OM.paths.forEach(function (p) {
     p.legs.forEach(function (l) { L.polyline([l.a, l.b], { color: '#fff', weight: 6 }).addTo(m); L.polyline([l.a, l.b], { color: l.color, weight: 3, dashArray: l.dash || null }).addTo(m); });
-    p.pts.forEach(function (q, i) { L.marker([q[0], q[1]], { icon: L.divIcon({ className: '', iconSize: [0, 0], html: '<div style="margin:-9px 0 0 -9px;width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid #0f172a;font:700 9px/14px sans-serif;text-align:center">' + (i + 1) + '</div><div style="position:absolute;left:10px;top:-16px;font:700 8px sans-serif;background:#fff;padding:0 2px;border-radius:2px;white-space:nowrap">' + (Math.round((q[2] || 0) * 10) / 10) + ' m</div>' }) }).addTo(m); });
+    // v7.27: a start flag with the path's name and height instead of a numbered marker on every point
+    if (p.pts.length) { var q0 = p.pts[0]; L.marker([q0[0], q0[1]], { icon: L.divIcon({ className: '', iconSize: [0, 0], html: '<div style="margin:-6px 0 0 -6px;width:12px;height:12px;border-radius:50%;background:#16a34a;border:2px solid #fff;box-shadow:0 0 0 1px #0f172a"></div><div style="position:absolute;left:9px;top:-17px;font:700 8px sans-serif;background:#fff;border:1px solid #0f172a;padding:0 3px;border-radius:3px;white-space:nowrap">' + String(p.tag || '').replace(/[&<>]/g, '') + '</div>' }) }).addTo(m); }
   });
   var e = function (s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'; }); };
   OM.points.forEach(function (p) {

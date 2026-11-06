@@ -3,7 +3,7 @@
 // v7.19: the live link shows the plan in the planner's own look (read-only): cards per section, the 2D map you can pan
 // and zoom, the advanced ops map in 3D you can turn, the risk register with its ratings, signatures. Only the sections of
 // the chosen view are in the data (the planner leaves the rest out before it's shared).
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { JobMap } from '../observer/Observer.jsx';
 
 const Ops3D = React.lazy(() => import('../opsmap/Ops3D.jsx'));
@@ -129,14 +129,21 @@ function Map3D({ doc, checks }) {
   );
 }
 
+// v7.27: one continuous page, every section one after the other; the menu jumps to a section and highlights the one
+// being read, instead of switching tabs.
 export default function PlanViewer({ model, counts = {}, onComment }) {
   const groups = [];
   model.sections.forEach((s) => { let g = groups.find((x) => x.id === s.group); if (!g) { g = { id: s.group, items: [] }; groups.push(g); } g.items.push(s); });
   const [tab, setTab] = useState(groups[0] ? groups[0].id : '1');
-  const cur = groups.find((g) => g.id === tab) || groups[0];
   const gCount = (g) => g.items.reduce((t, s) => t + (counts[s.key] || 0), 0);
-  const pick = (id) => { setTab(id); try { const el = document.querySelector('[data-plan-scroll]'); (el || window).scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} };
-  const navBtn = (g, wide) => { const G = GROUPS[g.id] || [g.id, 'fa-file'], on = cur && g.id === cur.id, n = gCount(g); return (
+  const scroller = () => document.querySelector('[data-plan-scroll]');
+  const pick = (id) => { setTab(id); try { const el = document.getElementById('pvg-' + id), sc = scroller(); if (!el) return;
+    if (sc) sc.scrollTo({ top: el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - 12, behavior: 'smooth' }); else el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* ok */ } };
+  useEffect(() => { // highlight the section being read
+    const sc = scroller() || window, on = () => { let best = groups[0] && groups[0].id; groups.forEach((g) => { const el = document.getElementById('pvg-' + g.id); if (el && el.getBoundingClientRect().top < 160) best = g.id; }); setTab(best); };
+    sc.addEventListener('scroll', on, { passive: true }); return () => sc.removeEventListener('scroll', on);
+  }, [model]); // eslint-disable-line
+  const navBtn = (g, wide) => { const G = GROUPS[g.id] || [g.id, 'fa-file'], on = g.id === tab, n = gCount(g); return (
     <button key={g.id} type="button" data-pv-tab={g.id} onClick={() => pick(g.id)}
       className={wide ? `w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${on ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`
         : `shrink-0 flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg ${on ? 'bg-blue-50 text-blue-700' : 'text-slate-600'}`}>
@@ -145,7 +152,7 @@ export default function PlanViewer({ model, counts = {}, onComment }) {
     </button>); };
   return (
     <div data-plan-viewer="1">
-      <div className="bg-white border-b border-slate-200 shadow-sm">
+      <div className="bg-white border-b border-slate-200 shadow-sm md:static sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3">
           <div className="text-[11px] font-semibold uppercase tracking-widest text-violet-700">{model.company}{model.reoc ? ' · ' + model.reoc : ''}</div>
           <h1 className="text-lg sm:text-xl font-bold text-slate-800">{model.title}</h1>
@@ -157,9 +164,9 @@ export default function PlanViewer({ model, counts = {}, onComment }) {
         <div className="hidden md:block md:col-span-1">
           <nav className="md:sticky md:top-4 space-y-1 bg-white p-3 rounded-xl shadow-sm border border-slate-200" data-pv-nav-side="1">{groups.map((g) => navBtn(g, true))}</nav>
         </div>
-        <div className="md:col-span-3 min-w-0">
-          {cur && (() => { const G = GROUPS[cur.id] || [cur.id, 'fa-file', cur.id, 'fa-file text-blue-600']; return (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-pv-group={cur.id}>
+        <div className="md:col-span-3 min-w-0 space-y-6">
+          {groups.map((cur) => { const G = GROUPS[cur.id] || [cur.id, 'fa-file', cur.id, 'fa-file text-blue-600']; return (
+            <div key={cur.id} id={'pvg-' + cur.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden scroll-mt-4" data-pv-group={cur.id}>
               <div className="bg-slate-50 px-4 sm:px-6 py-4 border-b border-slate-200 flex items-center gap-2">
                 <i className={`fa-solid ${G[3]} text-lg`}></i><h2 className="text-lg font-semibold text-slate-800">{G[2]}</h2>
               </div>
@@ -174,7 +181,7 @@ export default function PlanViewer({ model, counts = {}, onComment }) {
                     <div className="space-y-4">{s.blocks.map((b, i) => <Block key={i} b={b} />)}</div>
                   </section>))}
               </div>
-            </div>); })()}
+            </div>); })}
           <p className="text-center text-xs text-slate-400 py-6">Shared from Dream Planner RPA{model.view ? ' · ' + model.view : ''}. This page updates when the plan is saved.</p>
         </div>
       </div>
