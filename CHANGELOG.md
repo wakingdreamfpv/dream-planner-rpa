@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.29 — 7 Nov 2026 — Free PDFs without the credit line
+- **Free edition PDFs are clean:** the small purple line at the bottom, "Planned with Dream Flight RPA Planner (free edition) · planner.wakingdreamfpv.com", is gone. A PDF from the free version now looks the same as one from an account.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for the free edition's PDF (4 checks); everything else passes.
+
 ## v7.28 — 6 Nov 2026 — Your company setup follows you to any device; change your password; 3D zones on the ground
 - **Fixed: a new device showing a blank company.** Until now your company setup (company profile, fleet, batteries, crew lists, clients, templates, PDF views, compliance calendar) was kept only on the device you set it up on. Jobs already synced, which is why your iPhone showed the right job but a blank company. Now:
   - Your setup is saved to your account (CRP only; crew can't see it) and any device you sign in on as CRP loads it. A green note says so, and which device it was last saved on.

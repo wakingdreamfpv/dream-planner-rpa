@@ -185,7 +185,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.28';
+        const APP_VERSION = '7.29';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -6328,7 +6328,6 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               } }
             P.push('<!--S:end-->');
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
-            if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner (free edition) · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
             let html=P.join('\n');
