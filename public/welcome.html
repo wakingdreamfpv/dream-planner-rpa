@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dream Flight RPA Planner · RPAS operations planning for CASA operators</title>
+<meta name="description" content="Plan, approve and log every RPAS job: Form F.1 operations plan, JSA and risk register, approvals, flight logs and PDF export. Try it free now, no sign-up. Free beta until 9 January 2027.">
+<meta name="theme-color" content="#2d0a5e">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root { --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --violet:#7c3aed; --violet-d:#5b21b6; --amber:#fbbf24; --bg:#f8fafc; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg); line-height:1.55; }
+  a { color: var(--violet-d); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  header.hero { color:#fff; background: linear-gradient(135deg,#1a0533 0%,#2d0a5e 55%,#4c1d95 100%); padding: 28px 0 56px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:800; font-size:18px; }
+  .brand svg { width:26px; height:26px; }
+  .beta { display:inline-block; background:var(--amber); color:#451a03; font-size:11px; font-weight:900; letter-spacing:.08em; padding:3px 8px; border-radius:6px; transform:rotate(-4deg); }
+  .hero-grid { display:grid; grid-template-columns: 1.4fr 1fr; gap: 40px; align-items:center; margin-top: 40px; }
+  h1 { font-size: clamp(30px, 5vw, 48px); line-height:1.1; margin: 0 0 16px; letter-spacing:-.02em; }
+  .lead { font-size: clamp(16px, 2.2vw, 19px); color:#ddd6fe; margin:0 0 26px; max-width: 40em; }
+  .ctas { display:flex; flex-wrap:wrap; gap:12px; }
+  .btn { display:inline-flex; align-items:center; gap:8px; padding: 14px 22px; border-radius: 12px; font-weight:800; text-decoration:none; font-size:16px; }
+  .btn-primary { background:#fff; color:#2d0a5e; }
+  .btn-beta { background:var(--amber); color:#451a03; }
+  .btn-ghost { border:2px solid rgba(255,255,255,.35); color:#fff; }
+  .small { font-size: 13px; color:#c4b5fd; margin-top: 14px; }
+  .qr-card { background:#fff; color:var(--ink); border-radius:18px; padding:18px; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,.35); max-width: 300px; justify-self:end; }
+  .qr-card svg { width:100%; height:auto; display:block; }
+  .qr-card b { display:block; margin-top:8px; }
+  .qr-card span { font-size:13px; color:var(--muted); }
+  section { padding: 56px 0; }
+  h2 { font-size: clamp(24px, 3.4vw, 32px); margin: 0 0 8px; letter-spacing:-.01em; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 46em; }
+  .plans { display:grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .plan { background:#fff; border:1px solid var(--line); border-radius:18px; padding:22px; display:flex; flex-direction:column; }
+  .plan.featured { border:2px solid var(--amber); box-shadow: 0 10px 30px rgba(251,191,36,.18); }
+  .tag { font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:var(--violet-d); }
+  .plan h3 { margin: 6px 0 4px; font-size: 22px; }
+  .price { font-weight:800; font-size: 15px; margin-bottom: 12px; }
+  .plan ul { padding-left: 0; list-style:none; margin: 0 0 18px; flex:1; }
+  .plan li { padding-left: 24px; position:relative; margin: 7px 0; }
+  .plan li::before { content:"✓"; position:absolute; left:0; color:#059669; font-weight:900; }
+  .plan li.no::before { content:"–"; color:#94a3b8; }
+  .plan .btn { justify-content:center; }
+  .plan .btn-primary { background: var(--violet); color:#fff; }
+  .plan .btn-outline { border:2px solid var(--violet); color: var(--violet-d); }
+  .features { display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .f { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .f h4 { margin: 0 0 6px; font-size: 17px; }
+  .f p { margin:0; color: var(--muted); font-size: 15px; }
+  .band { background: #fff; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .timeline { display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+  .step { padding: 18px; border-radius:16px; background: var(--bg); border:1px solid var(--line); }
+  .step b { display:block; font-size: 13px; text-transform:uppercase; letter-spacing:.08em; color: var(--violet-d); }
+  details { background:#fff; border:1px solid var(--line); border-radius:14px; padding: 14px 18px; margin: 10px 0; }
+  summary { font-weight:700; cursor:pointer; }
+  details p { color: var(--muted); margin: 10px 0 2px; }
+  footer { background:#1a0533; color:#c4b5fd; padding: 32px 0; font-size: 14px; }
+  footer a { color:#fff; }
+  @media (max-width: 860px) {
+    .hero-grid, .plans, .features, .timeline { grid-template-columns: 1fr; }
+    .qr-card { display:none; }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 640 512" aria-hidden="true"><path fill="#c084fc" d="M381 114.9L186.1 41.8c-16.7-6.2-35.2-5.3-51.1 2.7L89.1 67.4C78 73 77.2 88.5 87.6 95.2l146.9 94.5L136 240 77.4 210.6c-8.9-4.5-19.4-4.5-28.3 0L18.3 226c-10.9 5.4-12.4 20.3-2.7 27.7l89.5 67.2c12.4 9.3 28.5 12.1 43.3 7.4l403.9-125.6c41.3-12.9 69.7-51.1 69.7-94.4 0-27.6-24-49.1-51.5-46.3l-73.5 7.4c-14.7 1.5-29.4-.3-43.2-5.4zM64 448c-17.7 0-32 14.3-32 32s14.3 32 32 32H576c17.7 0 32-14.3 32-32s-14.3-32-32-32H64z"/></svg>
+      Dream Flight RPA Planner <span class="beta">BETA</span>
+    </div>
+    <div class="hero-grid">
+      <div>
+        <h1>Plan, approve and log every drone job. Ready for CASA.</h1>
+        <p class="lead">Your operations plan (Form F.1), JSA and risk register, approvals, flight logs and crew compliance in one app that works on your phone, tablet or laptop. One tap gives you a professional PDF for your client, your records and CASA.</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="https://planner.wakingdreamfpv.com/">Try it free now</a>
+          <a class="btn btn-beta" href="https://planner.wakingdreamfpv.com/?beta">Join the free beta</a>
+        </div>
+        <p class="small">Free version: no sign-up, no account. Free beta: just your name and email, no payment details. Paid plans launch 10 January 2027.</p>
+      </div>
+      <div class="qr-card">
+        <svg role="img" aria-label="QR code: planner.wakingdreamfpv.com" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 45 45" shape-rendering="crispEdges"><rect width="45" height="45" fill="#fff"/><path d="M4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM10 4h1v1h-1zM12 4h1v1h-1zM13 4h1v1h-1zM14 4h1v1h-1zM17 4h1v1h-1zM18 4h1v1h-1zM20 4h1v1h-1zM26 4h1v1h-1zM27 4h1v1h-1zM28 4h1v1h-1zM30 4h1v1h-1zM31 4h1v1h-1zM34 4h1v1h-1zM35 4h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM38 4h1v1h-1zM39 4h1v1h-1zM40 4h1v1h-1zM4 5h1v1h-1zM10 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM14 5h1v1h-1zM16 5h1v1h-1zM17 5h1v1h-1zM19 5h1v1h-1zM24 5h1v1h-1zM26 5h1v1h-1zM27 5h1v1h-1zM28 5h1v1h-1zM31 5h1v1h-1zM34 5h1v1h-1zM40 5h1v1h-1zM4 6h1v1h-1zM6 6h1v1h-1zM7 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM15 6h1v1h-1zM17 6h1v1h-1zM18 6h1v1h-1zM21 6h1v1h-1zM24 6h1v1h-1zM26 6h1v1h-1zM27 6h1v1h-1zM28 6h1v1h-1zM32 6h1v1h-1zM34 6h1v1h-1zM36 6h1v1h-1zM37 6h1v1h-1zM38 6h1v1h-1zM40 6h1v1h-1zM4 7h1v1h-1zM6 7h1v1h-1zM7 7h1v1h-1zM8 7h1v1h-1zM10 7h1v1h-1zM12 7h1v1h-1zM13 7h1v1h-1zM16 7h1v1h-1zM18 7h1v1h-1zM20 7h1v1h-1zM21 7h1v1h-1zM22 7h1v1h-1zM23 7h1v1h-1zM24 7h1v1h-1zM26 7h1v1h-1zM27 7h1v1h-1zM30 7h1v1h-1zM31 7h1v1h-1zM34 7h1v1h-1zM36 7h1v1h-1zM37 7h1v1h-1zM38 7h1v1h-1zM40 7h1v1h-1zM4 8h1v1h-1zM6 8h1v1h-1zM7 8h1v1h-1zM8 8h1v1h-1zM10 8h1v1h-1zM12 8h1v1h-1zM16 8h1v1h-1zM17 8h1v1h-1zM19 8h1v1h-1zM20 8h1v1h-1zM23 8h1v1h-1zM29 8h1v1h-1zM31 8h1v1h-1zM34 8h1v1h-1zM36 8h1v1h-1zM37 8h1v1h-1zM38 8h1v1h-1zM40 8h1v1h-1zM4 9h1v1h-1zM10 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM14 9h1v1h-1zM16 9h1v1h-1zM17 9h1v1h-1zM20 9h1v1h-1zM21 9h1v1h-1zM23 9h1v1h-1zM24 9h1v1h-1zM27 9h1v1h-1zM29 9h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM32 9h1v1h-1zM34 9h1v1h-1zM40 9h1v1h-1zM4 10h1v1h-1zM5 10h1v1h-1zM6 10h1v1h-1zM7 10h1v1h-1zM8 10h1v1h-1zM9 10h1v1h-1zM10 10h1v1h-1zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM20 10h1v1h-1zM22 10h1v1h-1zM24 10h1v1h-1zM26 10h1v1h-1zM28 10h1v1h-1zM30 10h1v1h-1zM32 10h1v1h-1zM34 10h1v1h-1zM35 10h1v1h-1zM36 10h1v1h-1zM37 10h1v1h-1zM38 10h1v1h-1zM39 10h1v1h-1zM40 10h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1zM16 11h1v1h-1zM23 11h1v1h-1zM25 11h1v1h-1zM26 11h1v1h-1zM27 11h1v1h-1zM30 11h1v1h-1zM7 12h1v1h-1zM10 12h1v1h-1zM16 12h1v1h-1zM19 12h1v1h-1zM20 12h1v1h-1zM22 12h1v1h-1zM23 12h1v1h-1zM27 12h1v1h-1zM28 12h1v1h-1zM31 12h1v1h-1zM32 12h1v1h-1zM35 12h1v1h-1zM36 12h1v1h-1zM37 12h1v1h-1zM39 12h1v1h-1zM40 12h1v1h-1zM4 13h1v1h-1zM7 13h1v1h-1zM8 13h1v1h-1zM14 13h1v1h-1zM20 13h1v1h-1zM21 13h1v1h-1zM24 13h1v1h-1zM26 13h1v1h-1zM30 13h1v1h-1zM31 13h1v1h-1zM32 13h1v1h-1zM35 13h1v1h-1zM38 13h1v1h-1zM39 13h1v1h-1zM40 13h1v1h-1zM4 14h1v1h-1zM5 14h1v1h-1zM10 14h1v1h-1zM11 14h1v1h-1zM12 14h1v1h-1zM13 14h1v1h-1zM15 14h1v1h-1zM16 14h1v1h-1zM17 14h1v1h-1zM18 14h1v1h-1zM24 14h1v1h-1zM28 14h1v1h-1zM31 14h1v1h-1zM34 14h1v1h-1zM36 14h1v1h-1zM37 14h1v1h-1zM39 14h1v1h-1zM40 14h1v1h-1zM4 15h1v1h-1zM5 15h1v1h-1zM6 15h1v1h-1zM12 15h1v1h-1zM13 15h1v1h-1zM15 15h1v1h-1zM18 15h1v1h-1zM19 15h1v1h-1zM21 15h1v1h-1zM22 15h1v1h-1zM23 15h1v1h-1zM24 15h1v1h-1zM25 15h1v1h-1zM26 15h1v1h-1zM28 15h1v1h-1zM29 15h1v1h-1zM32 15h1v1h-1zM35 15h1v1h-1zM36 15h1v1h-1zM37 15h1v1h-1zM39 15h1v1h-1zM40 15h1v1h-1zM4 16h1v1h-1zM6 16h1v1h-1zM7 16h1v1h-1zM8 16h1v1h-1zM10 16h1v1h-1zM11 16h1v1h-1zM12 16h1v1h-1zM13 16h1v1h-1zM15 16h1v1h-1zM18 16h1v1h-1zM28 16h1v1h-1zM29 16h1v1h-1zM31 16h1v1h-1zM33 16h1v1h-1zM34 16h1v1h-1zM39 16h1v1h-1zM40 16h1v1h-1zM4 17h1v1h-1zM6 17h1v1h-1zM7 17h1v1h-1zM13 17h1v1h-1zM15 17h1v1h-1zM16 17h1v1h-1zM19 17h1v1h-1zM20 17h1v1h-1zM26 17h1v1h-1zM27 17h1v1h-1zM28 17h1v1h-1zM29 17h1v1h-1zM30 17h1v1h-1zM34 17h1v1h-1zM35 17h1v1h-1zM37 17h1v1h-1zM39 17h1v1h-1zM40 17h1v1h-1zM4 18h1v1h-1zM5 18h1v1h-1zM9 18h1v1h-1zM10 18h1v1h-1zM17 18h1v1h-1zM18 18h1v1h-1zM19 18h1v1h-1zM21 18h1v1h-1zM23 18h1v1h-1zM25 18h1v1h-1zM26 18h1v1h-1zM28 18h1v1h-1zM29 18h1v1h-1zM32 18h1v1h-1zM33 18h1v1h-1zM34 18h1v1h-1zM35 18h1v1h-1zM38 18h1v1h-1zM40 18h1v1h-1zM5 19h1v1h-1zM7 19h1v1h-1zM9 19h1v1h-1zM11 19h1v1h-1zM12 19h1v1h-1zM15 19h1v1h-1zM19 19h1v1h-1zM20 19h1v1h-1zM24 19h1v1h-1zM26 19h1v1h-1zM27 19h1v1h-1zM28 19h1v1h-1zM29 19h1v1h-1zM30 19h1v1h-1zM32 19h1v1h-1zM33 19h1v1h-1zM34 19h1v1h-1zM4 20h1v1h-1zM5 20h1v1h-1zM6 20h1v1h-1zM7 20h1v1h-1zM8 20h1v1h-1zM10 20h1v1h-1zM12 20h1v1h-1zM13 20h1v1h-1zM14 20h1v1h-1zM15 20h1v1h-1zM16 20h1v1h-1zM19 20h1v1h-1zM25 20h1v1h-1zM34 20h1v1h-1zM37 20h1v1h-1zM38 20h1v1h-1zM40 20h1v1h-1zM5 21h1v1h-1zM6 21h1v1h-1zM7 21h1v1h-1zM11 21h1v1h-1zM12 21h1v1h-1zM13 21h1v1h-1zM14 21h1v1h-1zM20 21h1v1h-1zM22 21h1v1h-1zM25 21h1v1h-1zM27 21h1v1h-1zM29 21h1v1h-1zM30 21h1v1h-1zM32 21h1v1h-1zM34 21h1v1h-1zM36 21h1v1h-1zM38 21h1v1h-1zM40 21h1v1h-1zM10 22h1v1h-1zM11 22h1v1h-1zM14 22h1v1h-1zM18 22h1v1h-1zM25 22h1v1h-1zM26 22h1v1h-1zM29 22h1v1h-1zM34 22h1v1h-1zM35 22h1v1h-1zM36 22h1v1h-1zM39 22h1v1h-1zM40 22h1v1h-1zM4 23h1v1h-1zM6 23h1v1h-1zM14 23h1v1h-1zM17 23h1v1h-1zM18 23h1v1h-1zM19 23h1v1h-1zM20 23h1v1h-1zM22 23h1v1h-1zM23 23h1v1h-1zM25 23h1v1h-1zM27 23h1v1h-1zM35 23h1v1h-1zM38 23h1v1h-1zM40 23h1v1h-1zM5 24h1v1h-1zM8 24h1v1h-1zM9 24h1v1h-1zM10 24h1v1h-1zM11 24h1v1h-1zM13 24h1v1h-1zM14 24h1v1h-1zM17 24h1v1h-1zM18 24h1v1h-1zM21 24h1v1h-1zM22 24h1v1h-1zM23 24h1v1h-1zM26 24h1v1h-1zM27 24h1v1h-1zM28 24h1v1h-1zM29 24h1v1h-1zM32 24h1v1h-1zM34 24h1v1h-1zM35 24h1v1h-1zM36 24h1v1h-1zM39 24h1v1h-1zM40 24h1v1h-1zM5 25h1v1h-1zM6 25h1v1h-1zM7 25h1v1h-1zM8 25h1v1h-1zM12 25h1v1h-1zM14 25h1v1h-1zM18 25h1v1h-1zM20 25h1v1h-1zM22 25h1v1h-1zM25 25h1v1h-1zM28 25h1v1h-1zM33 25h1v1h-1zM34 25h1v1h-1zM39 25h1v1h-1zM40 25h1v1h-1zM5 26h1v1h-1zM6 26h1v1h-1zM7 26h1v1h-1zM10 26h1v1h-1zM11 26h1v1h-1zM14 26h1v1h-1zM16 26h1v1h-1zM17 26h1v1h-1zM18 26h1v1h-1zM19 26h1v1h-1zM22 26h1v1h-1zM23 26h1v1h-1zM24 26h1v1h-1zM25 26h1v1h-1zM26 26h1v1h-1zM28 26h1v1h-1zM33 26h1v1h-1zM35 26h1v1h-1zM36 26h1v1h-1zM39 26h1v1h-1zM40 26h1v1h-1zM5 27h1v1h-1zM6 27h1v1h-1zM7 27h1v1h-1zM9 27h1v1h-1zM11 27h1v1h-1zM15 27h1v1h-1zM16 27h1v1h-1zM17 27h1v1h-1zM20 27h1v1h-1zM21 27h1v1h-1zM22 27h1v1h-1zM23 27h1v1h-1zM24 27h1v1h-1zM25 27h1v1h-1zM26 27h1v1h-1zM30 27h1v1h-1zM34 27h1v1h-1zM36 27h1v1h-1zM39 27h1v1h-1zM40 27h1v1h-1zM5 28h1v1h-1zM7 28h1v1h-1zM9 28h1v1h-1zM10 28h1v1h-1zM11 28h1v1h-1zM14 28h1v1h-1zM19 28h1v1h-1zM21 28h1v1h-1zM22 28h1v1h-1zM26 28h1v1h-1zM27 28h1v1h-1zM28 28h1v1h-1zM31 28h1v1h-1zM33 28h1v1h-1zM36 28h1v1h-1zM37 28h1v1h-1zM39 28h1v1h-1zM7 29h1v1h-1zM11 29h1v1h-1zM12 29h1v1h-1zM14 29h1v1h-1zM15 29h1v1h-1zM20 29h1v1h-1zM21 29h1v1h-1zM27 29h1v1h-1zM28 29h1v1h-1zM31 29h1v1h-1zM32 29h1v1h-1zM33 29h1v1h-1zM35 29h1v1h-1zM36 29h1v1h-1zM39 29h1v1h-1zM40 29h1v1h-1zM4 30h1v1h-1zM7 30h1v1h-1zM10 30h1v1h-1zM11 30h1v1h-1zM12 30h1v1h-1zM14 30h1v1h-1zM15 30h1v1h-1zM16 30h1v1h-1zM18 30h1v1h-1zM20 30h1v1h-1zM22 30h1v1h-1zM24 30h1v1h-1zM26 30h1v1h-1zM28 30h1v1h-1zM33 30h1v1h-1zM34 30h1v1h-1zM36 30h1v1h-1zM37 30h1v1h-1zM40 30h1v1h-1zM5 31h1v1h-1zM7 31h1v1h-1zM12 31h1v1h-1zM13 31h1v1h-1zM16 31h1v1h-1zM18 31h1v1h-1zM19 31h1v1h-1zM21 31h1v1h-1zM23 31h1v1h-1zM24 31h1v1h-1zM28 31h1v1h-1zM29 31h1v1h-1zM31 31h1v1h-1zM34 31h1v1h-1zM36 31h1v1h-1zM37 31h1v1h-1zM39 31h1v1h-1zM40 31h1v1h-1zM4 32h1v1h-1zM5 32h1v1h-1zM7 32h1v1h-1zM10 32h1v1h-1zM14 32h1v1h-1zM15 32h1v1h-1zM16 32h1v1h-1zM20 32h1v1h-1zM21 32h1v1h-1zM22 32h1v1h-1zM24 32h1v1h-1zM26 32h1v1h-1zM27 32h1v1h-1zM28 32h1v1h-1zM32 32h1v1h-1zM33 32h1v1h-1zM34 32h1v1h-1zM35 32h1v1h-1zM36 32h1v1h-1zM39 32h1v1h-1zM12 33h1v1h-1zM13 33h1v1h-1zM15 33h1v1h-1zM16 33h1v1h-1zM17 33h1v1h-1zM18 33h1v1h-1zM19 33h1v1h-1zM22 33h1v1h-1zM23 33h1v1h-1zM25 33h1v1h-1zM27 33h1v1h-1zM28 33h1v1h-1zM30 33h1v1h-1zM31 33h1v1h-1zM32 33h1v1h-1zM36 33h1v1h-1zM40 33h1v1h-1zM4 34h1v1h-1zM5 34h1v1h-1zM6 34h1v1h-1zM7 34h1v1h-1zM8 34h1v1h-1zM9 34h1v1h-1zM10 34h1v1h-1zM14 34h1v1h-1zM17 34h1v1h-1zM20 34h1v1h-1zM21 34h1v1h-1zM25 34h1v1h-1zM26 34h1v1h-1zM30 34h1v1h-1zM31 34h1v1h-1zM32 34h1v1h-1zM34 34h1v1h-1zM36 34h1v1h-1zM38 34h1v1h-1zM39 34h1v1h-1zM40 34h1v1h-1zM4 35h1v1h-1zM10 35h1v1h-1zM13 35h1v1h-1zM16 35h1v1h-1zM19 35h1v1h-1zM20 35h1v1h-1zM21 35h1v1h-1zM22 35h1v1h-1zM23 35h1v1h-1zM26 35h1v1h-1zM30 35h1v1h-1zM32 35h1v1h-1zM36 35h1v1h-1zM38 35h1v1h-1zM39 35h1v1h-1zM4 36h1v1h-1zM6 36h1v1h-1zM7 36h1v1h-1zM8 36h1v1h-1zM10 36h1v1h-1zM16 36h1v1h-1zM19 36h1v1h-1zM20 36h1v1h-1zM23 36h1v1h-1zM27 36h1v1h-1zM29 36h1v1h-1zM30 36h1v1h-1zM32 36h1v1h-1zM33 36h1v1h-1zM34 36h1v1h-1zM35 36h1v1h-1zM36 36h1v1h-1zM37 36h1v1h-1zM4 37h1v1h-1zM6 37h1v1h-1zM7 37h1v1h-1zM8 37h1v1h-1zM10 37h1v1h-1zM12 37h1v1h-1zM14 37h1v1h-1zM15 37h1v1h-1zM16 37h1v1h-1zM18 37h1v1h-1zM20 37h1v1h-1zM23 37h1v1h-1zM27 37h1v1h-1zM33 37h1v1h-1zM35 37h1v1h-1zM36 37h1v1h-1zM38 37h1v1h-1zM39 37h1v1h-1zM40 37h1v1h-1zM4 38h1v1h-1zM6 38h1v1h-1zM7 38h1v1h-1zM8 38h1v1h-1zM10 38h1v1h-1zM13 38h1v1h-1zM14 38h1v1h-1zM15 38h1v1h-1zM19 38h1v1h-1zM20 38h1v1h-1zM21 38h1v1h-1zM24 38h1v1h-1zM25 38h1v1h-1zM31 38h1v1h-1zM32 38h1v1h-1zM33 38h1v1h-1zM36 38h1v1h-1zM38 38h1v1h-1zM40 38h1v1h-1zM4 39h1v1h-1zM10 39h1v1h-1zM13 39h1v1h-1zM14 39h1v1h-1zM16 39h1v1h-1zM17 39h1v1h-1zM18 39h1v1h-1zM19 39h1v1h-1zM23 39h1v1h-1zM24 39h1v1h-1zM25 39h1v1h-1zM26 39h1v1h-1zM29 39h1v1h-1zM30 39h1v1h-1zM32 39h1v1h-1zM33 39h1v1h-1zM34 39h1v1h-1zM35 39h1v1h-1zM4 40h1v1h-1zM5 40h1v1h-1zM6 40h1v1h-1zM7 40h1v1h-1zM8 40h1v1h-1zM9 40h1v1h-1zM10 40h1v1h-1zM13 40h1v1h-1zM14 40h1v1h-1zM19 40h1v1h-1zM21 40h1v1h-1zM22 40h1v1h-1zM24 40h1v1h-1zM26 40h1v1h-1zM28 40h1v1h-1zM29 40h1v1h-1zM31 40h1v1h-1zM32 40h1v1h-1zM36 40h1v1h-1zM39 40h1v1h-1zM40 40h1v1h-1z" fill="#000"/></svg>
+        <b>Scan to try it on your phone</b>
+        <span>planner.wakingdreamfpv.com</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Three ways to use it</h2>
+    <p class="sub">Start free today. Try everything in the beta. Choose a plan when paid plans launch on 10 January 2027.</p>
+    <div class="plans">
+      <div class="plan">
+        <div class="tag">Free · available now</div>
+        <h3>Free planner</h3>
+        <div class="price">$0. No sign-up, ever.</div>
+        <ul>
+          <li>A full job: plan, JSA and risk, approval, flight log</li>
+          <li>Professional PDF export</li>
+          <li>Use it for paid commercial work</li>
+          <li>One job at a time, saved on your device</li>
+          <li class="no">No company setup or saved job library</li>
+        </ul>
+        <a class="btn btn-outline" href="https://planner.wakingdreamfpv.com/">Open the free planner</a>
+      </div>
+      <div class="plan featured">
+        <div class="tag">Free beta · until 9 January 2027</div>
+        <h3>The full planner</h3>
+        <div class="price">$0. No payment details.</div>
+        <ul>
+          <li>Company profile, fleet and batteries</li>
+          <li>Saved jobs, drafts and flight records</li>
+          <li>Risk templates and the compliance calendar</li>
+          <li>Saved on your device. Back up any time</li>
+          <li>Help shape the planner before launch</li>
+        </ul>
+        <a class="btn btn-primary" href="https://planner.wakingdreamfpv.com/?beta">Join the free beta</a>
+      </div>
+      <div class="plan">
+        <div class="tag">Paid plans · from 10 January 2027</div>
+        <h3>Company account</h3>
+        <div class="price">Monthly or annual</div>
+        <ul>
+          <li>Everything in the beta, saved to your account</li>
+          <li>Your crew invited, on their own phones</li>
+          <li>RPIC and CRP sign-offs, inductions, registers</li>
+          <li>Live share links for clients and crew</li>
+          <li>Beta testers hear about launch offers first</li>
+        </ul>
+        <a class="btn btn-outline" href="https://planner.wakingdreamfpv.com/?beta">Start with the beta</a>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:18px">Want your own copy of the planner to customise for your business? <a href="mailto:mike@wakingdreamfpv.com?subject=Dream%20Flight%20RPA%20Planner%3A%20own%20copy">Talk to us</a>.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <h2>Everything a job needs, in one place</h2>
+    <p class="sub">Built around CASA's requirements, so nothing gets missed.</p>
+    <div class="features">
+      <div class="f"><h4>Operations plan</h4><p>Your Form F.1 plan, section by section, with a checklist of the mandatory items still missing (MOS 10.04). Tap one to jump to it.</p></div>
+      <div class="f"><h4>JSA and risk register</h4><p>Likelihood and consequence scoring with a heat map, plus ready-made templates, including night events and OONP.</p></div>
+      <div class="f"><h4>Site maps in 2D and 3D</h4><p>Satellite maps, take-off and landing points, zones, airspace, and flight paths that follow the ground, in 3D on real terrain.</p></div>
+      <div class="f"><h4>Go / no-go</h4><p>Local weather, daylight and twilight, sun direction and the Kp index on your dashboard, with links to OK2FLY, NAIPS and BoM radar.</p></div>
+      <div class="f"><h4>Approvals and flight logs</h4><p>Approve the plan, log each flight by aircraft and battery, and keep the records together with the job.</p></div>
+      <div class="f"><h4>One-tap PDF</h4><p>A clean PDF of the whole job. Account holders also get Client, WHS and CASA views and live share links.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What happens next</h2>
+    <div class="timeline">
+      <div class="step"><b>Now</b>Use the free planner on any device. No account, nothing to install.</div>
+      <div class="step"><b>Until 9 January 2027</b>Free beta testers get the full planner on their device. Tell us what to improve.</div>
+      <div class="step"><b>From 10 January 2027</b>Paid monthly and annual plans with a company account, crew and sign-offs. Beta records can be brought across.</div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <h2>Questions</h2>
+    <details><summary>Is the free planner really free?</summary><p>Yes. There's no sign-up and no account. It keeps one job at a time on your device, and your exported PDF is your record. You can use it for paid work.</p></details>
+    <details><summary>What do I give you for the beta?</summary><p>Just your name, email and (if you like) your company name. No payment details. We'll email you about the beta and the paid launch, and we never share your details.</p></details>
+    <details><summary>Where is my data kept?</summary><p>In the free planner and the beta, on your own device only. Nothing is shared and nobody else can see it. Add the planner to your Home Screen and use Back up now and then, so your browser doesn't clear it.</p></details>
+    <details><summary>What happens when the beta ends?</summary><p>On 10 January 2027 you go back to the free planner unless you choose a paid plan. You can download everything you made in the beta, and bring it into a paid account.</p></details>
+    <details><summary>Does it replace my CASA obligations?</summary><p>No. The planner helps you prepare, approve and record your operations, but you and your Chief Remote Pilot remain responsible for meeting CASA's rules and your operations manual.</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><b style="color:#fff">Dream Flight RPA Planner</b> is built by Waking Dream FPV (Rubio Enterprises Pty Ltd), a CASA-certified drone operator (ReOC CASA.ReOC.9037), for working operators.</p>
+    <p>Questions? <a href="mailto:mike@wakingdreamfpv.com">mike@wakingdreamfpv.com</a> · <a href="https://planner.wakingdreamfpv.com/">planner.wakingdreamfpv.com</a></p>
+  </div>
+</footer>
+</body>
+</html>
