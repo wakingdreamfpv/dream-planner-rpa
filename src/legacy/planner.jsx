@@ -14,6 +14,8 @@ import { getSupabase as wdSb } from '../cloud/client.js';
 import SignDialog from '../cloud/SignDialog.jsx';
 import { CommentsPanel, SharePanel, refreshLinkSnapshots, SUGGEST_FIELDS, RISK_FIELDS } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
+import { EnquiryDialog, EnquiriesList } from '../compliance/Enquiries.jsx';
+import { BetaDialog, BetaEndedDialog, betaActiveNow, betaEnded, betaDaysLeft, betaInfo, sendBetaSignup, downloadBetaRecords, BETA_LAST_DAY_TEXT } from '../compliance/Beta.jsx';
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
@@ -185,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.29';
+        const APP_VERSION = '7.30';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -214,6 +216,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         //   ''          the CRP / owner (and the offline file)       → 'wakingdream_planner' (unchanged)
         //   'crew:<e>'  a signed-in pilot or observer                → empty, theirs only
         //   'free'      not signed in: the free planner (v7.29: the default for every visitor) → theirs only
+        //   'beta'      not signed in, joined the free beta (v7.30, until 10 Jan 2027): the full planner → theirs only
         //   'pending'   signed in, role not known on this device yet → empty until the role arrives, then reload
         //   ('guest', the old empty space behind the sign-in screen, is no longer used from v7.29)
         const WD_NS = (() => {
@@ -222,7 +225,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             const test = localStorage.getItem('wd_edition_test');
             if (test === 'full') return ''; if (test === 'free') return 'free';
             const email = (localStorage.getItem('wd_auth_email') || '').toLowerCase();
-            if (!email) return 'free';
+            if (!email) return betaActiveNow() ? 'beta' : 'free';
             const role = localStorage.getItem('wd_role:' + email);
             return role === 'crp' ? '' : (role === 'pilot' || role === 'observer' || role === 'inactive') ? 'crew:' + email : 'pending';
           } catch (e) { return ''; }
@@ -5076,7 +5079,9 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // v7.29: anyone not signed in (a QR scan, the website) goes straight into the free planner. While sign-in is still
           // being checked, only a device that was already in the free space counts as free, so an owner's or crew
           // member's own data is never treated as a free job.
-          const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && (auth.state === 'out' || WD_NS === 'free'));
+          const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && WD_NS !== 'beta' && (auth.state === 'out' || WD_NS === 'free'));
+          // v7.30: the free beta: the full planner on this device, no account, until 10 Jan 2027 (see src/compliance/Beta.jsx)
+          const isBeta = !editionTest && IS_HOSTED && !signedIn && WD_NS === 'beta';
           const [gateOff, setGateOff] = useState(false);
           const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); setGateOff(true); };
           // v7.22: an invite or sign-in link that has expired or was already used (often opened first by an email app's
@@ -5100,7 +5105,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           useEffect(() => {
             if (!IS_HOSTED || editionTest || window.__WD_CREW_MODE) return;
             let want = null;
-            if (auth.state === 'out') { lsSet('wd_auth_email', ''); want = 'free'; }
+            if (auth.state === 'out') { lsSet('wd_auth_email', ''); want = betaActiveNow() ? 'beta' : 'free'; }
             else if (auth.state === 'in' && auth.ready && auth.email) {
               const em = String(auth.email).toLowerCase();
               lsSet('wd_auth_email', em); lsSet('wd_role:' + em, auth.role || 'inactive');
@@ -5111,6 +5116,16 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             if (hops < 3) location.reload();
           }, [auth.state, auth.ready, auth.email, auth.role, editionPick]); // eslint-disable-line
           const [freeIntroSeen, setFreeIntroSeen] = useState(() => !!lsGet('wd_free_intro'));
+          // v7.30: "Get it for your company" (free planner → the CRP's Enquiries list)
+          const [enquiry, setEnquiry] = useState(null);
+          const [betaOpen, setBetaOpen] = useState(false), [betaEndedOpen, setBetaEndedOpen] = useState(false);
+          useEffect(() => { const h = () => setBetaOpen(true); window.addEventListener('wd-open-beta', h); return () => window.removeEventListener('wd-open-beta', h); }, []);
+          useEffect(() => { // a link with ?beta (landing page, QR) opens the beta sign-up straight away
+            try { if (/[?&]beta\b/.test(location.search)) { history.replaceState(null, '', location.pathname + location.hash); if (IS_HOSTED && !betaActiveNow() && !lsGet('wd_auth_email')) setBetaOpen(true); } } catch (e) {}
+          }, []); // eslint-disable-line
+          useEffect(() => { if (isBeta) { const i = betaInfo(); if (i && !i.sent) sendBetaSignup(i); } }, [isBeta]); // eslint-disable-line
+          useEffect(() => { if (IS_HOSTED && auth.state === 'out' && betaEnded() && !lsGet('wd_beta_end_seen')) setBetaEndedOpen(true); }, [auth.state]); // eslint-disable-line
+          useEffect(() => { const h = (e) => setEnquiry((e && e.detail) || 'free'); window.addEventListener('wd-open-enquiry', h); return () => window.removeEventListener('wd-open-enquiry', h); }, []);
           const roleKey = 'wd_role_welcomed:' + (auth.email || '');
           const [roleWelcomed, setRoleWelcomed] = useState(() => !!lsGet(roleKey));
           useEffect(() => { setRoleWelcomed(!!lsGet(roleKey)); }, [roleKey]); // eslint-disable-line
@@ -6334,7 +6349,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               } }
             P.push('<!--S:end-->');
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
-            if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner · planner.wakingdreamfpv.com</div>');
+            if (isFree || isBeta) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
             let html=P.join('\n');
@@ -10660,6 +10675,9 @@ View in the Database & Settings tab.`);
           // v6.7: no page scrolling behind a full-screen panel on phones
           useEffect(() => { const lock = !!(wiz || (showWelcome && !showGate && !isFree && !isCrewRole) || showGate); document.documentElement.classList.toggle('wd-modal-open', lock); return () => document.documentElement.classList.remove('wd-modal-open'); }, [!!wiz, showWelcome, showGate, isFree, isCrewRole]); // eslint-disable-line
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
+          // v7.30: straight after joining the beta, open the company setup
+          useEffect(() => { if (!isBeta || !dbReady) return; let fresh = false; try { fresh = sessionStorage.getItem('wd_beta_new') === '1'; sessionStorage.removeItem('wd_beta_new'); } catch (e) {}
+            if (fresh) { lsSet('wd_welcomed', new Date().toISOString()); lsSet('wd_free_intro', new Date().toISOString()); setTimeout(() => openSetupWizard(null, 1), 300); } }, [isBeta, dbReady]); // eslint-disable-line
           const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
             const fleet = Object.entries(db.fleet || {}).map(([name, x]) => ({ key: name, name, weight: x.weight ?? '', cells: x.cells || '', registrationNo: x.registrationNo || '', registrationExpiry: x.registrationExpiry || '', serial: x.serial || '', keep: true }));
@@ -10854,13 +10872,18 @@ View in the Database & Settings tab.`);
                           <button type="button" data-free-tour="mini" onClick={() => { done(); startTour('mini'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-camera text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">DJI Mini 4 Pro</span></button>
                           <button type="button" data-free-tour="whoop" onClick={() => { done(); startTour('whoop'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-vr-cardboard text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">3.5" FPV cinewhoop</span></button>
                         </div>
+                        {IS_HOSTED && !betaEnded() && <button type="button" data-free-beta="1" onClick={() => { done(); setBetaOpen(true); }} className="w-full flex items-start gap-3 text-left rounded-xl border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 px-4 py-3"><i className="fa-solid fa-rocket text-amber-600 mt-1"></i><span><span className="block font-bold text-amber-950">Want the full planner? Join the free beta</span><span className="block text-xs text-amber-900">Company setup, saved jobs and records. Free until {BETA_LAST_DAY_TEXT}, no payment details.</span></span></button>}
                         <button type="button" data-free-start="1" onClick={() => { done(); setActiveTab('preliminary'); }} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start planning</button>
+                        {IS_HOSTED && <button type="button" data-free-enquiry="1" onClick={() => { done(); setEnquiry('free-welcome'); }} className="w-full text-sm text-violet-700 font-semibold underline">Running a company? Get it for your company</button>}
                       </div>
                     </div>
                   </div>
                 );
               })()}
               {AmendDialog()}
+              <EnquiryDialog open={!!enquiry} source={enquiry} onClose={() => setEnquiry(null)} />
+              <BetaDialog open={betaOpen} onClose={() => setBetaOpen(false)} />
+              <BetaEndedDialog open={betaEndedOpen} onClose={() => { lsSet('wd_beta_end_seen', new Date().toISOString()); setBetaEndedOpen(false); }} onEnquire={() => { lsSet('wd_beta_end_seen', new Date().toISOString()); setBetaEndedOpen(false); setEnquiry('beta-ended'); }} />
               {showRoleWelcome && (() => {
                 // v7.22: one welcome card: who invited them and to which company, an optional password, and their next step
                 const done = () => {
@@ -11037,7 +11060,7 @@ View in the Database & Settings tab.`);
                       </div>
                       <div className="p-4 sm:p-6 space-y-3">
                         <p className="text-sm text-slate-600">This is a new planner on this device. How would you like to start?</p>
-                        {IS_HOSTED && !signedIn && (
+                        {IS_HOSTED && !signedIn && !isBeta && (
                           <button type="button" data-welcome-signin="1" onClick={() => { close(); window.dispatchEvent(new Event('wd-open-account')); }} className="w-full flex items-start gap-3 border border-slate-200 hover:bg-slate-50 rounded-xl px-4 py-3 text-left">
                             <i className="fa-solid fa-right-to-bracket text-violet-600 mt-1"></i>
                             <span><span className="block font-semibold text-slate-800">Sign in</span><span className="block text-xs text-slate-600">If you've been invited as crew, or you're the CRP signing in on another device. Your jobs and settings stay on the device they were made on until cloud sync arrives; use Import my backup to bring them across.</span></span>
@@ -11308,12 +11331,24 @@ View in the Database & Settings tab.`);
                   </div>
                 </div>
               </header>
+              {isBeta && (
+                <div data-beta-banner="1" className="print:hidden bg-amber-50 border-b border-amber-200 text-amber-950 text-xs sm:text-sm">
+                  <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+                    <span className="basis-full sm:basis-auto sm:flex-1 min-w-0"><b>Free beta</b> · the full planner on this device until {BETA_LAST_DAY_TEXT} ({betaDaysLeft()} days left) · back up now and then</span>
+                    <button type="button" data-allow-locked="1" data-beta-backup="1" onClick={handleExportDb} className="font-semibold bg-white border border-amber-300 rounded-full px-3 py-1"><i className="fa-solid fa-download mr-1"></i>Back up</button>
+                    <button type="button" data-allow-locked="1" data-beta-bar-enquiry="1" onClick={() => setEnquiry('beta-banner')} className="font-semibold bg-amber-400 text-amber-950 rounded-full px-3 py-1"><i className="fa-solid fa-building mr-1"></i>Get it for your company</button>
+                  </div>
+                </div>
+              )}
               {isFree && (
                 <div data-free-banner="1" className="print:hidden bg-violet-50 border-b border-violet-200 text-violet-900 text-xs sm:text-sm">
                   <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
-                    <span className="flex-1 min-w-0"><b>Free mode</b> · one job at a time on this device · keep your PDFs</span>
+                    <span className="basis-full sm:basis-auto sm:flex-1 min-w-0"><b>Free mode</b> · one job at a time on this device · keep your PDFs</span>
                     <button type="button" data-allow-locked="1" onClick={() => setActiveTab('database')} className="underline">What's included</button>
-                    {IS_HOSTED && <button type="button" data-allow-locked="1" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="font-semibold bg-violet-600 text-white rounded-full px-3 py-1">Sign in</button>}
+                    {IS_HOSTED && !betaEnded() && <button type="button" data-allow-locked="1" data-free-bar-beta="1" onClick={() => setBetaOpen(true)} className="font-semibold bg-violet-600 text-white rounded-full px-3 py-1"><i className="fa-solid fa-rocket mr-1"></i>Free beta: full planner</button>}
+                    {IS_HOSTED && betaEnded() && <button type="button" data-allow-locked="1" data-free-bar-beta-records="1" onClick={downloadBetaRecords} className="font-semibold bg-white border border-violet-300 text-violet-800 rounded-full px-3 py-1"><i className="fa-solid fa-download mr-1"></i>My beta records</button>}
+                    {IS_HOSTED && <button type="button" data-allow-locked="1" data-free-bar-enquiry="1" onClick={() => setEnquiry('free-banner')} className="font-semibold bg-amber-400 text-amber-950 rounded-full px-3 py-1"><i className="fa-solid fa-building mr-1"></i>Get it for your company</button>}
+                    {IS_HOSTED && <button type="button" data-allow-locked="1" onClick={() => window.dispatchEvent(new Event('wd-open-account'))} className="hidden sm:inline-block font-semibold bg-violet-600 text-white rounded-full px-3 py-1">Sign in</button>}
                   </div>
                 </div>
               )}
@@ -15392,6 +15427,7 @@ View in the Database & Settings tab.`);
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · Google Forms import · audit packs · CSV / PDF</span>, (<Registers crpName={auth.name || ''} company={(db.companyProfile && db.companyProfile.name) || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
                         {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-enquiries', 'Enquiries', 'fa-inbox', <span>People who asked about the planner from the free version · mark contacted · CSV</span>, (<EnquiriesList />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
                         {dbFold('dbsec-auths', 'Official authorisations', 'fa-stamp', <span>{(db.officialAuths || DEFAULT_OFFICIAL_AUTHS).length} instruments{(() => { const ex = (db.officialAuths || DEFAULT_OFFICIAL_AUTHS).filter(a => a.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry))[0]; return ex ? ' · next expiry ' + fmtDate(ex.expiry) + ' (' + ex.code + ')' : ''; })()}</span>, (<>
                             {/* Official authorisations (v5.30) */}

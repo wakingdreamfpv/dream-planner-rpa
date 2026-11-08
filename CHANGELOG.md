@@ -1,5 +1,19 @@
 # Planner changelog
 
+## v7.30 — 9 Nov 2026 — Free beta until 9 January 2027; "Get it for your company" enquiries
+- **Free beta (new):** anyone on the free planner can tap **Free beta: full planner** (purple bar, free welcome box, dashboard, or a link ending in **?beta**). They give their name, email and company (no payment details) and get the full planner on that device until **9 January 2027**: company setup, fleet and batteries, saved jobs and drafts, flight records, templates and the calendar. Their job from the free planner comes with them, and the company setup opens straight away.
+  - Their data stays **on their device only** (its own private space, no account, nothing shared). An amber bar shows the days left with **Back up** and **Get it for your company** buttons. PDFs end with "Planned with Dream Flight RPA Planner".
+  - Their sign-up lands in your **Enquiries** list (marked "beta-signup"). With no signal, the beta still starts and the sign-up is sent the next time they open the planner.
+  - **On 10 January 2027** (paid launch) they're back on the free planner, with a "Thanks for testing" box and a **Download my beta records** button (also on the free bar afterwards), so nobody loses their work.
+- **For visitors:** the free planner has an amber **Get it for your company** button on the purple Free mode bar, a link on the free welcome box and one on the dashboard. It opens a short form: name, email, company, phone, what they're interested in (founding member, monthly, annual, buying the whole thing to customise, or just keep me posted), a message, and a tick box saying it's OK to contact them. They get a thank-you, and their job stays on their device.
+- **No signal?** If the form can't send (common at venues), it offers to email the details to mike@wakingdreamfpv.com instead, already filled in.
+- **For you:** **Database & Settings › Enquiries** lists them, newest first, with tap-to-email and tap-to-call. Mark each one **contacted** or **closed**, and **Download CSV** for a spreadsheet. Only CRP accounts can see enquiries; crew can't. Nothing is ever deleted, and what someone sent can't be changed.
+- **Spam limits:** at most 3 enquiries a day from one email address and 200 an hour in total. Long messages are cut to 2,000 characters.
+- **Phones:** the purple Free mode bar is tidier: the text has its own line and the duplicate Sign in button is hidden (Sign in is still at the top).
+- **Landing page:** **planner.wakingdreamfpv.com/welcome.html** explains the planner, the free version (no sign-up), the free beta (no payment details) and paid plans from 10 January 2027, with buttons straight into each.
+- **Supabase:** run **0013_enquiries.sql** (SQL Editor › New query › paste › Run; safe to run twice). It creates the private enquiries list. Until it's run, the form offers the email fallback instead.
+- **Tests:** new browser suites for the beta (23 checks) and for the form and the Enquiries list (22 checks); new database test for who can add, read and change enquiries (17 checks); everything else passes.
+
 ## v7.29 — 8 Nov 2026 — Visitors go straight into the free planner (ready for the expo QR code); BETA sticker
 - **BETA sticker:** a small amber "BETA" tag next to the planner's name at the top of every page, and on the sign-in screen. It isn't printed on PDFs.
 - **No sign-in screen for visitors:** anyone who scans the QR code or opens planner.wakingdreamfpv.com without being signed in now lands straight in the free planner, with its short welcome. No account, no sign-in, no choice to make first. Their job stays on their own device only.
