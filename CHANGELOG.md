@@ -1,5 +1,15 @@
 # Planner changelog
 
+## v7.29 — 8 Nov 2026 — Visitors go straight into the free planner (ready for the expo QR code); BETA sticker
+- **BETA sticker:** a small amber "BETA" tag next to the planner's name at the top of every page, and on the sign-in screen. It isn't printed on PDFs.
+- **No sign-in screen for visitors:** anyone who scans the QR code or opens planner.wakingdreamfpv.com without being signed in now lands straight in the free planner, with its short welcome. No account, no sign-in, no choice to make first. Their job stays on their own device only.
+- **Signing in is one tap away:** **Sign in** is at the top and on the purple "Free mode" bar. Logins are still by invitation only, so nobody can create an account for themselves.
+- **Expired invite links:** a crew member who opens an expired or already-used invite link still gets the full sign-in screen with the "email me a fresh link" box, as before.
+- **Free PDFs:** the line at the bottom now reads "Planned with Dream Flight RPA Planner · planner.wakingdreamfpv.com" (no "(free edition)").
+- **Fixed:** the ✕ on the free welcome box could be hard to tap because the heading was drawn over it.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for visitors, sign-in, expired links, the BETA sticker and the free PDF (15 checks); everything else passes.
+
 ## v7.28 — 6 Nov 2026 — Your company setup follows you to any device; change your password; 3D zones on the ground
 - **Fixed: a new device showing a blank company.** Until now your company setup (company profile, fleet, batteries, crew lists, clients, templates, PDF views, compliance calendar) was kept only on the device you set it up on. Jobs already synced, which is why your iPhone showed the right job but a blank company. Now:
   - Your setup is saved to your account (CRP only; crew can't see it) and any device you sign in on as CRP loads it. A green note says so, and which device it was last saved on.

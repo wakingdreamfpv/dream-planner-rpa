@@ -79,7 +79,8 @@ with sync_playwright() as p:
     R.check('fresh sign-in link sent (existing logins only)', otp and otp[-1]['args']['email'] == 'joel@example.com' and otp[-1]['args']['options']['shouldCreateUser'] is False and pg.locator('[data-gate-link-sent]').count() == 1)
     R.check('address bar cleaned', '#error' not in pg.url)
     pg.goto(URL); pg.wait_for_timeout(4000)
-    R.check('normal sign-in screen: small "link not working" option', pg.locator('[data-gate-link-error]').count() == 0 and pg.locator('[data-gate-link-open]').count() == 1)
+    # v7.29: without an expired link there's no sign-in screen (visitors get the free planner); the Sign in panel offers a fresh link instead
+    R.check('normal visit: free planner, and Sign in offers "Email me a sign-in link"', pg.locator('[data-testid=gate]').count() == 0 and pg.evaluate(JS_INC, 'Sign in') and (pg.wait_for_timeout(500) or pg.locator('[data-signin-mode=link]').count() >= 1))
     pg.context.close()
     # the CRP sends a password reset / sign-in link to anyone with a login
     pg, errs, dl = ctx_for(b, 'crp', start='database'); pg.goto(URL); pg.wait_for_timeout(5000)
