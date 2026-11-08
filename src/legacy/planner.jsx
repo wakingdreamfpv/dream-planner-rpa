@@ -213,16 +213,16 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         // Planner data lives in this browser. Each identity gets its own database, chosen before anything loads:
         //   ''          the CRP / owner (and the offline file)       → 'wakingdream_planner' (unchanged)
         //   'crew:<e>'  a signed-in pilot or observer                → empty, theirs only
-        //   'free'      "Use free on this device"                    → empty, theirs only
-        //   'guest'     signed out at the sign-in screen             → empty
+        //   'free'      not signed in: the free planner (v7.29: the default for every visitor) → theirs only
         //   'pending'   signed in, role not known on this device yet → empty until the role arrives, then reload
+        //   ('guest', the old empty space behind the sign-in screen, is no longer used from v7.29)
         const WD_NS = (() => {
           try {
             if (typeof location === 'undefined' || !/^https?:$/.test(location.protocol) || window.__WD_CREW_MODE) return '';
             const test = localStorage.getItem('wd_edition_test');
             if (test === 'full') return ''; if (test === 'free') return 'free';
             const email = (localStorage.getItem('wd_auth_email') || '').toLowerCase();
-            if (!email) return localStorage.getItem('wd_edition') === 'free' ? 'free' : 'guest';
+            if (!email) return 'free';
             const role = localStorage.getItem('wd_role:' + email);
             return role === 'crp' ? '' : (role === 'pilot' || role === 'observer' || role === 'inactive') ? 'crew:' + email : 'pending';
           } catch (e) { return ''; }
@@ -5073,12 +5073,18 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // v7.11: crew currency from the cloud (CRP): certifications, the 3-flights rule and logged hours
           const [currency, setCurrency] = useState(() => (typeof window !== 'undefined' && window.wdCurrency) || null);
           useEffect(() => { const h = () => setCurrency(window.wdCurrency || null); window.addEventListener('wd-currency', h); return () => window.removeEventListener('wd-currency', h); }, []);
-          const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && editionPick === 'free');
-          const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && editionPick !== 'free';
-          const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); };
+          // v7.29: anyone not signed in (a QR scan, the website) goes straight into the free planner. While sign-in is still
+          // being checked, only a device that was already in the free space counts as free, so an owner's or crew
+          // member's own data is never treated as a free job.
+          const isFree = editionTest ? editionTest === 'free' : (IS_HOSTED && !signedIn && (auth.state === 'out' || WD_NS === 'free'));
+          const [gateOff, setGateOff] = useState(false);
+          const chooseFree = () => { lsSet('wd_edition', 'free'); setEditionPick('free'); setGateOff(true); };
           // v7.22: an invite or sign-in link that has expired or was already used (often opened first by an email app's
           // link checker) comes back with an error in the address: say so plainly and offer a fresh link right there
           const [linkErr] = useState(() => { try { const h = (location.hash || '') + '&' + (location.search || ''); const m = /error_code=([\w-]+)/.exec(h); return m ? m[1] : (/error=access_denied/.test(h) ? 'access_denied' : null); } catch (e) { return null; } });
+          // v7.29: the full sign-in screen now only appears for an expired or used invite / sign-in link, so crew get a fresh
+          // link. Everyone else signs in from the "Sign in" button on the free planner's purple bar.
+          const showGate = IS_HOSTED && !editionTest && auth.state === 'out' && !!linkErr && !gateOff;
           useEffect(() => { if (linkErr) { try { history.replaceState(null, '', location.pathname); sessionStorage.removeItem('wd_pw_intent'); } catch (e) { /* ok */ } } }, []); // eslint-disable-line
           const [gateLink, setGateLink] = useState(() => ({ open: false, email: '', busy: false, sent: false, err: '' }));
           const sendGateLink = async () => {
@@ -5094,7 +5100,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           useEffect(() => {
             if (!IS_HOSTED || editionTest || window.__WD_CREW_MODE) return;
             let want = null;
-            if (auth.state === 'out') { lsSet('wd_auth_email', ''); want = editionPick === 'free' ? 'free' : 'guest'; }
+            if (auth.state === 'out') { lsSet('wd_auth_email', ''); want = 'free'; }
             else if (auth.state === 'in' && auth.ready && auth.email) {
               const em = String(auth.email).toLowerCase();
               lsSet('wd_auth_email', em); lsSet('wd_role:' + em, auth.role || 'inactive');
@@ -6328,6 +6334,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               } }
             P.push('<!--S:end-->');
             P.push('<div style="margin-top:20pt;padding-top:8pt;border-top:1px solid '+S2+';font-size:7pt;color:'+S6+';text-align:center;">RPAS Operations Planner — Confidential — '+esc(val(co.name))+' · '+esc(val(co.email))+' · Generated '+new Date().toLocaleString('en-AU')+' · Planner v'+APP_VERSION+'</div>');
+            if (isFree) P.push('<div data-free-credit="1" style="margin-top:6pt;font-size:7pt;color:#7c3aed;text-align:center;">Planned with Dream Flight RPA Planner · planner.wakingdreamfpv.com</div>');
             P.push('</body></html>');
 
             let html=P.join('\n');
@@ -10831,7 +10838,7 @@ View in the Database & Settings tab.`);
                   <div className="fixed inset-0 z-[4800] bg-slate-900/60 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden" data-testid="free-intro">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden my-2 sm:my-6">
                       <div className="px-5 py-4 text-white relative" style={{ background: 'linear-gradient(135deg,#1a0533 0%,#2d0a5e 60%,#4c1d95 100%)' }}>
-                        <button type="button" onClick={done} data-free-intro-close="1" aria-label="Close" className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 text-xl"><i className="fa-solid fa-xmark"></i></button>
+                        <button type="button" onClick={done} data-free-intro-close="1" aria-label="Close" className="absolute z-10 top-2 right-2 w-11 h-11 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 text-xl"><i className="fa-solid fa-xmark"></i></button>
                         <div className="text-xs uppercase tracking-widest opacity-75">Free on this device</div>
                         <h2 className="text-xl font-bold mt-1 pr-8">Plan your job, fly, log it, export the PDF</h2>
                       </div>
