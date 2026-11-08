@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.30';
+        const APP_VERSION = '7.31';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10621,6 +10621,34 @@ View in the Database & Settings tab.`);
               oonp: {}, oonpMode: false, keData: { enabled: false, rpa: '', weight: 0, useAero: false, rho: 1.225, cd: 1.2, area: 0.05 }, extraKe: [], ballistic: { enabled: false, height: 5, speed: 5 },
             };
           };
+          // v7.31: the sample job (Acme Corp — Suncorp Stadium), a finished plan visitors open as their own copy to explore and edit.
+          // public/demo/acme-suncorp.json: { plan, fleet, rpaBatteries } (third-party images left out). Needs internet.
+          const SAMPLE_JOB_URL = 'demo/acme-suncorp.json';
+          const openSampleJob = async () => {
+            if (dirty && !window.confirm('Opening the sample job replaces the job that is open now. Unsaved changes will be lost.\n\nContinue?')) return;
+            let smp = null;
+            try { const r = await fetch(SAMPLE_JOB_URL, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); smp = await r.json(); }
+            catch (e) { alert('The sample job needs an internet connection. Try again when you have signal.'); return; }
+            const fl = smp.fleet || {}, rb = smp.rpaBatteries || {};
+            setDb(prev => {
+              const fleet = { ...(prev.fleet || {}) }; Object.keys(fl).forEach(k => { if (!fleet[k]) fleet[k] = fl[k]; });
+              const rpaBatteries = { ...(prev.rpaBatteries || {}) }; Object.keys(rb).forEach(k => { if (!rpaBatteries[k]) rpaBatteries[k] = rb[k]; });
+              const batteries = [...new Set([...(prev.batteries || []), ...Object.values(rb).flat()])];
+              return { ...prev, fleet, rpaBatteries, batteries };
+            });
+            const plan = JSON.parse(JSON.stringify(smp.plan || {}));
+            plan.overview = { ...(plan.overview || {}), uid: newUid() };
+            setTimeout(() => { handleLoadPlan(plan, { silent: true }); setActiveTab('preliminary'); try { window.scrollTo({ top: 0 }); } catch (e) {} }, 60);
+          };
+          useEffect(() => { const h = () => openSampleJob(); window.addEventListener('wd-open-sample', h); return () => window.removeEventListener('wd-open-sample', h); }); // eslint-disable-line
+          // a link with ?sample opens it straight away (second QR code / landing page)
+          const sampleLinkRef = useRef(false);
+          useEffect(() => {
+            if (sampleLinkRef.current || !dbReady || !isFree) return;
+            let want = false; try { want = /[?&]sample\b/.test(location.search); if (want) history.replaceState(null, '', location.pathname + location.hash); } catch (e) {}
+            sampleLinkRef.current = true;
+            if (want) { lsSet('wd_free_intro', new Date().toISOString()); lsSet('wd_welcomed', new Date().toISOString()); setFreeIntroSeen(true); setTimeout(openSampleJob, 400); }
+          }, [dbReady, isFree]); // eslint-disable-line
           const startTour = (kind) => {
             const A = SAMPLE_AIRCRAFT[kind];
             if (dirty && !window.confirm('Starting the tour replaces the job that is open now. Unsaved changes will be lost.\n\nContinue?')) return;
@@ -10861,19 +10889,17 @@ View in the Database & Settings tab.`);
                         <h2 className="text-xl font-bold mt-1 pr-8">Plan your job, fly, log it, export the PDF</h2>
                       </div>
                       <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700">
-                        <ul className="space-y-2">
-                          <li className="flex gap-2"><i className="fa-solid fa-check text-emerald-600 mt-1"></i><span>Everything for <b>one job</b>: plan, JSA and risk, approval, flight log and the PDF. Use it for paid work.</span></li>
-                          <li className="flex gap-2"><i className="fa-solid fa-floppy-disk text-violet-600 mt-1"></i><span>The job stays <b>saved on this device</b> until you start a new one, so you can plan now and come back after the flight to finish the log.</span></li>
-                          <li className="flex gap-2"><i className="fa-solid fa-file-pdf text-violet-600 mt-1"></i><span><b>Keep your PDFs.</b> Free mode doesn't keep a records library: the PDF is your record.</span></li>
-                          <li className="flex gap-2"><i className="fa-solid fa-mobile-screen text-violet-600 mt-1"></i><span>Planning on a laptop and logging on your phone? Use <b>Settings › Export this job</b>, then open the file on the phone.</span></li>
-                        </ul>
-                        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-1">See it with a sample job first (2 minutes)</div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <p>Plan a whole job (plan, JSA and risk, approval, flight log and the PDF), free with no sign-up. It's saved on this device, and you can use it for paid work.</p>
+                        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-1">How would you like to start?</div>
+                        <button type="button" data-free-start="1" onClick={() => { done(); setActiveTab('preliminary'); }} className="w-full flex items-start gap-3 text-left rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 px-4 py-3"><i className="fa-solid fa-pen-to-square text-violet-600 mt-1 w-5"></i><span><span className="block font-bold text-slate-800">Start a plan from scratch</span><span className="block text-xs text-slate-600">A blank job, ready for real work.</span></span></button>
+                        {IS_HOSTED && <button type="button" data-free-sample="1" onClick={() => { done(); openSampleJob(); }} className="w-full flex items-start gap-3 text-left rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 px-4 py-3"><i className="fa-solid fa-map-location-dot text-violet-600 mt-1 w-5"></i><span><span className="block font-bold text-slate-800">See a sample job</span><span className="block text-xs text-slate-600">Acme Corp, Suncorp Stadium: a finished over-people (OONP) plan with map, 3D view, risks and approval. Explore and edit your own copy.</span></span></button>}
+                        <div className="rounded-xl border border-slate-200 px-4 py-3" data-free-tour-card="1"><div className="flex items-start gap-3"><i className="fa-solid fa-route text-violet-600 mt-1 w-5"></i><span><span className="block font-bold text-slate-800">Take the 2-minute tour</span><span className="block text-xs text-slate-600">A guided walk through each section with a simple job. Pick a drone:</span></span></div>
+                          <div className="grid grid-cols-2 gap-2 mt-2">
                           <button type="button" data-free-tour="mini" onClick={() => { done(); startTour('mini'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-camera text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">DJI Mini 4 Pro</span></button>
                           <button type="button" data-free-tour="whoop" onClick={() => { done(); startTour('whoop'); }} className="border border-violet-200 hover:bg-violet-50 rounded-xl px-3 py-2.5 text-left"><i className="fa-solid fa-vr-cardboard text-violet-600"></i><span className="block font-semibold text-slate-800 text-sm mt-1">3.5" FPV cinewhoop</span></button>
-                        </div>
+                          </div></div>
                         {IS_HOSTED && !betaEnded() && <button type="button" data-free-beta="1" onClick={() => { done(); setBetaOpen(true); }} className="w-full flex items-start gap-3 text-left rounded-xl border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 px-4 py-3"><i className="fa-solid fa-rocket text-amber-600 mt-1"></i><span><span className="block font-bold text-amber-950">Want the full planner? Join the free beta</span><span className="block text-xs text-amber-900">Company setup, saved jobs and records. Free until {BETA_LAST_DAY_TEXT}, no payment details.</span></span></button>}
-                        <button type="button" data-free-start="1" onClick={() => { done(); setActiveTab('preliminary'); }} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold">Start planning</button>
+                        <p className="text-xs text-slate-500"><i className="fa-solid fa-file-pdf mr-1"></i>Free mode keeps one job at a time: keep your PDFs, they're your record. Planning on a laptop and logging on your phone? Use <b>Settings › Export this job</b>.</p>
                         {IS_HOSTED && <button type="button" data-free-enquiry="1" onClick={() => { done(); setEnquiry('free-welcome'); }} className="w-full text-sm text-violet-700 font-semibold underline">Running a company? Get it for your company</button>}
                       </div>
                     </div>
