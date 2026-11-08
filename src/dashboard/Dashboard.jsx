@@ -579,6 +579,7 @@ export default function Dashboard({ d, a }) {
           );
         })}
       </div>
+      {d.free && !d.crewMode && /^https?:$/.test(location.protocol) && <div className="text-center"><button type="button" data-dash-sample="1" onClick={() => window.dispatchEvent(new Event('wd-open-sample'))} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-violet-200 bg-white text-violet-800 font-semibold text-sm hover:bg-violet-50"><i className="fa-solid fa-map-location-dot"></i>See a sample job: Acme Corp, Suncorp Stadium</button></div>}
       {d.free && !d.crewMode && <p className="text-xs text-slate-500 text-center">Saved drafts, flight records, pilot and fleet hours, compliance and setup widgets come with an account.{/^https?:$/.test(location.protocol) && (() => { try { return localStorage.getItem('wd_edition') !== 'beta'; } catch (e) { return true; } })() && <> <button type="button" data-dash-beta="1" onClick={() => window.dispatchEvent(new Event('wd-open-beta'))} className="text-violet-700 font-semibold underline">Try them free in the beta</button> ·</>}{/^https?:$/.test(location.protocol) && <> <button type="button" data-dash-enquiry="1" onClick={() => window.dispatchEvent(new CustomEvent('wd-open-enquiry', { detail: 'free-dashboard' }))} className="text-violet-700 font-semibold underline">Get it for your company</button></>}</p>}
     </div>
   );

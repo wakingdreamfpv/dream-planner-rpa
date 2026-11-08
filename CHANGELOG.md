@@ -1,5 +1,15 @@
 # Planner changelog
 
+## v7.31 — 9 Nov 2026 — Sample job: Acme Corp, Suncorp Stadium
+- **Three ways to start:** the free planner's welcome now asks "How would you like to start?": **Start a plan from scratch**, **See a sample job** or **Take the 2-minute tour** (camera drone or FPV cinewhoop), with the free beta and "Get it for your company" underneath.
+- **The sample job** is Mike's finished stadium concert plan (Acme Corp, Suncorp Stadium, 7 Dec 2026, over people): plan, map with paths and zones, 3D view, risks, approval and flight log, with its two aircraft. It opens as the visitor's own copy to explore, edit, save and export as a PDF. Your own records aren't touched.
+  - Also from **See a sample job** on the free dashboard, the landing page, and links ending in **?sample** (e.g. a second QR code).
+  - Left out of the public copy: the official Suncorp Stadium seating map overlay and the ticket-site seating map (both belong to others). The operator is a made-up "Sample Drone Co Pty Ltd".
+  - It needs internet to open. Without it, the planner says so.
+- **Landing page:** a third button, **See a sample job**.
+- **Supabase:** nothing to do (0013_enquiries.sql from v7.30 still needs running if it hasn't been).
+- **Tests:** new suite for the welcome, the sample job and its links (15 checks); everything else passes.
+
 ## v7.30 — 9 Nov 2026 — Free beta until 9 January 2027; "Get it for your company" enquiries
 - **Free beta (new):** anyone on the free planner can tap **Free beta: full planner** (purple bar, free welcome box, dashboard, or a link ending in **?beta**). They give their name, email and company (no payment details) and get the full planner on that device until **9 January 2027**: company setup, fleet and batteries, saved jobs and drafts, flight records, templates and the calendar. Their job from the free planner comes with them, and the company setup opens straight away.
   - Their data stays **on their device only** (its own private space, no account, nothing shared). An amber bar shows the days left with **Back up** and **Get it for your company** buttons. PDFs end with "Planned with Dream Flight RPA Planner".
