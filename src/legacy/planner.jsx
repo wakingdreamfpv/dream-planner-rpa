@@ -10804,7 +10804,7 @@ View in the Database & Settings tab.`);
                   <div className="min-h-full flex flex-col items-center justify-center px-4 py-8" style={{ paddingTop: 'max(2rem, env(safe-area-inset-top))', paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}>
                     <div className="text-center text-white mb-6">
                       <i className="fa-solid fa-plane-departure text-4xl" style={{ color: '#c084fc' }}></i>
-                      <h1 className="text-2xl sm:text-3xl font-extrabold mt-3">Dream Flight RPA Planner</h1>
+                      <h1 className="text-2xl sm:text-3xl font-extrabold mt-3">Dream Flight RPA Planner <span data-beta-badge="1" className="inline-block align-middle ml-1 px-2 py-0.5 rounded-md bg-amber-400 text-amber-950 text-xs font-extrabold tracking-wider leading-none" style={{ transform: 'rotate(-4deg)' }}>BETA</span></h1>
                       <p className="text-sm text-violet-200 mt-1">Flight plans, JSA, risk and flight records for CASA RPAS operations</p>
                     </div>
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 sm:p-6 space-y-3">
@@ -11283,6 +11283,7 @@ View in the Database & Settings tab.`);
                     <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2 text-white min-w-0">
                       <i className="fa-solid fa-plane-departure text-lg sm:text-2xl shrink-0" style={{color:"#c084fc"}}></i>
                       <span className="truncate" data-head-company="1">{(isFree ? (overview.operatorProfile || {}).name : isCrewRole ? ((crewCloud && crewCloud.company) || {}).name : (db.companyProfile && db.companyProfile.name)) || 'Dream Planner RPA'}</span>
+                      <span data-beta-badge="1" title="Beta: the planner is still being improved. Keep your exported PDFs." className="shrink-0 px-2 py-0.5 rounded-md bg-amber-400 text-amber-950 text-[10px] sm:text-xs font-extrabold tracking-wider leading-none" style={{ transform: 'rotate(-4deg)' }}>BETA</span>
                     </h1>
                     <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{(() => { const co = isCrewRole ? ((crewCloud && crewCloud.company) || {}) : (db.companyProfile || {}); return co.reocNumber ? ` · ReOC: ${co.reocNumber}` : ''; })()} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
                   </div>

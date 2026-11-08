@@ -1,5 +1,5 @@
 # v7.29: visitors (QR scan / website) land straight in the free planner, no sign-in screen; Sign in stays on the purple bar;
-# an expired invite link still gets the sign-in screen; the free PDF says "Planned with Dream Flight RPA Planner" without "(free edition)"
+# a BETA sticker shows in the app header; an expired invite link still gets the sign-in screen; the free PDF says "Planned with Dream Flight RPA Planner" without "(free edition)"
 import sys, os; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *
 R = Run(); ensure_server()
@@ -10,6 +10,7 @@ with sync_playwright() as p:
     pg.goto(URL); pg.wait_for_timeout(7500)
     R.check('a new visitor gets the free planner, not the sign-in screen', pg.locator('[data-testid=gate]').count() == 0 and pg.locator('[data-free-banner]').count() == 1)
     R.check('a new visitor sees the free welcome', pg.locator('[data-free-intro-close]').count() == 1)
+    R.check('BETA sticker shows for visitors', pg.locator('header [data-beta-badge]').count() == 1 and pg.locator('header [data-beta-badge]').inner_text() == 'BETA')
     R.check('Sign in is on the free bar', pg.locator('[data-free-banner] button', has_text='Sign in').count() == 1)
     pg.click('[data-free-intro-close]'); pg.wait_for_timeout(300)
     pg.evaluate(CAPTURE_PDF)
@@ -40,6 +41,7 @@ with sync_playwright() as p:
     R.check('a signed-in CRP has no free bar', pg.locator('[data-free-banner]').count() == 0 and pg.locator('[data-testid=gate]').count() == 0)
     pg.evaluate(CAPTURE_PDF); pg.evaluate(JS_INC, 'Export PDF'); pg.wait_for_timeout(3000)
     pdfs = pg.evaluate('window.__pdfs') or []
+    R.check('BETA sticker shows when signed in, but not in the PDF', pg.locator('header [data-beta-badge]').count() == 1 and pdfs and 'BETA' not in pdfs[-1])
     R.check('a CRP PDF has no credit line', pdfs and 'data-free-credit' not in pdfs[-1], len(pdfs))
     R.check('CRP: no page errors', not errs, errs[:2])
     pg.context.close()
