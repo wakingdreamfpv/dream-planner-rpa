@@ -4,6 +4,7 @@
 // When the beta ends they go back to the free planner, and can always download everything they made as a backup file.
 import React, { useState } from 'react';
 import { getSupabase } from '../cloud/client.js';
+import { alertMike } from './Enquiries.jsx';
 
 const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
 const lsSet = (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {} };
@@ -33,6 +34,7 @@ export const sendBetaSignup = async (info) => {
       p_message: 'Joined the free beta (until ' + BETA_LAST_DAY_TEXT + ')', p_source: 'beta-signup', p_consent: true });
     const r = await Promise.race([call, new Promise((res) => setTimeout(() => res({ error: { message: 'timeout' } }), 8000))]);
     if (r && r.error && !/too many/i.test(String(r.error.message))) return false;
+    if (r && !r.error) alertMike(sb, r.data);
     lsSet('wd_beta', JSON.stringify({ ...info, sent: true })); return true;
   } catch (e) { return false; }
 };

@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.31';
+        const APP_VERSION = '7.32';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -6081,9 +6081,9 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 P.push('</table>');
               }
               if ((mo.paths || []).length) {
-                P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Path</th><th style="'+th+'">Drone</th><th style="'+th+'">Speed</th><th style="'+th+'">Length</th><th style="'+th+'">Heights (m above take-off)</th><th style="'+th+'">Result</th></tr>');
-                mo.paths.forEach(p => { const r = chk && chk.paths[p.id], st = r ? (r.legs.some(l => l.status === 'stop') ? 'To fix' : r.legs.some(l => l.status === 'warn') ? 'To check' : 'Clear') : '—';
-                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+opsFmtSpeed(p.speed || 0)+'</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td><td style="'+td+'font-weight:700;color:'+(st === 'To fix' ? '#b91c1c' : st === 'To check' ? '#b45309' : '#15803d')+';">'+st+'</td></tr>'); });
+                P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'">Path</th><th style="'+th+'">Drone</th><th style="'+th+'">Speed</th><th style="'+th+'">Length</th><th style="'+th+'">Heights (m above take-off)</th></tr>');
+                mo.paths.forEach(p => { const r = chk && chk.paths[p.id];
+                  P.push('<tr><td style="'+td+'font-weight:700;">'+esc(p.name)+'</td><td style="'+td+'">'+esc(p.drone || '—')+'</td><td style="'+td+'">'+opsFmtSpeed(p.speed || 0)+'</td><td style="'+td+'">'+(r ? Math.round(r.length) + ' m' : '—')+'</td><td style="'+td+'">'+p.pts.map((q, i) => (i + 1) + ': ' + (Math.round((Number(q[2]) || 0) * 10) / 10)).join(' · ')+'</td></tr>'); });
                 P.push('</table>');
               }
               const notes = (mo.points || []).filter(p => p.text || p.kind === 'poi' || p.kind === 'note');
@@ -6097,11 +6097,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 else P.push('<div style="font-size:7.5pt;color:'+S6+';">(picture not saved on this device)</div>');
                 P.push('</div>');
               });
-              // v7.12: the CRP / pilot chooses whether the checks print (all, only open ones, or none); acknowledged ones show their note
-              { const mode = ((mo.settings || {}).pdfChecks) || 'all', list = chk ? chk.issues.filter(q => mode === 'all' || (mode === 'open' && !q.ack)) : [];
-                if (mode !== 'none' && list.length) P.push('<div style="font-size:7.5pt;border:1px solid #fcd34d;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;margin-bottom:8pt;break-inside:avoid;"><b>Map checks</b><br>' + list.map(q => q.ack
-                  ? '<b style="color:#475569">Acknowledged:</b> ' + esc(q.text) + ' <i style="color:#475569">— “' + esc(q.ack.note || 'OK') + '”' + (q.ack.by ? ', ' + esc(q.ack.by) : '') + '</i>'
-                  : (q.lvl === 'stop' ? '<b style="color:#b91c1c">Fix:</b> ' : '<b style="color:#b45309">Check:</b> ') + esc(q.text)).join('<br>') + '</div>'); }
+              // v7.32: the map's own checks never print (they're for the pilot in the planner, not the client's PDF)
               P.push('</div>');
             }
 

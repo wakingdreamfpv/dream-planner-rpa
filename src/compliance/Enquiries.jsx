@@ -4,6 +4,8 @@
 import React, { useEffect, useState } from 'react';
 import { getSupabase } from '../cloud/client.js';
 
+// v7.32: email Mike about it (the enquiry-alert function sends each one once; if it fails, it's still in Settings › Enquiries)
+export const alertMike = (sb, id) => { if (sb && id) { try { Promise.resolve(sb.functions.invoke('enquiry-alert', { body: { id } })).catch(() => {}); } catch (e) { /* still saved */ } } };
 export const ENQUIRY_FALLBACK_EMAIL = 'mike@wakingdreamfpv.com';
 export const INTERESTS = [
   ['founder', 'Founding member (beta)', 'Early access and a founder price'],
@@ -32,8 +34,9 @@ export function EnquiryDialog({ open, source, onClose }) {
     const sb = getSupabase();
     try {
       if (!sb) throw new Error('offline');
-      const { error } = await sb.rpc('submit_enquiry', { p_name: f.name, p_email: f.email, p_company: f.company, p_phone: f.phone, p_interest: f.interest, p_message: f.message, p_source: source || 'free', p_consent: true });
+      const { data: enqId, error } = await sb.rpc('submit_enquiry', { p_name: f.name, p_email: f.email, p_company: f.company, p_phone: f.phone, p_interest: f.interest, p_message: f.message, p_source: source || 'free', p_consent: true });
       if (error) throw error;
+      alertMike(sb, enqId);
       setDone(true);
     } catch (e) {
       const m = String((e && e.message) || e);

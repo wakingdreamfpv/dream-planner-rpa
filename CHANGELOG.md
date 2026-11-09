@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.32 — 9 Nov 2026 — Enquiry emails, cleaner map PDF, landing page pictures
+- **Map checks never print:** the advanced ops map's own checks (the yellow "Map checks" box, and the "To fix / To check" column for flight paths) are left out of every PDF, free or signed in. They're still shown to you in the map editor, which now says they're for you only.
+- **Enquiries are emailed to you:** each "Get it for your company" enquiry and each beta sign-up is emailed to mike@wakingdreamfpv.com, once, with the person's details. Hit Reply to answer them. They also stay in Settings › Enquiries. If email ever fails, nothing is lost.
+- **Sample job:** the Suncorp Stadium map overlay is back (permission confirmed). The ticket-site seating map is still left out.
+- **Landing page:** a new "See it in action" section with six real screens from the sample job: the 3D ops map with flight paths, the 2D ops area map, the ballistic impact and energy chart, the kinetic energy limits, the RF band map, and a logged flight with its GPS track (sample data).
+- **Supabase:** (1) run `0014_enquiry_emails.sql` in the SQL Editor; (2) create the edge function **enquiry-alert** from `supabase/functions/enquiry-alert/index.ts`, with Verify JWT **OFF**. It uses the RESEND_API_KEY you already have.
+- **Tests:** checks added for the email hook-up, the PDF without map checks, the stadium map and the landing page pictures; everything passes.
+
 ## v7.31 — 9 Nov 2026 — Sample job: Acme Corp, Suncorp Stadium
 - **Three ways to start:** the free planner's welcome now asks "How would you like to start?": **Start a plan from scratch**, **See a sample job** or **Take the 2-minute tour** (camera drone or FPV cinewhoop), with the free beta and "Get it for your company" underneath.
 - **The sample job** is Mike's finished stadium concert plan (Acme Corp, Suncorp Stadium, 7 Dec 2026, over people): plan, map with paths and zones, 3D view, risks, approval and flight log, with its two aircraft. It opens as the visitor's own copy to explore, edit, save and export as a PDF. Your own records aren't touched.
