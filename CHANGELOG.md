@@ -1,5 +1,14 @@
 # Planner changelog
 
+## v7.33 — 10 Nov 2026 — Beta "set up now or later", landing page and poster
+- **Beta sign-up:** after your name and email, the beta asks **Set up now** (opens company setup) or **Set up later** (straight into the planner; set up any time from Database & Settings).
+- **"Get it for your company" form** now matches the plans: company accounts launch on 10 January 2027; options are Founding member (launch offer), Monthly and Annual plans (from 10 January 2027), Your own copy (source licence) and Just keep me posted. People not yet in the beta get a "Join the free beta" link.
+- **Landing page:** a new "Why it's different" section (built for OONP and EVLOS, made by commercial operators, easy and compliant, solo to multi-crew, pilot hours, logins and registers) and a new headline. The pictures now start with a logged Mini 5 Pro flight (height and speed chart, GPS track) and the kinetic energy grid, then the 3D map.
+- **Sample job:** the Mini 5 Pro now has its weight (0.28 kg) in the fleet, so imported flights show their peak impact energy.
+- **Expo:** a one-page A4 poster with QR codes (`expo/poster-A4.pdf`), no pricing.
+- **Supabase:** nothing new (v7.32's 0014 SQL and the enquiry-alert function, if not done yet).
+- **Tests:** checks added for the set-up choice and the form wording; everything passes.
+
 ## v7.32 — 9 Nov 2026 — Enquiry emails, cleaner map PDF, landing page pictures
 - **Map checks never print:** the advanced ops map's own checks (the yellow "Map checks" box, and the "To fix / To check" column for flight paths) are left out of every PDF, free or signed in. They're still shown to you in the map editor, which now says they're for you only.
 - **Enquiries are emailed to you:** each "Get it for your company" enquiry and each beta sign-up is emailed to mike@wakingdreamfpv.com, once, with the person's details. Hit Reply to answer them. They also stay in Settings › Enquiries. If email ever fails, nothing is lost.

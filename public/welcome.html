@@ -70,11 +70,12 @@
   .shot a { display:block; background:#0f172a; }
   .shot img { display:block; width:100%; height:300px; object-fit:cover; object-position: center top; }
   .shot.wide img { height:auto; max-height:560px; }
+  .shot.tall img { height:520px; background:#fff; }
   .shot figcaption { padding: 14px 18px 16px; }
   .shot figcaption b { display:block; font-size:17px; margin-bottom:3px; }
   .shot figcaption span { color: var(--muted); font-size: 15px; }
   .shots-note { color: var(--muted); font-size: 13px; margin-top: 14px; }
-  @media (max-width: 860px) { .shots { grid-template-columns: 1fr; } .shot img { height:auto; max-height:420px; } }
+  @media (max-width: 860px) { .shots { grid-template-columns: 1fr; } .shot img, .shot.tall img { height:auto; max-height:520px; } }
 </style>
 </head>
 <body>
@@ -86,8 +87,8 @@
     </div>
     <div class="hero-grid">
       <div>
-        <h1>Plan, approve and log every drone job. Ready for CASA.</h1>
-        <p class="lead">Your operations plan (Form F.1), JSA and risk register, approvals, flight logs and crew compliance in one app that works on your phone, tablet or laptop. One tap gives you a professional PDF for your client, your records and CASA.</p>
+        <h1>The RPAS planner built for the hard jobs. Ready for CASA.</h1>
+        <p class="lead">Made by working commercial drone operators for complex operations like flying over people (OONP) and EVLOS. Your operations plan (Form F.1), JSA and risk register, energy limits, approvals and flight logs in one app that’s easy to use on your phone, tablet or laptop. One tap gives you a professional PDF for your client, your records and CASA.</p>
         <div class="ctas">
           <a class="btn btn-primary" href="https://planner.wakingdreamfpv.com/">Try it free now</a>
           <a class="btn btn-beta" href="https://planner.wakingdreamfpv.com/?beta">Join the free beta</a>
@@ -103,6 +104,21 @@
     </div>
   </div>
 </header>
+
+<section class="band">
+  <div class="wrap">
+    <h2>Why it’s different</h2>
+    <p class="sub">Most planning tools stop at a map and a checklist. This one was built on real jobs: stadium concerts, events and film sets.</p>
+    <div class="features">
+      <div class="f"><h4>Built for complex operations</h4><p>OONP and EVLOS are built in: per-drone energy limits (15 J and 34 J), over-people zones and buffers, ballistic fall zones, observer planning and RF coordination.</p></div>
+      <div class="f"><h4>Made by commercial operators</h4><p>Designed and used by a working Chief Remote Pilot (ReOC holder), around the paperwork CASA actually asks for. Not by a software company guessing.</p></div>
+      <div class="f"><h4>Easy to use, compliant by default</h4><p>Plain-English steps, ready-made templates and a live list of what’s still missing (MOS 10.04), so nothing gets left out of the plan.</p></div>
+      <div class="f"><h4>Perfect for solo operators</h4><p>Plan, assess and log a job on your own in minutes, on site or in the office, with your company, fleet and batteries filled in for you.</p></div>
+      <div class="f"><h4>Ready for multi-crew teams</h4><p>Each pilot signs in with their own login, logs their flight hours, and signs off their part. RPIC and CRP approvals are kept with the job.</p></div>
+      <div class="f"><h4>Compliance registers</h4><p>Pilot hours, currency, inductions, competencies, aircraft and batteries in one register, with reminders before anything expires.</p></div>
+    </div>
+  </div>
+</section>
 
 <section>
   <div class="wrap">
@@ -158,12 +174,12 @@
     <h2>See it in action</h2>
     <p class="sub">Real screens from the sample job: a night concert at Suncorp Stadium, flown over people (OONP). <a href="/?sample">Open the sample job yourself</a>.</p>
     <div class="shots">
+      <figure class="shot tall"><a href="welcome-img/flight-log.jpg" target="_blank" rel="noopener"><img src="welcome-img/flight-log.jpg" alt="Logged flights with GPS" loading="lazy"></a><figcaption><b>Logged flights with GPS</b><span>Import the flight log and each flight is matched to its aircraft: height and speed over time, the GPS track on the map, battery, link quality and peak impact energy.</span></figcaption></figure>
+      <figure class="shot tall"><a href="welcome-img/energy-grid.jpg" target="_blank" rel="noopener"><img src="welcome-img/energy-grid.jpg" alt="Kinetic energy grid" loading="lazy"></a><figcaption><b>Kinetic energy grid</b><span>The impact energy at every height and speed for each aircraft, with the 15 J and 34 J limits marked, so your OONP limits are worked out for you.</span></figcaption></figure>
       <figure class="shot wide"><a href="welcome-img/ops-map-3d.jpg" target="_blank" rel="noopener"><img src="welcome-img/ops-map-3d.jpg" alt="3D ops map with flight paths" loading="lazy"></a><figcaption><b>3D ops map with flight paths</b><span>Zones rise to their height limits on real terrain and satellite imagery. Flight paths follow the ground, with a side-on height profile.</span></figcaption></figure>
       <figure class="shot"><a href="welcome-img/ops-map-2d.jpg" target="_blank" rel="noopener"><img src="welcome-img/ops-map-2d.jpg" alt="Map the operations area" loading="lazy"></a><figcaption><b>Map the operations area</b><span>Draw exclusion, over-people and clear-of-people zones, take-off and emergency landing points, buffers and flight paths. Lay the venue map over the top.</span></figcaption></figure>
       <figure class="shot"><a href="welcome-img/ballistic-chart.jpg" target="_blank" rel="noopener"><img src="welcome-img/ballistic-chart.jpg" alt="Ballistic impact and energy" loading="lazy"></a><figcaption><b>Ballistic impact and energy</b><span>If the drone drops at your planned height and speed, where does it land and how hard does it hit? It shows the fall zones and the impact energy in joules.</span></figcaption></figure>
-      <figure class="shot"><a href="welcome-img/ke-chart.jpg" target="_blank" rel="noopener"><img src="welcome-img/ke-chart.jpg" alt="Kinetic energy limits" loading="lazy"></a><figcaption><b>Kinetic energy limits</b><span>The highest speed at each height that keeps you within 15 J or 34 J, for each aircraft, so your OONP limits are worked out for you.</span></figcaption></figure>
-      <figure class="shot"><a href="welcome-img/rf-bands.jpg" target="_blank" rel="noopener"><img src="welcome-img/rf-bands.jpg" alt="RF band map" loading="lazy"></a><figcaption><b>RF band map</b><span>List every transmitter on site: yours, broadcast, lighting and other drone teams. Clashes are flagged before the show, not during it.</span></figcaption></figure>
-      <figure class="shot wide"><a href="welcome-img/flight-log.jpg" target="_blank" rel="noopener"><img src="welcome-img/flight-log.jpg" alt="Logged flights with GPS" loading="lazy"></a><figcaption><b>Logged flights with GPS</b><span>Import the radio’s telemetry log. Each flight is matched to its aircraft, with the GPS track on the map, height, speed, battery and link quality.</span></figcaption></figure>
+      <figure class="shot wide"><a href="welcome-img/rf-bands.jpg" target="_blank" rel="noopener"><img src="welcome-img/rf-bands.jpg" alt="RF band map" loading="lazy"></a><figcaption><b>RF band map</b><span>List every transmitter on site: yours, broadcast, lighting and other drone teams. Clashes are flagged before the show, not during it.</span></figcaption></figure>
     </div>
     <p class="shots-note">Tap a picture to see it full size. The flight log shown is sample data.</p>
   </div>
