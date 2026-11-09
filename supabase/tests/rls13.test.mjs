@@ -77,5 +77,13 @@ const m3 = await as(mike, () => tryq(`update public.enquiries set email='changed
 check('CRP cannot rewrite what the person sent', !!m3.error, m3.error);
 const m4 = await as(mike, () => tryq(`delete from public.enquiries where id=$1 returning id`, [id]));
 check('enquiries are never deleted from the app', !!m4.error || m4.rows.length === 0);
+// v7.32: 0014 adds emailed_at (set only by the enquiry-alert function, with the service key)
+await db.exec(rd('0014_enquiry_emails.sql')); await db.exec(rd('0014_enquiry_emails.sql'));
+const e1 = await tryq(`select emailed_at from public.enquiries where id=$1`, [id]);
+check('migration 0014 runs twice; new enquiries are not yet emailed', e1.rows && e1.rows[0].emailed_at === null, JSON.stringify(e1));
+const e2 = await anon(() => tryq(`update public.enquiries set emailed_at = null`));
+check('visitors cannot touch emailed_at', !!e2.error, e2.error);
+const e3 = await as(mike, () => tryq(`update public.enquiries set emailed_at = now() where id=$1 returning id`, [id]));
+check('the CRP cannot change emailed_at from the app', !!e3.error, e3.error);
 console.log(pass + ' / ' + (pass + fail));
 if (fail) process.exit(1);

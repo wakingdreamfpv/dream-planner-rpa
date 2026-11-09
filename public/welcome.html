@@ -64,6 +64,17 @@
     .hero-grid, .plans, .features, .timeline { grid-template-columns: 1fr; }
     .qr-card { display:none; }
   }
+  .shots { display:grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .shot { margin:0; background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden; box-shadow: 0 10px 30px -18px rgba(45,10,94,.35); }
+  .shot.wide { grid-column: 1 / -1; }
+  .shot a { display:block; background:#0f172a; }
+  .shot img { display:block; width:100%; height:300px; object-fit:cover; object-position: center top; }
+  .shot.wide img { height:auto; max-height:560px; }
+  .shot figcaption { padding: 14px 18px 16px; }
+  .shot figcaption b { display:block; font-size:17px; margin-bottom:3px; }
+  .shot figcaption span { color: var(--muted); font-size: 15px; }
+  .shots-note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  @media (max-width: 860px) { .shots { grid-template-columns: 1fr; } .shot img { height:auto; max-height:420px; } }
 </style>
 </head>
 <body>
@@ -139,6 +150,22 @@
       </div>
     </div>
     <p class="sub" style="margin-top:18px">Want your own copy of the planner to customise for your business? <a href="mailto:mike@wakingdreamfpv.com?subject=Dream%20Flight%20RPA%20Planner%3A%20own%20copy">Talk to us</a>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>See it in action</h2>
+    <p class="sub">Real screens from the sample job: a night concert at Suncorp Stadium, flown over people (OONP). <a href="/?sample">Open the sample job yourself</a>.</p>
+    <div class="shots">
+      <figure class="shot wide"><a href="welcome-img/ops-map-3d.jpg" target="_blank" rel="noopener"><img src="welcome-img/ops-map-3d.jpg" alt="3D ops map with flight paths" loading="lazy"></a><figcaption><b>3D ops map with flight paths</b><span>Zones rise to their height limits on real terrain and satellite imagery. Flight paths follow the ground, with a side-on height profile.</span></figcaption></figure>
+      <figure class="shot"><a href="welcome-img/ops-map-2d.jpg" target="_blank" rel="noopener"><img src="welcome-img/ops-map-2d.jpg" alt="Map the operations area" loading="lazy"></a><figcaption><b>Map the operations area</b><span>Draw exclusion, over-people and clear-of-people zones, take-off and emergency landing points, buffers and flight paths. Lay the venue map over the top.</span></figcaption></figure>
+      <figure class="shot"><a href="welcome-img/ballistic-chart.jpg" target="_blank" rel="noopener"><img src="welcome-img/ballistic-chart.jpg" alt="Ballistic impact and energy" loading="lazy"></a><figcaption><b>Ballistic impact and energy</b><span>If the drone drops at your planned height and speed, where does it land and how hard does it hit? It shows the fall zones and the impact energy in joules.</span></figcaption></figure>
+      <figure class="shot"><a href="welcome-img/ke-chart.jpg" target="_blank" rel="noopener"><img src="welcome-img/ke-chart.jpg" alt="Kinetic energy limits" loading="lazy"></a><figcaption><b>Kinetic energy limits</b><span>The highest speed at each height that keeps you within 15 J or 34 J, for each aircraft, so your OONP limits are worked out for you.</span></figcaption></figure>
+      <figure class="shot"><a href="welcome-img/rf-bands.jpg" target="_blank" rel="noopener"><img src="welcome-img/rf-bands.jpg" alt="RF band map" loading="lazy"></a><figcaption><b>RF band map</b><span>List every transmitter on site: yours, broadcast, lighting and other drone teams. Clashes are flagged before the show, not during it.</span></figcaption></figure>
+      <figure class="shot wide"><a href="welcome-img/flight-log.jpg" target="_blank" rel="noopener"><img src="welcome-img/flight-log.jpg" alt="Logged flights with GPS" loading="lazy"></a><figcaption><b>Logged flights with GPS</b><span>Import the radio’s telemetry log. Each flight is matched to its aircraft, with the GPS track on the map, height, speed, battery and link quality.</span></figcaption></figure>
+    </div>
+    <p class="shots-note">Tap a picture to see it full size. The flight log shown is sample data.</p>
   </div>
 </section>
 

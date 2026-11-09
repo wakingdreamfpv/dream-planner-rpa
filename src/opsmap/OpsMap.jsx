@@ -942,8 +942,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
                   : <div className="mt-1 flex gap-3">{q.review && <button type="button" data-ops-reviewed-check="1" className="underline font-semibold" onClick={() => setZone(q.zone, { limitReviewed: { by: reviewer || 'Pilot', at: new Date().toISOString() } })}>I've reviewed it</button>}
                       {!q.review && <button type="button" data-ops-ack="1" className="underline" onClick={() => setAckOpen({ key: q.key, note: '' })}>Acknowledge</button>}</div>)}
               </div>))}
-            {checks && checks.issues.length > 0 && <div className="text-[11px] text-slate-600" data-ops-pdfchecks="1"><span className="font-semibold">In the PDF:</span>
-              {[['all', 'All checks'], ['open', 'Only open ones'], ['none', 'Leave out']].map(([k, l]) => <label key={k} className="ml-2 inline-flex items-center gap-1"><input type="radio" name="ops-pdfchecks" disabled={readOnly} checked={(settings.pdfChecks || 'all') === k} onChange={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), pdfChecks: k } }))} />{l}</label>)}</div>}
+            {checks && checks.issues.length > 0 && <div className="text-[11px] text-slate-500" data-ops-pdfchecks="1">These checks are for you only. They're never printed on the PDF.</div>}
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 pt-2">On this map</div>
             <div className="space-y-1 text-sm">
               {doc.zones.map((z) => <button key={z.id} type="button" onClick={() => setSel({ t: 'zone', id: z.id })} className="w-full flex items-center gap-2 text-left hover:bg-slate-50 rounded px-1 py-0.5"><span className="w-3 h-3 rounded-sm" style={{ background: kindStyle(z.kind, settings).color }}></span><span className="flex-1 truncate">{z.name}</span><span className="text-[10px] text-slate-500">{z.h != null && z.h !== '' ? z.h + ' m' : ''}</span></button>)}

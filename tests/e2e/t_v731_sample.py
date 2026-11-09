@@ -8,8 +8,12 @@ SHOTS = os.environ.get('WD_SHOTS')
 IDB = """(name)=>new Promise(r=>{const q=indexedDB.open(name,1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>{const g=q.result.transaction('kv').objectStore('kv').get('rpas_database');g.onsuccess=()=>r(g.result?JSON.parse(g.result):null);g.onerror=()=>r(null)}})"""
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 pub = json.load(open(os.path.join(ROOT, 'public', 'demo', 'acme-suncorp.json')))
-R.check('public sample file: the job, its aircraft, no third-party pictures', pub['plan']['overview']['operationName'] == 'Suncorp Stadium Test Job 1'
-        and 'overlay' not in (pub['plan'].get('opsMap') or {}) and not pub['plan'].get('siteAttachments') and 'DJI Mavic 3 Pro' in pub['fleet'])
+R.check('public sample file: the job, its aircraft, the stadium map, no ticket-site picture', pub['plan']['overview']['operationName'] == 'Suncorp Stadium Test Job 1'
+        and (pub['plan'].get('opsMap') or {}).get('overlay', {}).get('src', '').startswith('data:image') and not pub['plan'].get('siteAttachments') and 'DJI Mavic 3 Pro' in pub['fleet'])
+import re as _re
+wl = open(os.path.join(ROOT, 'public', 'welcome.html')).read()
+imgs = _re.findall(r'<img src="(welcome-img/[^"]+)"', wl)
+R.check('v7.32: landing page shows 6 app pictures, all present', len(imgs) == 6 and all(os.path.exists(os.path.join(ROOT, 'public', i)) for i in imgs), imgs)
 with sync_playwright() as p:
     b = p.chromium.launch()
     pg, errs, dl = ctx_for(b, 'anon', None, 'home')
@@ -31,6 +35,7 @@ with sync_playwright() as p:
     pg.evaluate(CAPTURE_PDF); pg.evaluate(JS_INC, 'Export PDF'); pg.wait_for_timeout(3500)
     pdfs = pg.evaluate('window.__pdfs') or []
     R.check('its PDF exports', pdfs and 'Suncorp Stadium Test Job 1' in pdfs[-1] and 'Acme Corp' in pdfs[-1] and 'Planned with Dream Flight RPA Planner' in pdfs[-1], len(pdfs))
+    R.check('v7.32: the map\'s own checks are never on the PDF', pdfs and 'Advanced Operations Map' in pdfs[-1] and 'Map checks' not in pdfs[-1] and 'To fix' not in pdfs[-1] and 'To check' not in pdfs[-1] and 'needs 30 m' not in pdfs[-1])
     if SHOTS: pg.set_viewport_size({'width': 390, 'height': 844}); pg.wait_for_timeout(500); pg.screenshot(path=SHOTS + '/sample.png'); pg.set_viewport_size({'width': 1400, 'height': 950})
     R.check('sample: no page errors', not errs, errs[:2])
     pg.context.close()

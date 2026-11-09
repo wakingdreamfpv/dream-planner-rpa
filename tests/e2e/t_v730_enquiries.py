@@ -33,6 +33,8 @@ with sync_playwright() as p:
     a = calls[-1]['args'] if calls else {}
     R.check('sends name, email, company, phone, interest, message, where from and consent', a.get('p_name') == 'Sam Pilot' and a.get('p_email') == 'sam@example.com' and a.get('p_company') == 'Sky Co'
             and a.get('p_phone') == '0400 000 000' and a.get('p_interest') == 'annual' and a.get('p_message') == 'Met you at the expo' and a.get('p_source') == 'free-banner' and a.get('p_consent') is True, a)
+    inv = [c for c in pg.evaluate('window.__calls') if c.get('invoke') == 'enquiry-alert']
+    R.check('v7.32: emails Mike about it (enquiry-alert, with the new id)', len(inv) == 1 and (inv[0].get('body') or {}).get('id') == 'enq-1', inv)
     R.check('thanks screen', pg.locator('[data-enquiry-done]').count() == 1 and 'Thanks, Sam' in pg.inner_text('[data-enquiry-done]'))
     pg.click('[data-enquiry-close]'); pg.wait_for_timeout(300)
     R.check('closes back to the planner', pg.locator('[data-testid=enquiry]').count() == 0)
