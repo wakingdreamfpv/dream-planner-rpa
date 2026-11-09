@@ -8,10 +8,11 @@ import { getSupabase } from '../cloud/client.js';
 export const alertMike = (sb, id) => { if (sb && id) { try { Promise.resolve(sb.functions.invoke('enquiry-alert', { body: { id } })).catch(() => {}); } catch (e) { /* still saved */ } } };
 export const ENQUIRY_FALLBACK_EMAIL = 'mike@wakingdreamfpv.com';
 export const INTERESTS = [
-  ['founder', 'Founding member (beta)', 'Early access and a founder price'],
-  ['monthly', 'Monthly plan', ''],
-  ['annual', 'Annual plan', ''],
-  ['source', 'Buy the whole thing to customise', 'Your own copy of the planner'],
+  // v7.33: in line with the plans: free now, free beta until 9 Jan 2027, paid plans from 10 Jan 2027
+  ['founder', 'Founding member', 'A launch offer for early supporters and beta testers'],
+  ['monthly', 'Monthly plan', 'Company account, from 10 January 2027'],
+  ['annual', 'Annual plan', 'Company account, from 10 January 2027. Best value'],
+  ['source', 'Your own copy (source licence)', 'Buy once and customise it for your business'],
   ['updates', 'Just keep me posted', ''],
 ];
 const interestLabel = (k) => (INTERESTS.find((x) => x[0] === k) || [k, k || '—'])[1];
@@ -63,7 +64,8 @@ export function EnquiryDialog({ open, source, onClose }) {
           </div>
         ) : (
           <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700" data-enquiry-form="1">
-            <p>Your company profile, fleet, crew and every job saved and shared across your devices, plus approvals, inductions, sign-offs and the compliance calendar. Leave your details and we'll be in touch.</p>
+            <p><b>Company accounts launch on 10 January 2027:</b> your company profile, fleet, crew and every job saved and shared across your devices, with crew logins, pilot hours, approvals, inductions, sign-offs and the compliance registers. Leave your details and we'll be in touch before launch.</p>
+            {(() => { try { return localStorage.getItem('wd_edition') !== 'beta'; } catch (e) { return true; } })() && <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900" data-enquiry-beta-tip="1">Want the full planner now? <button type="button" className="underline font-semibold" data-enquiry-beta="1" onClick={() => { close(); setTimeout(() => window.dispatchEvent(new CustomEvent('wd-open-beta')), 50); }}>Join the free beta</button>: free until 9 January 2027, no payment details.</p>}
             <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">Your name *</span><input className={inp} autoComplete="name" value={f.name} onChange={set('name')} data-enquiry="name" /></label>
             <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">Email *</span><input className={inp} type="email" autoComplete="email" inputMode="email" value={f.email} onChange={set('email')} data-enquiry="email" /></label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

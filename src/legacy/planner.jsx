@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.32';
+        const APP_VERSION = '7.33';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10700,8 +10700,8 @@ View in the Database & Settings tab.`);
           useEffect(() => { const lock = !!(wiz || (showWelcome && !showGate && !isFree && !isCrewRole) || showGate); document.documentElement.classList.toggle('wd-modal-open', lock); return () => document.documentElement.classList.remove('wd-modal-open'); }, [!!wiz, showWelcome, showGate, isFree, isCrewRole]); // eslint-disable-line
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
           // v7.30: straight after joining the beta, open the company setup
-          useEffect(() => { if (!isBeta || !dbReady) return; let fresh = false; try { fresh = sessionStorage.getItem('wd_beta_new') === '1'; sessionStorage.removeItem('wd_beta_new'); } catch (e) {}
-            if (fresh) { lsSet('wd_welcomed', new Date().toISOString()); lsSet('wd_free_intro', new Date().toISOString()); setTimeout(() => openSetupWizard(null, 1), 300); } }, [isBeta, dbReady]); // eslint-disable-line
+          useEffect(() => { if (!isBeta || !dbReady) return; let fresh = ''; try { fresh = sessionStorage.getItem('wd_beta_new') || ''; sessionStorage.removeItem('wd_beta_new'); } catch (e) {}
+            if (fresh) { lsSet('wd_welcomed', new Date().toISOString()); lsSet('wd_free_intro', new Date().toISOString()); if (fresh === '1') setTimeout(() => openSetupWizard(null, 1), 300); } }, [isBeta, dbReady]); // eslint-disable-line
           const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
             const fleet = Object.entries(db.fleet || {}).map(([name, x]) => ({ key: name, name, weight: x.weight ?? '', cells: x.cells || '', registrationNo: x.registrationNo || '', registrationExpiry: x.registrationExpiry || '', serial: x.serial || '', keep: true }));

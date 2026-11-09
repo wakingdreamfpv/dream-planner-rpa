@@ -18,6 +18,8 @@ with sync_playwright() as p:
     R.check('a proper email is needed', 'email' in pg.inner_text('[data-enquiry-err]'))
     pg.fill('[data-enquiry=email]', 'sam@example.com'); pg.click('[data-enquiry-send]'); pg.wait_for_timeout(200)
     R.check('the OK-to-contact tick is needed', 'tick' in pg.inner_text('[data-enquiry-err]'))
+    tx = pg.inner_text('[data-testid=enquiry]')
+    R.check('v7.33: in line with the plans (launch 10 January, free beta offered)', '10 January 2027' in tx and 'source licence' in tx and pg.locator('[data-enquiry-beta]').count() == 1)
     R.check('nothing sent yet', not [c for c in pg.evaluate('window.__calls') if c.get('rpc') == 'submit_enquiry'])
     pg.fill('[data-enquiry=company]', 'Sky Co'); pg.fill('[data-enquiry=phone]', '0400 000 000'); pg.check('[data-enquiry-interest=annual]')
     pg.fill('[data-enquiry=message]', 'Met you at the expo'); pg.check('[data-enquiry=consent]')

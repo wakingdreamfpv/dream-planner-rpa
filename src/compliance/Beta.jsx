@@ -40,7 +40,7 @@ export const sendBetaSignup = async (info) => {
 };
 
 // Start the beta: remember who they are, bring the free planner's job across, then reload into the beta space.
-export const startBeta = async (info) => {
+export const startBeta = async (info, setupNow = true) => {
   const rec = { name: info.name.trim(), email: info.email.trim().toLowerCase(), company: (info.company || '').trim(), interest: info.interest || 'updates', joined: new Date().toISOString(), sent: false };
   lsSet('wd_beta', JSON.stringify(rec));
   await sendBetaSignup(rec);
@@ -49,7 +49,7 @@ export const startBeta = async (info) => {
     if (!beta.rpas_database) { const free = await idbAll('wakingdream_planner__free'); if (Object.keys(free).length) await idbPutAll('wakingdream_planner__beta', free); }
   } catch (e) { /* the beta still starts, just without the free job */ }
   lsSet('wd_edition', 'beta');
-  try { sessionStorage.setItem('wd_beta_new', '1'); } catch (e) {}
+  try { sessionStorage.setItem('wd_beta_new', setupNow ? '1' : 'later'); } catch (e) {} // v7.33: set up now (opens company setup) or later
   location.reload();
 };
 
@@ -79,18 +79,27 @@ const Shell = ({ title, kicker, onClose, children, testid }) => (
 
 // ── Join the beta ─────────────────────────────────────────────────────────
 export function BetaDialog({ open, onClose }) {
-  const [f, setF] = useState({ name: '', email: '', company: '', consent: false }), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ name: '', email: '', company: '', consent: false }), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [ready, setReady] = useState(false);
   if (!open) return null;
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }); setErr(''); };
   const go = async () => {
     if (!f.name.trim()) { setErr('Please add your name.'); return; }
     if (!/^\S+@\S+\.\S+$/.test(f.email.trim())) { setErr('Please check your email address.'); return; }
     if (!f.consent) { setErr('Please tick the box to join the beta.'); return; }
-    setBusy(true); await startBeta(f);
+    setReady(true);
   };
+  const begin = async (now) => { setBusy(now ? 'now' : 'later'); await startBeta(f, now); };
   const inp = 'w-full px-3 py-2.5 border border-slate-300 rounded-lg text-base';
   return (
     <Shell testid="beta-join" kicker={'Free beta · until ' + BETA_LAST_DAY_TEXT} title="Try the full planner, free" onClose={busy ? null : onClose}>
+      {ready ? <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700" data-beta-choice="1">
+        <p className="text-base text-slate-800"><b>Thanks, {f.name.trim().split(/\s+/)[0]}. You're in.</b></p>
+        <p>Would you like to set up your company now? It takes about 2 minutes: your company and ReOC details, you as the CRP, your fleet and batteries. These fill in every plan and PDF for you.</p>
+        <button type="button" disabled={!!busy} onClick={() => begin(true)} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold disabled:opacity-50" data-beta-setup-now="1"><i className="fa-solid fa-building mr-1.5"></i>{busy === 'now' ? 'Starting your beta…' : 'Set up now'}</button>
+        <button type="button" disabled={!!busy} onClick={() => begin(false)} className="w-full py-3 rounded-xl border-2 border-violet-300 text-violet-800 text-base font-bold disabled:opacity-50" data-beta-setup-later="1">{busy === 'later' ? 'Starting your beta…' : 'Set up later'}</button>
+        <p className="text-xs text-slate-500">Later: you can start planning straight away. Set up any time from <b>Database &amp; Settings</b>.</p>
+        {!busy && <button type="button" onClick={() => setReady(false)} className="text-xs underline text-slate-500" data-beta-back="1">Back</button>}
+      </div> :
       <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700" data-beta-form="1">
         <ul className="space-y-2">
           <li className="flex gap-2"><i className="fa-solid fa-check text-emerald-600 mt-1"></i><span><b>Everything</b>: your company profile, fleet and batteries, saved jobs and drafts, flight records, templates and the compliance calendar.</span></li>
@@ -103,8 +112,8 @@ export function BetaDialog({ open, onClose }) {
         <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">Company</span><input className={inp} autoComplete="organization" value={f.company} onChange={set('company')} data-beta="company" /></label>
         <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={f.consent} onChange={set('consent')} data-beta="consent" /><span>Sign me up for the free beta. It's OK to email me about the beta and the paid launch. We never share your details.</span></label>
         {err && <p className="text-sm text-red-700" data-beta-err="1">{err}</p>}
-        <button type="button" disabled={busy} onClick={go} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold disabled:opacity-50" data-beta-start="1">{busy ? 'Starting your beta…' : 'Start my free beta'}</button>
-      </div>
+        <button type="button" onClick={go} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold" data-beta-start="1">Start my free beta</button>
+      </div>}
     </Shell>
   );
 }
