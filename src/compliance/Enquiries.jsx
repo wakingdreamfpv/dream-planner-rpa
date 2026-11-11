@@ -124,7 +124,7 @@ export function EnquiriesList() {
   const fresh = (rows || []).filter((r) => r.status === 'new').length;
   return (
     <div className="space-y-3 text-sm" data-enquiries="1">
-      <p className="text-slate-600">People who tapped <b>Get it for your company</b> in the free planner. Only you (CRP) can see these.</p>
+      <p className="text-slate-600">People who tapped <b>Get it for your company</b> or joined the beta, and feedback and bug reports from beta testers. Only you (CRP) can see these.</p>
       <div className="flex flex-wrap items-center gap-2">
         <select value={show} onChange={(e) => setShow(e.target.value)} className="px-2 py-1.5 border border-slate-300 rounded-lg" data-enquiries-show="1"><option value="open">New and contacted</option><option value="all">All, including closed</option></select>
         <button type="button" onClick={load} className="px-3 py-1.5 rounded-lg border border-slate-300"><i className="fa-solid fa-rotate mr-1"></i>Refresh</button>
@@ -141,7 +141,7 @@ export function EnquiriesList() {
               <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded ${r.status === 'new' ? 'bg-violet-100 text-violet-800' : r.status === 'contacted' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>{r.status}</span>
               <span className="ml-auto text-xs text-slate-500">{new Date(r.created_at).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span>
             </div>
-            <div className="text-slate-700"><a className="text-violet-700 underline" href={'mailto:' + r.email}>{r.email}</a>{r.phone && <> · <a className="text-violet-700 underline" href={'tel:' + r.phone.replace(/\s+/g, '')}>{r.phone}</a></>} · <span>{interestLabel(r.interest)}</span></div>
+            <div className="text-slate-700"><a className="text-violet-700 underline" href={'mailto:' + r.email}>{r.email}</a>{r.phone && <> · <a className="text-violet-700 underline" href={'tel:' + r.phone.replace(/\s+/g, '')}>{r.phone}</a></>} · <span>{interestLabel(r.interest)}</span>{/^feedback-/.test(r.source || '') && <span className="ml-1.5 text-[11px] font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-800" data-enquiry-feedback={r.source}>{r.source === 'feedback-bug' ? 'Bug report' : r.source === 'feedback-idea' ? 'Feature request' : 'Feedback'}</span>}</div>
             {r.message && <p className="text-slate-600 whitespace-pre-wrap">{r.message}</p>}
             <div className="flex gap-2 pt-1">
               {r.status !== 'contacted' && <button type="button" onClick={() => mark(r, 'contacted')} className="text-xs px-2 py-1 rounded border border-emerald-300 text-emerald-800" data-enquiry-mark="contacted">Mark contacted</button>}

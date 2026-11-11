@@ -133,3 +133,58 @@ export function BetaEndedDialog({ open, onClose, onEnquire }) {
     </Shell>
   );
 }
+
+// ── v7.34: feedback, bug reports and feature requests from beta testers ──────────────
+// Goes into the CRP's Enquiries list (source 'feedback-bug' / 'feedback-idea' / 'feedback-general') and emails Mike.
+export const FEEDBACK_KINDS = [
+  ['bug', 'Something\'s not working', 'fa-bug', 'What happened, and what did you expect? Which screen were you on?'],
+  ['idea', 'Feature request', 'fa-lightbulb', 'What would you like it to do? How would it help your jobs?'],
+  ['general', 'General feedback', 'fa-comment', 'Anything you like, don\'t like, or found confusing.'],
+];
+export function FeedbackDialog({ open, onClose, appVersion }) {
+  const who = betaInfo() || {};
+  const [f, setF] = useState({ kind: 'bug', message: '', name: who.name || '', email: who.email || '' }), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [done, setDone] = useState(false);
+  if (!open) return null;
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setErr(''); };
+  const close = () => { setDone(false); setF({ ...f, message: '' }); onClose(); };
+  const kind = FEEDBACK_KINDS.find((k) => k[0] === f.kind) || FEEDBACK_KINDS[0];
+  const send = async () => {
+    if (!f.message.trim()) { setErr('Please write a few words first.'); return; }
+    if (!f.name.trim()) { setErr('Please add your name.'); return; }
+    if (!/^\S+@\S+\.\S+$/.test(f.email.trim())) { setErr('Please check your email address.'); return; }
+    const sb = getSupabase(); if (!sb) { setErr('This needs an internet connection. Try again when you have signal.'); return; }
+    setBusy(true);
+    let device = ''; try { const ua = navigator.userAgent || ''; device = (/iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Other') + ' · ' + (/Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser') + ' · ' + window.innerWidth + '×' + window.innerHeight; } catch (e) {}
+    const msg = ('[' + kind[1] + ']\n' + f.message.trim()).slice(0, 1900) + '\n\nApp v' + (appVersion || '?') + (device ? ' · ' + device : '');
+    try {
+      const call = sb.rpc('submit_enquiry', { p_name: f.name.trim(), p_email: f.email.trim(), p_company: who.company || '', p_phone: '', p_interest: '', p_message: msg, p_source: 'feedback-' + f.kind, p_consent: true });
+      const r = await Promise.race([call, new Promise((res) => setTimeout(() => res({ error: { message: 'timeout' } }), 10000))]);
+      if (r && r.error) { setErr(/too many/i.test(r.error.message) ? 'That\'s a lot of reports today, thank you! Please email the rest to mike@wakingdreamfpv.com.' : 'It didn\'t send (no signal?). Please try again.'); setBusy(false); return; }
+      alertMike(sb, r && r.data); setDone(true);
+    } catch (e) { setErr('It didn\'t send (no signal?). Please try again.'); }
+    setBusy(false);
+  };
+  const inp = 'w-full px-3 py-2.5 border border-slate-300 rounded-lg text-base';
+  return (
+    <Shell testid="beta-feedback" kicker="Free beta" title="Feedback, bugs and ideas" onClose={busy ? null : close}>
+      {done ? <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700" data-feedback-done="1">
+        <p className="text-base text-slate-800"><b>Thank you!</b> It's on its way to Mike, who builds the planner. If he needs more detail he'll reply by email.</p>
+        <button type="button" onClick={() => { setDone(false); setF({ ...f, message: '' }); }} className="w-full py-3 rounded-xl border-2 border-violet-300 text-violet-800 font-bold" data-feedback-another="1">Send another</button>
+        <button type="button" onClick={close} className="w-full py-3 rounded-xl bg-violet-600 text-white font-bold">Back to the planner</button>
+      </div> :
+      <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700" data-feedback-form="1">
+        <div className="grid grid-cols-3 gap-2">{FEEDBACK_KINDS.map(([k, label, icon]) => (
+          <button key={k} type="button" onClick={() => setF({ ...f, kind: k })} aria-pressed={f.kind === k} data-feedback-kind={k}
+            className={`rounded-xl border-2 px-2 py-2.5 text-xs font-semibold leading-tight ${f.kind === k ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-200 text-slate-600'}`}><i className={`fa-solid ${icon} block text-lg mb-1`}></i>{label}</button>))}</div>
+        <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">{kind[3]}</span>
+          <textarea className={inp + ' min-h-[8rem]'} value={f.message} onChange={set('message')} maxLength={1800} data-feedback="message" /></label>
+        {!(who.name && who.email) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">Your name</span><input className={inp} value={f.name} onChange={set('name')} data-feedback="name" /></label>
+          <label className="block"><span className="block text-xs font-semibold text-slate-600 mb-1">Email</span><input className={inp} type="email" value={f.email} onChange={set('email')} data-feedback="email" /></label></div>}
+        {who.name && who.email && <p className="text-xs text-slate-500">Sent as {f.name} ({f.email}). The app version and device type are added to help find bugs. Nothing from your jobs is sent.</p>}
+        {err && <p className="text-sm text-red-700" data-feedback-err="1">{err}</p>}
+        <button type="button" disabled={busy} onClick={send} className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-base font-bold disabled:opacity-50" data-feedback-send="1">{busy ? 'Sending…' : 'Send'}</button>
+      </div>}
+    </Shell>
+  );
+}
