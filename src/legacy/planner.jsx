@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.36';
+        const APP_VERSION = '7.37';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -974,7 +974,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             } else if (c.op === 'unsign') {
               const ap = plan.approval || (plan.approval = {});
               const before = (ap.crpSigned ? 'CRP signed ' + (ap.crpDate || '') : 'CRP unsigned') + ' / ' + (ap.rpSigned ? 'RPIC signed ' + (ap.rpDate || '') : 'RPIC unsigned');
-              Object.assign(ap, { crpSigned: false, crpDate: '', rpSigned: false, rpDate: '', crpSig: null, rpSig: null });
+              Object.assign(ap, { crpSigned: false, crpDate: '', rpSigned: false, rpDate: '', crpSig: null, rpSig: null, rpOverride: null });
               rec.push({ field: 'Authorisation signatures', from: before, to: 'cleared — re-sign required', reason: why });
             } else if (c.op === 'pilotArn') {
               const pl = pilots.find(x => x.name === c.name);
@@ -1532,15 +1532,22 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           </div>);
         // v7.35: the CRP's own name / ARN and the PDF attachment ticks are the CRP's side too (choosing them after the RPIC
         // signed used to void the RPIC's signature). `keepCrp` gives the v5.55–7.34 fingerprint for signatures made before.
-        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy, keepCrp) => {
+        // v7.37: map pins keep a screen position (x, y) beside their GPS position. The screen position is worked out again on
+        // each device (and is blank when the map hasn't been shown), so it isn't part of what's signed: only lat / lng.
+        // xy: 'drop' (from v7.37), 'keep' (before), 'blank' (before, as signed on a device that hadn't drawn the map).
+        const signableMap = (md, xy) => { if (!md || typeof md !== 'object' || xy === 'keep') return md; const out = {};
+          Object.keys(md).forEach(k => { const v = md[k]; out[k] = Array.isArray(v) ? v.map(it => { if (!it || typeof it !== 'object' || typeof it.lat !== 'number' || typeof it.lng !== 'number') return it;
+            const { x, y, ...rest } = it; return xy === 'blank' ? { ...rest, x: null, y: null } : rest; }) : v; });
+          return out; };
+        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy, keepCrp, xy = 'drop') => {
           const ap = { ...(approval || {}) };
           if (!keepCrp) ['crpName', 'crpArn', 'authAttach'].forEach(k => delete ap[k]);
-          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig', 'obsSigs'].forEach(k => delete ap[k]);
+          ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig', 'obsSigs', 'rpOverride'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
           // v7.14: the CRP's crew-record bypasses are admin, not part of what the RPIC signs (adding one doesn't void a signature)
           if (ap.reqOverrides && Object.keys(ap.reqOverrides).some(k => k.startsWith('crew:'))) { const o = {}; Object.keys(ap.reqOverrides).forEach(k => { if (!k.startsWith('crew:')) o[k] = ap.reqOverrides[k]; }); if (Object.keys(o).length) ap.reqOverrides = o; else delete ap.reqOverrides; }
-          const out = { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData, approval: ap, keData, ballistic };
+          const out = { overview, jsa, risks: (risks || []).map(r => { const { id, ...rest } = r || {}; return rest; }), oonp, oonpMode: !!oonpMode, mapData: signableMap(mapData, xy), approval: ap, keData, ballistic };
           // v7.9: the advanced ops map is signed too, but only when there is one (older plans keep their fingerprint)
           const om = opsSignable(opsMap); if (om) out.opsMap = om;
           return out;
@@ -1548,8 +1555,8 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const cyrbHex = (str, seed) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
           h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
           return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0'); };
-        const planFingerprint = async (state, legacy, keepCrp) => {
-          const str = stableStringify(rpicSignable(state, legacy, keepCrp));
+        const planFingerprint = async (state, legacy, keepCrp, xy) => {
+          const str = stableStringify(rpicSignable(state, legacy, keepCrp, xy));
           try { if (window.crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return 'sha256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); } } catch (e) {}
           return 'h64:' + cyrbHex(str, 1) + cyrbHex(str, 7);
         };
@@ -1558,8 +1565,9 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const fpMatches = async (signed, state) => {
           if (!signed || !state) return false;
           const ap = state.approval || {}, blank = { ...state, approval: { ...ap, crpName: '', crpArn: '' } }; delete blank.approval.authAttach;
-          const tries = [[state, false, false], [state, true, false], [state, false, true], [state, true, true], [blank, false, true], [blank, true, true]];
-          for (const [st, lg, kc] of tries) { try { if (await planFingerprint(st, lg, kc) === signed) return true; } catch (e) {} }
+          const tries = [[state, false, false, 'drop']];
+          ['keep', 'blank'].forEach(xy => tries.push([state, false, false, xy], [state, true, false, xy], [state, false, true, xy], [state, true, true, xy], [blank, false, true, xy], [blank, true, true, xy]));
+          for (const [st, lg, kc, xy] of tries) { try { if (await planFingerprint(st, lg, kc, xy) === signed) return true; } catch (e) {} }
           return false;
         };
         // v7.35: what changed between the plan someone signed and the plan now, in plain words
@@ -5408,7 +5416,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (learned.length) updateDb('fleet', fleet);
             if (rpaTypes.length !== (overview.rpaTypes || []).length) setOverview(prev => ({ ...prev, rpaTypes }));
             setLog(prev => ({ ...prev, rpaLogs }));
-            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null,
+            if (amendNote) setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null, rpOverride: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: amendNote, approvedAt: prev.approvedAt || '' }] }));
             setLogDump(null);
             const secs = chosen.reduce((s, it) => s + (it.t.durationSec || 0), 0);
@@ -6286,7 +6294,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             P.push('<div style="background:'+(approval.flightAuthApproved?'#dcfce7':'#fee2e2')+';border:2px solid '+(approval.flightAuthApproved?'#16a34a':'#dc2626')+';border-radius:4pt;padding:10pt;text-align:center;font-size:11pt;font-weight:700;color:'+(approval.flightAuthApproved?'#15803d':'#dc2626')+';margin:10pt 0;">'+(approval.flightAuthApproved?'✓  FLIGHT AUTHORISED':'FLIGHT NOT YET AUTHORISED — Pending RPIC sign-off')+'</div>');
             P.push('<div style="display:flex;gap:12pt;margin-top:10pt;">');
             P.push(sigBlk('Chief Remote Pilot (CRP) / Delegate',approval.crpName,approval.crpArn,approval.crpDate,approval.crpSigned,null,approval.crpSignedBy,approval.crpSig));
-            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy,approval.rpRemote?null:approval.rpSig));
+            P.push(sigBlk('Remote Pilot in Command (RPIC)',approval.rpName,approval.rpArn,approval.rpDate,approval.rpSigned,approval.rpRemote,approval.rpRemote?null:approval.rpSignedBy,approval.rpRemote?null:approval.rpSig)
+              +(approval.rpOverride&&!approval.rpSigned?'<div data-pdf-rp-override="1" style="margin-top:4pt;border:1px solid #f59e0b;background:#fffbeb;border-radius:4pt;padding:5pt 7pt;font-size:7pt;color:#78350f;"><b>RPIC signature: CRP override.</b> '+esc(approval.rpOverride.reason)+' <span style="color:#92400e;">(recorded by '+esc((approval.rpOverride.by&&approval.rpOverride.by.name)||'the CRP')+', '+esc(new Date(approval.rpOverride.at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+')</span></div>':''));
             P.push('</div>');
             const obsRow=(k,t)=>{const L=(approval.obsSigs||[]).filter(x=>x.kind===k);if(!L.length)return'';return '<div data-pdf-obs-sigs="'+k+'" style="margin-top:8pt;border:1px solid '+S2+';border-radius:4pt;padding:6pt 8pt;break-inside:avoid;"><div style="font-size:8pt;font-weight:700;color:'+NV+';margin-bottom:3pt;">'+esc(t)+'</div>'
               +L.map(x=>'<div style="display:flex;gap:10pt;align-items:center;border-top:1px solid '+S2+';padding:3pt 0;"><div style="width:110pt;">'+(x.signature&&x.signature.image?'<img src="'+x.signature.image+'" style="max-height:24pt;max-width:110pt;">':'<span style="font-family:\'Brush Script MT\',cursive;font-size:13pt;">'+esc((x.signature&&x.signature.typed)||x.name)+'</span>')+'</div><div style="font-size:7pt;"><b>'+esc(x.name)+'</b> · EVLOS observer · '+esc(new Date(x.signed_at).toLocaleString('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))+'<div style="color:'+S6+';">'+esc(x.declaration||'')+(x.note?' · '+esc(x.note):'')+'</div></div></div>').join('')+'</div>';};
@@ -8120,7 +8129,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           };
           const lockProps = { 'data-locked': planLocked ? '1' : '0', onClickCapture: lockGuard, onMouseDownCapture: lockGuard, onKeyDownCapture: lockGuard, onPasteCapture: lockGuard, onDropCapture: lockGuard, onDragStartCapture: lockGuard };
           const doAmend = (reason) => {
-            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null, rpRemote: null,
+            setApproval(prev => ({ ...prev, flightAuthApproved: false, crpSigned: false, rpSigned: false, crpDate: '', rpDate: '', crpSignedBy: null, rpSignedBy: null, crpSig: null, rpSig: null, rpOverride: null, rpRemote: null,
               amendLog: [...(prev.amendLog || []), { at: new Date().toISOString(), reason: (reason || '').trim(), approvedAt: prev.approvedAt || '' }] }));
             setDirty(true);
           };
@@ -8808,6 +8817,7 @@ View in the Database & Settings tab.`);
           const approveBlocked = signedIn && auth.role !== 'crp' ? 'Only the Chief Remote Pilot\'s account can approve the flight.' : '';
           // v7.16: signing opens the sign dialog (click to sign, typed or drawn; the RPIC confirms the declaration)
           const [signDlg, setSignDlg] = useState(null);
+          const [rpOverrideAsk, setRpOverrideAsk] = useState(null); // v7.37: CRP approves without the RPIC signature here, with a written reason
           const handleSignature = (role) => {
             if (role === 'crp' && crpSignBlocked) { alert(crpSignBlocked); return; }
             if (role !== 'crp' && rpSignBlocked) { alert(rpSignBlocked); return; }
@@ -14724,8 +14734,9 @@ View in the Database & Settings tab.`);
                             const on = !!approval.flightAuthApproved;
                             const missing = [
                               ...reqItems.filter(x => x.stage === 'release' && !x.ok).map(x => x.label),
-                              !approval.crpSigned && 'CRP signature', !approval.rpSigned && 'RPIC signature', rpRemoteStale && 'RPIC to re-sign the changed plan'].filter(Boolean);
+                              !approval.crpSigned && 'CRP signature', !approval.rpSigned && !approval.rpOverride && 'RPIC signature', rpRemoteStale && !approval.rpOverride && 'RPIC to re-sign the changed plan'].filter(Boolean);
                             const can = on || missing.length === 0;
+                            const rpMissing = !approval.rpSigned || rpRemoteStale, isCrpHere = !signedIn || auth.role === 'crp';
                             const flip = () => {
                               if (approveBlocked) { alert(approveBlocked); return; }
                               if (!on) {
@@ -14750,6 +14761,24 @@ View in the Database & Settings tab.`);
                                 {!on && (!signedIn || auth.role === 'crp') && (() => { const crewMiss = reqItems.filter(x => x.crew && !x.ok); return crewMiss.length ? (
                                   <div className="basis-full -mt-1" data-crp-bypass-row="1"><button type="button" data-allow-locked="1" data-crp-bypass="1" onClick={() => setReqBypass({ tab: 'approval', ids: new Set(crewMiss.map(x => x.id)), reason: '', declared: false, crp: true })}
                                     className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100"><i className="fa-solid fa-user-shield mr-1"></i>CRP: bypass crew records ({crewMiss.length}), done outside the planner</button></div>) : null; })()}
+                                {!on && isCrpHere && rpMissing && !approval.rpOverride && !rpOverrideAsk && <div className="basis-full -mt-1"><button type="button" data-allow-locked="1" data-rp-override="1"
+                                  onClick={() => setRpOverrideAsk({ reason: pendingSig ? `${pendingSig.who} signed as RPIC in the planner at ${new Date(pendingSig.created_at).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.` : '', declared: false })}
+                                  className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100"><i className="fa-solid fa-user-shield mr-1"></i>CRP override: approve without the RPIC signature here, with a written reason</button></div>}
+                                {!on && rpOverrideAsk && <div className="basis-full rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2 text-sm" data-rp-override-form="1">
+                                  <div className="font-semibold text-amber-900"><i className="fa-solid fa-user-shield mr-1"></i>CRP override for the RPIC signature</div>
+                                  <p className="text-xs text-amber-900">Write why the RPIC's signature can't be added here, and how they agreed to the plan (e.g. "{approval.rpName || 'The RPIC'} signed digitally in the planner on 11 Nov 2026 at 3:37 pm"). This goes on the PDF and the record, with your name and the time.</p>
+                                  <textarea className="w-full px-2.5 py-2 border border-amber-300 rounded-md text-sm bg-white min-h-[4.5rem]" value={rpOverrideAsk.reason} onChange={e => setRpOverrideAsk({ ...rpOverrideAsk, reason: e.target.value })} data-rp-override-reason="1" maxLength={600} />
+                                  <label className="flex items-start gap-2 text-xs text-amber-900"><input type="checkbox" className="mt-0.5" checked={rpOverrideAsk.declared} onChange={e => setRpOverrideAsk({ ...rpOverrideAsk, declared: e.target.checked })} data-rp-override-declare="1" />As CRP, I confirm the RPIC has reviewed and accepted this plan as it is now, and I take responsibility for approving it without their signature here.</label>
+                                  <div className="flex gap-2">
+                                    <button type="button" data-allow-locked="1" data-rp-override-save="1" disabled={String(rpOverrideAsk.reason || '').trim().length < 10 || !rpOverrideAsk.declared}
+                                      onClick={() => { setApproval(prev => ({ ...prev, rpOverride: { reason: rpOverrideAsk.reason.trim(), at: new Date().toISOString(), by: { name: signName || approval.crpName || 'CRP', email: signedIn ? auth.email : '' } } })); setRpOverrideAsk(null); }}
+                                      className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-sm font-semibold disabled:opacity-40">Record override</button>
+                                    <button type="button" data-allow-locked="1" onClick={() => setRpOverrideAsk(null)} className="px-3 py-1.5 rounded-lg border border-amber-300 text-amber-900 text-sm">Cancel</button>
+                                  </div>
+                                  <p className="text-[11px] text-amber-800">Needs at least a short sentence and the tick.</p>
+                                </div>}
+                                {approval.rpOverride && !approval.rpSigned && <div className="basis-full text-xs rounded-lg border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2" data-rp-override-shown="1"><i className="fa-solid fa-user-shield mr-1"></i><b>RPIC signature: CRP override.</b> {approval.rpOverride.reason} <span className="text-amber-700">({(approval.rpOverride.by && approval.rpOverride.by.name) || 'CRP'}, {new Date(approval.rpOverride.at).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })})</span>
+                                  {!on && isCrpHere && <button type="button" data-allow-locked="1" data-rp-override-remove="1" onClick={() => setApproval(prev => ({ ...prev, rpOverride: null }))} className="ml-2 underline">Remove</button>}</div>}
                                 {approveBlocked && <div data-approve-locked="1" className="basis-full text-xs text-slate-500"><i className="fa-solid fa-lock mr-1"></i>{approveBlocked}</div>}
                                 <button type="button" role="switch" aria-checked={on} data-approve-toggle="1" onClick={flip} disabled={!can || !!approveBlocked}
                                   className={`relative w-24 h-12 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-emerald-600' : can ? 'bg-slate-300 hover:bg-slate-400' : 'bg-slate-200 cursor-not-allowed'}`}>

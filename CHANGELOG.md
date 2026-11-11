@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.37 — 11 Nov 2026 — RPIC signatures from the pilot's own device now match
+- **Fix: "Benjamin signed, I signed, but I still can't approve."** The site map keeps each pin's position on the screen as well as its GPS position. The screen position is worked out again on every device (and is blank if the map hasn't been opened, as when a pilot goes straight to signing), and it was part of what the RPIC signs. So a pilot signing on their own phone always looked like they'd signed "an earlier version". Now only the GPS positions count.
+- Signatures already made this way (like Benjamin's) are accepted once you update: open the job and click **Add their signature**.
+- A real change to the plan after the RPIC signed still needs them to sign again.
+- **CRP override for the RPIC signature:** when the RPIC's signature can't be added in the planner, the CRP can approve with a written reason (e.g. "Benjamin Curseri signed digitally in the planner on 11 Nov 2026 at 3:37 pm") and a tick to confirm. The reason, your name and the time show on the Authorisation page and on the PDF. It can be removed before approval, and it's cleared if the plan is amended. Only the CRP account can use it.
+- **Supabase:** nothing to do.
+- **Tests:** new suite with a pilot on a phone and the CRP on a computer (5 checks); everything passes.
+
 ## v7.36 — 11 Nov 2026 — Sign in any order
 - **The CRP and the RPIC can sign in either order**, then the CRP approves the flight. Signing as CRP fills in your name and ARN, and before v7.35 that counted as a change to the plan, so an RPIC who had already signed looked out of date. Now checked both ways: RPIC first then CRP, and CRP first then RPIC (including an RPIC who signed the copy from before you signed).
 - A real change to the plan after the RPIC signed still needs them to sign again.
