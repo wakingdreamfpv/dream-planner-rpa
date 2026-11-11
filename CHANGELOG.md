@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.36 — 11 Nov 2026 — Sign in any order
+- **The CRP and the RPIC can sign in either order**, then the CRP approves the flight. Signing as CRP fills in your name and ARN, and before v7.35 that counted as a change to the plan, so an RPIC who had already signed looked out of date. Now checked both ways: RPIC first then CRP, and CRP first then RPIC (including an RPIC who signed the copy from before you signed).
+- A real change to the plan after the RPIC signed still needs them to sign again.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for both signing orders (10 checks); everything passes.
+
 ## v7.35 — 11 Nov 2026 — RPIC signature no longer lost when the CRP picks their name
 - **Fix: "can't approve even though both have signed".** Choosing your own name and ARN in the CRP box (or ticking which instruments attach to the PDF) after the RPIC had signed counted as a change to the plan, so the RPIC's signature looked out of date and "Add their signature" offered only to dismiss it. Those are your side of the sign-off, so they no longer affect the RPIC's signature. Signatures made before this update still count.
 - A real change to the plan after the RPIC signed still needs them to sign again. The message now **says what changed** (for example "Authorisation details (notams)" or "Operation details (end time)").

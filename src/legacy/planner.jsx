@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.35';
+        const APP_VERSION = '7.36';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10463,6 +10463,7 @@ View in the Database & Settings tab.`);
           const fpStateRef = useRef(null); fpStateRef.current = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap };
           if (typeof window !== 'undefined') window.__wdSignable = () => rpicSignable(fpStateRef.current); // for tests
           if (typeof window !== 'undefined') window.__wdFp = { planFingerprint, fpMatches, planChanges }; // for tests (v7.35)
+          if (typeof window !== 'undefined') window.__wdFpState = () => fpStateRef.current; // for tests (v7.36)
           const pushRpicSignature = async (sig) => {
             if (!(isCrewRole && cloudJob && overview.uid && cloudJob.uid === overview.uid)) return;
             let fp = ''; try { fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }); } catch (e) {}
