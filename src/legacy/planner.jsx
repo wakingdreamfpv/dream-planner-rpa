@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.34';
+        const APP_VERSION = '7.35';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -1530,8 +1530,11 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             <div className="mt-0.5 text-emerald-800">{sig.method === 'drawn' ? 'Drawn' : sig.method === 'typed' ? 'Typed' : 'Clicked'} {sig.at ? new Date(sig.at).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}{sig.declaration ? ' · declaration confirmed' : ''}{sig.fingerprint ? ' · plan version ' + fpShort(sig.fingerprint) : ''}</div>
             {sig.comments && <div className="mt-1 text-slate-700"><b>{role === 'rp' ? 'RPIC' : 'CRP'} comments:</b> {sig.comments}</div>}
           </div>);
-        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy) => {
+        // v7.35: the CRP's own name / ARN and the PDF attachment ticks are the CRP's side too (choosing them after the RPIC
+        // signed used to void the RPIC's signature). `keepCrp` gives the v5.55–7.34 fingerprint for signatures made before.
+        const rpicSignable = ({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, legacy, keepCrp) => {
           const ap = { ...(approval || {}) };
+          if (!keepCrp) ['crpName', 'crpArn', 'authAttach'].forEach(k => delete ap[k]);
           ['flightAuthApproved', 'approvedAt', 'crpSigned', 'crpDate', 'rpSigned', 'rpDate', 'rpName', 'rpArn', 'rpRemote', 'rpRequest', 'amendLog', 'yn60', 'releaseServiceable', 'crpSignedBy', 'rpSignedBy', 'crpSig', 'rpSig', 'obsSigs'].forEach(k => delete ap[k]);
           if (legacy) { if (ap.sopMitigatesAll == null) ap.sopMitigatesAll = false; if (ap.jsaCorrect == null) ap.jsaCorrect = false; }
           if (!legacy) ['sopMitigatesAll', 'unmitigatedHazards', 'jsaCorrect', 'jsaChanges'].forEach(k => delete ap[k]);
@@ -1545,10 +1548,32 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const cyrbHex = (str, seed) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
           h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
           return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0'); };
-        const planFingerprint = async (state, legacy) => {
-          const str = stableStringify(rpicSignable(state, legacy));
+        const planFingerprint = async (state, legacy, keepCrp) => {
+          const str = stableStringify(rpicSignable(state, legacy, keepCrp));
           try { if (window.crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return 'sha256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); } } catch (e) {}
           return 'h64:' + cyrbHex(str, 1) + cyrbHex(str, 7);
+        };
+        // Does a signature's fingerprint match this plan? Also accepts signatures made under the older rules, with the CRP's
+        // name / ARN as they are now or as they were before the CRP filled them in.
+        const fpMatches = async (signed, state) => {
+          if (!signed || !state) return false;
+          const ap = state.approval || {}, blank = { ...state, approval: { ...ap, crpName: '', crpArn: '' } }; delete blank.approval.authAttach;
+          const tries = [[state, false, false], [state, true, false], [state, false, true], [state, true, true], [blank, false, true], [blank, true, true]];
+          for (const [st, lg, kc] of tries) { try { if (await planFingerprint(st, lg, kc) === signed) return true; } catch (e) {} }
+          return false;
+        };
+        // v7.35: what changed between the plan someone signed and the plan now, in plain words
+        const SIGN_SECTION_NAMES = { overview: 'Operation details', jsa: 'JSA', risks: 'Risk register', oonp: 'OONP section', oonpMode: 'OONP on/off', mapData: 'Site map', approval: 'Authorisation details', keData: 'Kinetic energy', ballistic: 'Ballistic / splash area', opsMap: 'Advanced ops map' };
+        const wordsOf = (k) => String(k).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
+        const planChanges = (was, now) => {
+          const a = rpicSignable(was || {}), b = rpicSignable(now || {}), out = [];
+          Object.keys({ ...a, ...b }).forEach(k => { if (stableStringify(a[k]) === stableStringify(b[k])) return;
+            const A = a[k], B = b[k];
+            if (A && B && typeof A === 'object' && typeof B === 'object' && !Array.isArray(A) && !Array.isArray(B)) {
+              const sub = Object.keys({ ...A, ...B }).filter(x => stableStringify(A[x]) !== stableStringify(B[x])).map(wordsOf);
+              out.push((SIGN_SECTION_NAMES[k] || wordsOf(k)) + (sub.length ? ' (' + sub.slice(0, 6).join(', ') + (sub.length > 6 ? ', …' : '') + ')' : ''));
+            } else out.push(SIGN_SECTION_NAMES[k] || wordsOf(k)); });
+          return out;
         };
         const fpShort = (fp) => String(fp || '').replace(/^\w+:/, '').slice(0, 10).toUpperCase();
         // Standalone page the RPIC opens to review and sign (works offline, any browser; no account).
@@ -8691,7 +8716,15 @@ View in the Database & Settings tab.`);
               planFingerprint(st).then(setPlanFp).catch(() => {}); planFingerprint(st, true).then(setPlanFpLegacy).catch(() => {}); }, 400);
             return () => clearTimeout(t);
           }, [overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap]); // eslint-disable-line
-          const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp && approval.rpRemote.fingerprint !== planFpLegacy);
+          const [rpRemoteOk, setRpRemoteOk] = useState(true); // v7.35: also accepts signatures made under the older fingerprint rules
+          useEffect(() => { let live = true; const f = approval.rpRemote && approval.rpRemote.fingerprint; if (!approval.rpSigned || !f || f === planFp || f === planFpLegacy) { setRpRemoteOk(true); return; }
+            const t = setTimeout(() => { fpMatches(f, { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }).then(ok => { if (live) setRpRemoteOk(ok); }); }, 450);
+            return () => { live = false; clearTimeout(t); }; }, [planFp, planFpLegacy, approval]); // eslint-disable-line
+          const [rpRequestOk, setRpRequestOk] = useState(true);
+          useEffect(() => { let live = true; const f = approval.rpRequest && approval.rpRequest.fingerprint; if (!f || !planFp || f === planFp) { setRpRequestOk(true); return; }
+            const t = setTimeout(() => { fpMatches(f, { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }).then(ok => { if (live) setRpRequestOk(ok); }); }, 450);
+            return () => { live = false; clearTimeout(t); }; }, [planFp, approval]); // eslint-disable-line
+          const rpRemoteStale = !!(approval.rpSigned && approval.rpRemote && planFp && approval.rpRemote.fingerprint !== planFp && approval.rpRemote.fingerprint !== planFpLegacy && !rpRemoteOk);
           const RPIC_DECLARATION = 'I have read and understood this Flight Record — the operation details, the job safety assessment and the risk assessment — and I accept the role of Remote Pilot in Command for this operation. I will conduct the operation in accordance with the operations manual, this plan and any conditions of the approval, and I will tell the CRP before flight if anything changes or if I have any concerns.';
           const sendForRpicSign = async () => {
             if (!approval.rpName) { alert('Choose the RPIC in the Remote Pilot in Command block first.'); return; }
@@ -8753,8 +8786,7 @@ View in the Database & Settings tab.`);
               if (d.operationId !== overview.identifier && (!d.planUid || d.planUid !== overview.uid)) { alert(`This reply is for ${d.operationId} ("${d.title}"), not the job that's open (${overview.identifier}). Open that job first.`); return; }
               if (!d.signatureImage && !d.typedSignature) { alert('The reply has no signature.'); return; }
               const fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap });
-              const fpOld = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }, true);
-              if (d.fingerprint !== fp && d.fingerprint !== fpOld) {
+              if (!(await fpMatches(d.fingerprint, { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }))) {
                 alert(`⚠ Not signed: the plan has changed since this was sent for signing.\n\n${d.name} signed plan version ${fpShort(d.fingerprint)}; the plan is now version ${fpShort(fp)}.\n\nSend it for signing again so the RPIC signs what will actually be flown.`);
                 return;
               }
@@ -10430,6 +10462,7 @@ View in the Database & Settings tab.`);
           // latest plan state, for code that runs after a job has just been opened (a closure would still hold the old job)
           const fpStateRef = useRef(null); fpStateRef.current = { overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap };
           if (typeof window !== 'undefined') window.__wdSignable = () => rpicSignable(fpStateRef.current); // for tests
+          if (typeof window !== 'undefined') window.__wdFp = { planFingerprint, fpMatches, planChanges }; // for tests (v7.35)
           const pushRpicSignature = async (sig) => {
             if (!(isCrewRole && cloudJob && overview.uid && cloudJob.uid === overview.uid)) return;
             let fp = ''; try { fp = await planFingerprint({ overview, jsa, risks, oonp, oonpMode, mapData, approval, keData, ballistic, opsMap }); } catch (e) {}
@@ -10451,9 +10484,13 @@ View in the Database & Settings tab.`);
               const cur = fpStateRef.current;
               if (!cur.overview || cur.overview.uid !== uid) { alert('Couldn\'t open the job to add the signature. Open it from Database & Settings and try again.'); return; }
               const fp = await planFingerprint(cur);
-              const fpOld = await planFingerprint(cur, true);
-              if (sig.fingerprint && sig.fingerprint !== fp && sig.fingerprint !== fpOld) {
-                if (!window.confirm(`⚠ ${row.who} signed an earlier version of this plan (${fpShort(sig.fingerprint)}); the plan is now ${fpShort(fp)}.\n\nOK: dismiss this signature (ask them to open the job and sign again)\nCancel: keep it in Awaiting action`)) return;
+              if (sig.fingerprint && !(await fpMatches(sig.fingerprint, cur))) {
+                // say what changed: the pilot signed the copy in the cloud, so compare with that
+                const tm = (t) => { try { return new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
+                const sentAt = cur.approval && cur.approval.rpRequest && cur.approval.rpRequest.sentAt, early = sentAt && row.created_at && String(row.created_at) < new Date(sentAt).toISOString();
+                const when = row.created_at ? `\n\nThey signed at ${tm(row.created_at)}` + (early ? `, before you sent the latest version (${tm(sentAt)}). They need to open the job again and sign that version.` : '.') : '';
+                let what = []; try { const d = await fetchCloudPlan(row.job_id || (row.job && row.job.id), uid); if (d && d.plan && await fpMatches(sig.fingerprint, d.plan)) what = planChanges(d.plan, cur); } catch (e) {}
+                if (!window.confirm(`⚠ ${row.who} signed an earlier version of this plan (${fpShort(sig.fingerprint)}); the plan is now ${fpShort(fp)}.` + when + (what.length ? `\n\nChanged since they signed:\n• ${what.join('\n• ')}` : '') + `\n\nThe RPIC has to sign the plan as it is now. Save the job so it updates in the cloud, then ask them to open it and sign again.\n\nOK: dismiss this signature\nCancel: keep it in Awaiting action`)) return;
                 done(); return;
               }
               setApproval(prev => ({ ...prev, rpSigned: true, rpName: sig.name || prev.rpName, rpArn: sig.arn || prev.rpArn, rpDate: sig.date || prev.rpDate, rpRemote: null,
@@ -14629,7 +14666,7 @@ View in the Database & Settings tab.`);
                             <div className="space-y-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm relative print:border-slate-400 print:shadow-none">
                               <h4 className="font-semibold text-sm text-slate-700 uppercase tracking-wider">Remote Pilot in Command (RPIC)</h4>
                               {pendingSig && <div data-pending-sig="1" className="print:hidden rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 flex items-center gap-2 flex-wrap">
-                                <i className="fa-solid fa-signature text-emerald-600"></i><span className="flex-1 min-w-[10rem]"><b>{pendingSig.who}</b> signed this plan as RPIC in the planner{pendingSig.flight.date ? ' on ' + fmtDate(pendingSig.flight.date) : ''}.</span>
+                                <i className="fa-solid fa-signature text-emerald-600"></i><span className="flex-1 min-w-[10rem]"><b>{pendingSig.who}</b> signed this plan as RPIC in the planner{pendingSig.created_at ? ' at ' + new Date(pendingSig.created_at).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : pendingSig.flight.date ? ' on ' + fmtDate(pendingSig.flight.date) : ''}.</span>
                                 <button type="button" data-pending-sig-add="1" onClick={() => applyCloudSignature(pendingSig)} className="px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700">Add their signature</button></div>}
                               <div>
                                 <label className="block text-xs font-medium text-gray-500 mb-1">Name / ARN</label>
@@ -14674,7 +14711,7 @@ View in the Database & Settings tab.`);
                                     <label className="text-xs px-2.5 py-1.5 rounded border border-violet-300 bg-white text-violet-800 font-semibold hover:bg-violet-50 cursor-pointer"><i className="fa-solid fa-file-import mr-1"></i>Import signed reply
                                       <input type="file" accept=".json,application/json" className="hidden" data-rp-import="1" onChange={importRpicSignoff} />
                                     </label>
-                                    {approval.rpRequest && <span className="text-[11px] text-slate-500" data-rp-requested={approval.rpRequest.via || 'file'}>{approval.rpRequest.via === 'email' ? 'Emailed to ' + (approval.rpRequest.to || 'the RPIC') + ' ' : 'Sent '}{new Date(approval.rpRequest.sentAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{approval.rpRequest.fingerprint !== planFp && planFp ? ' · plan changed since — send again' : ''}</span>}
+                                    {approval.rpRequest && <span className="text-[11px] text-slate-500" data-rp-requested={approval.rpRequest.via || 'file'}>{approval.rpRequest.via === 'email' ? 'Emailed to ' + (approval.rpRequest.to || 'the RPIC') + ' ' : 'Sent '}{new Date(approval.rpRequest.sentAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{!rpRequestOk ? ' · plan changed since — send again' : ''}</span>}
                                   </div>
                                 )}
                               </div>

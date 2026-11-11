@@ -64,7 +64,7 @@ with sync_playwright() as p:
     calls = pg.evaluate('window.__calls') or []
     sub = [c for c in calls if c.get('rpc') == 'submit_enquiry' and (c.get('args') or {}).get('p_source', '').startswith('feedback-')]
     a = (sub[-1].get('args') if sub else {}) or {}
-    R.check('sent as a feature request with the app version', a.get('p_source') == 'feedback-idea' and a.get('p_email') == 'fay@example.com' and 'Add a wind gust alert' in a.get('p_message', '') and 'App v7.34' in a.get('p_message', ''), a)
+    R.check('sent as a feature request with the app version', a.get('p_source') == 'feedback-idea' and a.get('p_email') == 'fay@example.com' and 'Add a wind gust alert' in a.get('p_message', '') and 'App v7.' in a.get('p_message', ''), a)
     R.check('...Mike is emailed', any(c.get('invoke') == 'enquiry-alert' and (c.get('body') or {}).get('id') == 'enq-feedback-idea' for c in calls))
     R.check('...and the tester is thanked', pg.locator('[data-feedback-done]').count() == 1)
     R.check('beta: no page errors', not errs, errs[:2])

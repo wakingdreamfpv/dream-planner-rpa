@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.35 — 11 Nov 2026 — RPIC signature no longer lost when the CRP picks their name
+- **Fix: "can't approve even though both have signed".** Choosing your own name and ARN in the CRP box (or ticking which instruments attach to the PDF) after the RPIC had signed counted as a change to the plan, so the RPIC's signature looked out of date and "Add their signature" offered only to dismiss it. Those are your side of the sign-off, so they no longer affect the RPIC's signature. Signatures made before this update still count.
+- A real change to the plan after the RPIC signed still needs them to sign again. The message now **says what changed** (for example "Authorisation details (notams)" or "Operation details (end time)").
+- The "plan changed since — send again" note uses the same rule.
+- **Clearer when the RPIC signed too early:** the green "signed this plan" box now shows the time they signed, and if they signed before you sent the latest version, the message says so ("They signed at 2:40 pm, before you sent the latest version (3:28 pm)…").
+- **Supabase:** nothing to do.
+- **Tests:** new suite (7 checks); everything passes.
+
 ## v7.34 — 10 Nov 2026 — Beta feedback, sample job for new testers, clear sample data, popular drones
 - **Feedback & bugs (beta):** a **Feedback & bugs** button on the beta bar. Testers pick *Something's not working*, *Feature request* or *General feedback* and write a few words. It's emailed to you (subject "Bug report: …", "Feature request: …") and listed in Settings › Enquiries with a label. The app version and device type are added. Nothing from their jobs is sent. Testers can send up to 20 a day.
 - **Your business details are gone from the free planner and the beta:** no CASA.OONP.0079, CASA.EVLOS.0346 or CASA.RPAS.1040, no ReOC 9037 or ARNs in the examples, no "Ops Manual V7" or your manual review task, no battery numbers from your own packs, and your name and phone are out of the sample job. Their OONP and EVLOS approvals start blank ("add your instrument number"). Your own signed-in planner is unchanged.
