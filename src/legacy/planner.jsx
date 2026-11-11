@@ -15,7 +15,7 @@ import SignDialog from '../cloud/SignDialog.jsx';
 import { CommentsPanel, SharePanel, refreshLinkSnapshots, SUGGEST_FIELDS, RISK_FIELDS } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { EnquiryDialog, EnquiriesList } from '../compliance/Enquiries.jsx';
-import { BetaDialog, BetaEndedDialog, betaActiveNow, betaEnded, betaDaysLeft, betaInfo, sendBetaSignup, downloadBetaRecords, BETA_LAST_DAY_TEXT } from '../compliance/Beta.jsx';
+import { BetaDialog, BetaEndedDialog, FeedbackDialog, betaActiveNow, betaEnded, betaDaysLeft, betaInfo, sendBetaSignup, downloadBetaRecords, BETA_LAST_DAY_TEXT } from '../compliance/Beta.jsx';
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.33';
+        const APP_VERSION = '7.34';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -231,6 +231,24 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           } catch (e) { return ''; }
         })();
         if (typeof window !== 'undefined') window.__WD_NS = WD_NS;
+        // v7.34: the free planner and the beta never show the owner's own business details (instrument numbers etc.)
+        const WD_PUBLIC = WD_NS === 'free' || WD_NS === 'beta';
+        const WD_SCRUB = [[/OONP approval \(CASA\.RPAS\.1040\)/g, 'OONP approval'], [/OONP approval CASA\.RPAS\.1040/g, 'OONP approval'], [/CASA\.RPAS\.1040/g, 'your OONP approval'],
+          [/(the )?CASA\.OONP\.0079( instrument)?/g, 'your OONP instrument'], [/CASA\.EVLOS\.0346/g, 'your EVLOS instrument']];
+        const wdScrub = (v) => { if (!WD_PUBLIC) return v; if (typeof v === 'string') return WD_SCRUB.reduce((t, [re, to]) => t.replace(re, to), v);
+          if (Array.isArray(v)) return v.map(wdScrub); if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(k => { o[k] = wdScrub(v[k]); }); return o; } return v; };
+        // v7.34: a short list of popular aircraft (and their packs) to pick from in the setup wizard; the free planner and
+        // the beta start with these instead of the owner's long fleet list and battery numbers
+        const POPULAR_FLEET = {
+          'DJI Mini 5 Pro':  { weight: 0.250, area: 0.010, cd: 1.00, cells: 'none', batteries: 'Mini 5 Pro Intelligent Flight Battery', pack: 'MINI5' },
+          'DJI Mini 4 Pro':  { weight: 0.249, area: 0.010, cd: 1.00, cells: 'none', batteries: 'Mini 4 Pro Intelligent Flight Battery', pack: 'MINI4' },
+          'DJI Air 3S':      { weight: 0.724, area: 0.020, cd: 1.00, cells: 'none', batteries: 'Air 3 Series Intelligent Flight Battery', pack: 'AIR3S' },
+          'DJI Mavic 3 Pro': { weight: 0.958, area: 0.028, cd: 1.00, cells: 'none', batteries: 'Mavic 3 Intelligent Flight Battery', pack: 'MAVIC3' },
+          'DJI Mavic 4 Pro': { weight: 1.063, area: 0.030, cd: 1.00, cells: 'none', batteries: 'Mavic 4 Pro Intelligent Flight Battery', pack: 'MAVIC4' },
+          'DJI Avata 2':     { weight: 0.377, area: 0.015, cd: 1.15, cells: 'none', batteries: 'Avata 2 Intelligent Flight Battery', pack: 'AVATA2' },
+          'DJI Matrice 4E':  { weight: 1.219, area: 0.035, cd: 1.10, cells: 'none', batteries: 'Matrice 4 Series Intelligent Flight Battery', pack: 'M4' },
+          '5" FPV quad (6S)': { weight: 0.650, area: 0.017, cd: 1.35, cells: '6', batteries: '6S 1300 mAh LiPo', pack: '6S-1300' },
+        };
         const wdLegacyKey = (k) => (WD_NS ? null : k); // the localStorage mirror belongs to the owner's database only
         const wdStore = (() => {
           const NAME = 'wakingdream_planner' + (WD_NS ? '__' + WD_NS.replace(/[^a-z0-9@._-]/gi, '_') : ''), STORE = 'kv', KEY = 'rpas_database', SAFE = 'rpas_database_safety';
@@ -473,7 +491,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         };
 
         // Optional pre-flight checklist (v5.39): shown in Section 4 Part A and printed in the PDF for clients
-        const PREFLIGHT_CHECKS = [
+        const PREFLIGHT_CHECKS = wdScrub([
           { id: 'core', title: 'Before flight', items: [
             { id: 'auth', title: 'Flight authorisation is in place', text: "The CRP has reviewed the planning section of the Flight Record and authorised the job. That authorisation lapses if the RPA type, crew, location, or dates and times change, so re-authorise if any of those shift." },
             { id: 'onsite', title: 'On-site validation', text: "On arrival, confirm the planning still matches reality: weather, site hazards, people, obstacles and airspace. Record this in Section 4 of the Flight Record (Appendix F1). If anything sits outside the authorisation or the manufacturer's limits, an updated authorisation is needed before flight." },
@@ -494,7 +512,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
             { id: 'rego', title: 'RPA registration', text: "" },
             { id: 'emerg', title: 'Emergency contacts available on site', text: "The site-relevant emergency contact list (emergency services, CRP, ATC, site contacts) is available to all personnel, as the Emergency Response Plan requires." },
           ] },
-        ];
+        ]);
 
         const CREW_FIELD_LABELS = { weatherMeetsLimitations: 'Weather within limitations', weatherDetails: 'Weather details', onsiteValidationInitials: 'On-site validation initials', planningErrors: 'Planning errors', conductedIAW: 'Conducted IAW plan', conductedChanges: 'Changes to the plan', comments: 'Comments', serviceableAtEnd: 'Serviceable at end', defects: 'Defects', crewRP: 'Remote pilot', crewSecondRP: 'Second RP', crewObserver: 'Observer' };
         const crewBlankFlight = (f) => !f || (!String(f.duration == null ? '' : f.duration).trim() && !String(f.batteries || '').trim() && !String(f.label || '').trim() && !f.telemetry
@@ -3349,7 +3367,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         // ── FlightEntryLogger ── isolated component managing multiple flights per RPA
         // Each flight: { id, label, duration, batteries }
         // ── Default flight segments ─────────────────────────────────────────────
-        const COMPLIANCE_TASKS = [
+        const COMPLIANCE_TASKS = wdScrub([
           { id: 'wk-admin', freq: 'weekly', rule: { type: 'weekly', weekday: 1 }, time: '08:00', mins: 30, role: 'CRP / MC',
             title: 'Monday admin: flight records, logs & tech log', when: 'Every Monday, 8:00am · 30 min', ref: 'OM 1.4, 3.1.2, 3.3, 1.10',
             items: [
@@ -3467,15 +3485,15 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               "Get trainee signatures and general-induction dates for all spotters",
               "No one flies or spots on a job until their induction is complete and signed",
             ] },
-        ];
+        ]).filter(t => !(WD_PUBLIC && /^x-manual/.test(t.id)));
 
-        const COMPLIANCE_DEFAULT_EXPIRIES = [
+        const COMPLIANCE_DEFAULT_EXPIRIES = wdScrub([
           { id: 'exp-reoc', label: 'ReOC expiry', date: '', leadDays: 60, notes: 'Check your ReOC instrument' },
           { id: 'exp-oonp', label: 'OONP approval CASA.RPAS.1040', date: '', leadDays: 60, notes: '' },
           { id: 'exp-insurance', label: 'Public liability / aviation insurance renewal', date: '', leadDays: 30, notes: '' },
           { id: 'exp-casa2025', label: 'CASA 20/25 instrument expires', date: '2028-03-31', leadDays: 115, notes: 'Reminder from 7 Dec 2027' },
           { id: 'exp-ex8725', label: 'EX87/25 exemption expires', date: '2028-09-30', leadDays: 88, notes: 'Reminder from 4 Jul 2028' },
-        ];
+        ]);
 
         const COMPLIANCE_DAILY = [
           "Complete the Flight Record (JSA, operational release, ops log) before flying",
@@ -3574,6 +3592,11 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           { id: 'auth-ex8725', code: 'CASA EX87/25', title: 'Obtaining Experience (medium RPA / RePL category upgrade) Exemption 2025', scope: 'all', expiry: '2028-09-30', needFor: [], excludes: [], note: '' },
           { id: 'auth-night', code: 'Night VLOS', title: 'Night operations under the ReOC (Part 101 MOS and the operations manual night procedures)', scope: 'all', expiry: '', needFor: ['Night'], excludes: [], note: '' },
         ];
+        if (WD_PUBLIC) { // ids kept so later updates still match; the numbers are the operator's own to fill in
+          DEFAULT_OFFICIAL_AUTHS.splice(0, 2,
+            { id: 'auth-oonp0079', code: '', title: 'Over or near people (OONP) approval: add your instrument number', scope: 'operator', expiry: '', needFor: ['OONP'], excludes: [], note: '' },
+            { id: 'auth-evlos0346', code: '', title: 'Extended visual line of sight (EVLOS) approval: add your instrument number', scope: 'operator', expiry: '', needFor: ['EVLOS'], excludes: [], note: '' });
+        }
         const officialAuthList = (dbObj) => (dbObj && Array.isArray(dbObj.officialAuths)) ? dbObj.officialAuths : DEFAULT_OFFICIAL_AUTHS;
         const authSelected = (text, a) => !!a.code && String(text || '').toLowerCase().includes(a.code.toLowerCase());
         const authToggle = (text, a) => {
@@ -3904,7 +3927,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               <div className="bg-teal-50 px-6 py-4 border-b border-teal-100 flex items-center gap-2 flex-wrap">
                 <i className="fa-solid fa-calendar-check text-lg text-teal-700"></i>
                 <h2 className="text-lg font-semibold text-slate-800">REOC Compliance Calendar</h2>
-                <span className="text-xs text-slate-500">Part 101 ReOC · Ops Manual V7</span>
+                <span className="text-xs text-slate-500">Part 101 ReOC{WD_PUBLIC ? '' : ' · Ops Manual V7'}</span>
                 <button type="button" onClick={exportIcs} className="ml-auto bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium px-3 py-2 rounded-md flex items-center gap-2" title="Download an .ics file for Google, Apple or Outlook calendar">
                   <i className="fa-solid fa-file-export"></i> Export to calendar (.ics)
                 </button>
@@ -4923,7 +4946,23 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
             '2.5" Cinewhoop (FPV)':    ["4S 250mAh LiPo 01","4S 250mAh LiPo 02"],
           };
 
-          const parseStoredDb = (saved) => {
+          // v7.34: free / beta: drop the owner's battery numbers; until set up, offer the popular aircraft instead of the long list
+          const OWNER_BATT = new Set(Object.values(defaultRpaBatteries).flat());
+          const publicClean = (d) => {
+            if (!WD_PUBLIC || !d) return d;
+            const batteries = (d.batteries || []).filter(b => !OWNER_BATT.has(b));
+            const rpaBatteries = {}; Object.entries(d.rpaBatteries || {}).forEach(([k, l]) => { const f = (l || []).filter(b => !OWNER_BATT.has(b)); if (f.length) rpaBatteries[k] = f; });
+            let fleet = d.fleet || {};
+            if (!d.setupDoneAt) {
+              const used = new Set([...(d.draftPlans || []), ...(d.savedPlans || [])].flatMap(p => (p && p.overview && p.overview.rpaTypes) || []));
+              const keep = {}; Object.entries(fleet).forEach(([k, f]) => { if (!defaultFleet[k] || used.has(k) || (f && (f.registrationNo || f.serial || f.sample))) keep[k] = f; });
+              Object.entries(POPULAR_FLEET).forEach(([k, f]) => { if (!keep[k]) { const { pack, ...spec } = f; keep[k] = { ...spec, totalFlightTime: 0, suggested: true }; } });
+              fleet = keep;
+            }
+            return { ...d, batteries, rpaBatteries, fleet };
+          };
+          const parseStoredDb = (saved) => publicClean(parseStoredDbRaw(saved));
+          const parseStoredDbRaw = (saved) => {
             if (saved) {
               try {
                 const parsed = JSON.parse(saved);
@@ -5118,7 +5157,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [freeIntroSeen, setFreeIntroSeen] = useState(() => !!lsGet('wd_free_intro'));
           // v7.30: "Get it for your company" (free planner → the CRP's Enquiries list)
           const [enquiry, setEnquiry] = useState(null);
-          const [betaOpen, setBetaOpen] = useState(false), [betaEndedOpen, setBetaEndedOpen] = useState(false);
+          const [betaOpen, setBetaOpen] = useState(false), [betaEndedOpen, setBetaEndedOpen] = useState(false); const [feedbackOpen, setFeedbackOpen] = useState(false); // v7.34
           useEffect(() => { const h = () => setBetaOpen(true); window.addEventListener('wd-open-beta', h); return () => window.removeEventListener('wd-open-beta', h); }, []);
           useEffect(() => { // a link with ?beta (landing page, QR) opens the beta sign-up straight away
             try { if (/[?&]beta\b/.test(location.search)) { history.replaceState(null, '', location.pathname + location.hash); if (IS_HOSTED && !betaActiveNow() && !lsGet('wd_auth_email')) setBetaOpen(true); } } catch (e) {}
@@ -7250,7 +7289,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // v7.25: night outdoor event (e.g. a garden light show): a prop-guarded mini-lifter kept away from people, and
             // small drones flown near people under OONP Pathway 2 with informed consent; includes the night OONP hold point
             oonpP2NightEventLifter: [
-              { refNo:'001', id:Date.now()+1, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:"Night OONP without CASA's written confirmation (CASA.OONP.0079 Schedule 1.3)",
+              { refNo:'001', id:Date.now()+1, dateAdded:'2026-11-06', riskOwner:'RPIC', hazard:wdScrub("Night OONP without CASA's written confirmation (CASA.OONP.0079 Schedule 1.3)"),
                 riskDescription:"Schedule 1.3 excludes night, EVLOS and swarm operations from OONP. Flying near or over people at night before CASA confirms in writing that the Ops Manual approval covers it would be outside the instrument.",
                 existingControls:"HOLD POINT: no flight within 30 m of people at night until CASA's written confirmation is held and filed with the ops plan. Until then, all aircraft keep 30 m from anyone not part of the operation (standard conditions). Ops Manual night (NVLOS) procedures followed.",
                 initL:'3', initC:'B', resL:'1', resC:'D',
@@ -9915,7 +9954,7 @@ View in the Database & Settings tab.`);
           };
           // v6.8/v7.0: getting-started items (Plan tab checklist and the Home dashboard)
           const getSetupItems = () => {
-            const fl = Object.values(db.fleet || {}).filter(f => f && !f.sample);
+            const fl = Object.values(db.fleet || {}).filter(f => f && !f.sample && !f.suggested);
             const jobs = (db.draftPlans || []).length + (db.savedPlans || []).length + (db.completedFlights || []).length;
             const items = [
               { id: 'company', label: 'Company details', sub: 'Name, ReOC, ARN: prints on every plan', done: !!(db.companyProfile && db.companyProfile.name), go: () => openSetupWizard(null, 1), cta: 'Add' },
@@ -10108,7 +10147,7 @@ View in the Database & Settings tab.`);
             if (openAipKey) company.openAipKey = openAipKey; // v7.10: one airspace key for the whole company
             if (Array.isArray(db.pdfViews) && db.pdfViews.length) company.pdfViews = db.pdfViews; // v7.17: the company's PDF views
             const all = loggedTimeStats(db.completedFlights);
-            const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
+            const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && !f.suggested).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
               return { name, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', flights: x.flights, sec: x.sec + (Number(f.priorMinutes) || 0) * 60 }; });
             const bnames = [...new Set([...(db.batteries || []), ...Object.values(db.rpaBatteries || {}).flat(), ...Object.keys(all.bat)])];
             const batteries = bnames.map(name => ({ name, flights: (all.bat[name] || {}).flights || 0, minCell: (all.bat[name] || {}).minCell || null, rpa: (all.bat[name] || {}).rpa || '' }));
@@ -10510,7 +10549,7 @@ View in the Database & Settings tab.`);
             const all = loggedTimeStats(db.completedFlights), cut = Date.now() - 90 * 864e5;
             const r90 = loggedTimeStats((db.completedFlights || []).filter(r => Date.parse(r.completedAt || 0) >= cut));
             const pilots = Object.entries(all.pil).map(([name, x]) => ({ name, ...x, d90: (r90.pil[name] || {}).sec || 0 })).sort((x, y) => y.sec - x.sec).slice(0, 8);
-            const fleetRows = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0, last: 0 };
+            const fleetRows = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && !f.suggested).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0, last: 0 };
               const exp = f.registrationExpiry ? cParse(f.registrationExpiry) : null;
               return { name, flights: x.flights, last: x.last, sec: x.sec + (Number(f.priorMinutes) || 0) * 60, rego: f.registrationNo || '', regoExp: f.registrationExpiry || '', regoDays: exp ? cDiff(exp, today) : null }; })
               .sort((x, y) => y.sec - x.sec);
@@ -10620,18 +10659,57 @@ View in the Database & Settings tab.`);
           // v7.31: the sample job (Acme Corp — Suncorp Stadium), a finished plan visitors open as their own copy to explore and edit.
           // public/demo/acme-suncorp.json: { plan, fleet, rpaBatteries } (third-party images left out). Needs internet.
           const SAMPLE_JOB_URL = 'demo/acme-suncorp.json';
+          // the sample's aircraft and packs join the lists, marked as sample so "Clear sample data" can take them out again
+          const withSampleKit = (prev, smp) => {
+            const fl = smp.fleet || {}, rb = smp.rpaBatteries || {};
+            const fleet = { ...(prev.fleet || {}) }; Object.keys(fl).forEach(k => { if (!fleet[k] || fleet[k].suggested) fleet[k] = { ...fl[k], sample: true }; });
+            const rpaBatteries = { ...(prev.rpaBatteries || {}) }; Object.keys(rb).forEach(k => { if (!rpaBatteries[k]) rpaBatteries[k] = rb[k]; });
+            const batteries = [...new Set([...(prev.batteries || []), ...Object.values(rb).flat()])];
+            return { ...prev, fleet, rpaBatteries, batteries };
+          };
+          // v7.34: new beta testers find the sample job waiting in their job list (a draft they can open, edit or clear)
+          const SAMPLE_QUEUE_ID = 'SAMPLE-ACME';
+          const isSamplePlan = (p) => !!p && (p.id === SAMPLE_QUEUE_ID || /^sample-/i.test(String(p.id || '')) || !!(p.overview && p.overview.sample) || /Suncorp Stadium Test Job/.test(String(p.title || '')));
+          const queueSampleJob = async () => {
+            let smp = null;
+            try { const r = await fetch(SAMPLE_JOB_URL, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); smp = await r.json(); } catch (e) { return false; }
+            const plan = JSON.parse(JSON.stringify(smp.plan || {}));
+            plan.id = SAMPLE_QUEUE_ID; plan.status = 'draft'; plan.savedAt = new Date().toISOString(); plan.title = 'SAMPLE: ' + String(plan.title || 'Acme Corp — Suncorp Stadium');
+            plan.overview = { ...(plan.overview || {}), identifier: SAMPLE_QUEUE_ID, uid: newUid(), sample: true };
+            setDb(prev => { if ([...(prev.draftPlans || []), ...(prev.savedPlans || [])].some(isSamplePlan)) return prev;
+              return { ...withSampleKit(prev, smp), draftPlans: [plan, ...(prev.draftPlans || [])] }; });
+            return true;
+          };
+          // v7.34: "Clear sample data": takes out the sample jobs, sample aircraft and their packs, and the sample people and clients
+          const openIsSample = () => isSamplePlan({ id: overview.identifier, overview, title: getOpTitle(overview) });
+          const sampleDataCount = (d) => {
+            const plans = [...(d.draftPlans || []), ...(d.savedPlans || [])].filter(isSamplePlan).length;
+            const fleet = Object.values(d.fleet || {}).filter(f => f && f.sample).length;
+            const people = (d.pilots || []).filter(p => SAMPLE_PILOTS.includes(p && p.name)).length;
+            return { plans, fleet, people, any: plans + fleet + people > 0 || openIsSample() };
+          };
+          const clearSampleData = () => {
+            const wasOpen = openIsSample();
+            const gone = Object.keys(db.fleet || {}).filter(k => db.fleet[k] && db.fleet[k].sample);
+            setDb(prev => {
+              const fleet = { ...(prev.fleet || {}) }, rpaBatteries = { ...(prev.rpaBatteries || {}) }; let dropB = [];
+              Object.keys(fleet).filter(k => fleet[k] && fleet[k].sample).forEach(k => { delete fleet[k]; dropB = dropB.concat(rpaBatteries[k] || []); delete rpaBatteries[k]; });
+              const usedB = new Set(Object.values(rpaBatteries).flat());
+              return { ...prev, fleet, rpaBatteries, batteries: (prev.batteries || []).filter(b => !(dropB.includes(b) && !usedB.has(b))),
+                draftPlans: (prev.draftPlans || []).filter(p => !isSamplePlan(p)), savedPlans: (prev.savedPlans || []).filter(p => !isSamplePlan(p)),
+                pilots: (prev.pilots || []).filter(p => !SAMPLE_PILOTS.includes(p && p.name)),
+                assessors: (prev.assessors || []).filter(n => !SAMPLE_PILOTS.includes(n)),
+                clients: (prev.clients || []).filter(c => !['Acme Corp', 'Sample Client Pty Ltd'].includes(c && c.name)) };
+            });
+            if (wasOpen) { quietUntilRef.current = Date.now() + 2500; handleResetFormQuiet(); }
+            setWiz(p => p ? { ...p, sampleCleared: true, dropSamplePilots: true, fleet: p.fleet.filter(x => !gone.includes(x.key)), batt: p.batt.filter(b => !gone.includes(b.rpa)) } : p);
+          };
           const openSampleJob = async () => {
             if (dirty && !window.confirm('Opening the sample job replaces the job that is open now. Unsaved changes will be lost.\n\nContinue?')) return;
             let smp = null;
             try { const r = await fetch(SAMPLE_JOB_URL, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); smp = await r.json(); }
             catch (e) { alert('The sample job needs an internet connection. Try again when you have signal.'); return; }
-            const fl = smp.fleet || {}, rb = smp.rpaBatteries || {};
-            setDb(prev => {
-              const fleet = { ...(prev.fleet || {}) }; Object.keys(fl).forEach(k => { if (!fleet[k]) fleet[k] = fl[k]; });
-              const rpaBatteries = { ...(prev.rpaBatteries || {}) }; Object.keys(rb).forEach(k => { if (!rpaBatteries[k]) rpaBatteries[k] = rb[k]; });
-              const batteries = [...new Set([...(prev.batteries || []), ...Object.values(rb).flat()])];
-              return { ...prev, fleet, rpaBatteries, batteries };
-            });
+            setDb(prev => withSampleKit(prev, smp));
             const plan = JSON.parse(JSON.stringify(smp.plan || {}));
             plan.overview = { ...(plan.overview || {}), uid: newUid() };
             setTimeout(() => { handleLoadPlan(plan, { silent: true }); setActiveTab('preliminary'); try { window.scrollTo({ top: 0 }); } catch (e) {} }, 60);
@@ -10701,7 +10779,7 @@ View in the Database & Settings tab.`);
           const SAMPLE_PILOTS = ['John Doe', 'Jane Smith', 'Mark Taylor', 'Emily White'];
           // v7.30: straight after joining the beta, open the company setup
           useEffect(() => { if (!isBeta || !dbReady) return; let fresh = ''; try { fresh = sessionStorage.getItem('wd_beta_new') || ''; sessionStorage.removeItem('wd_beta_new'); } catch (e) {}
-            if (fresh) { lsSet('wd_welcomed', new Date().toISOString()); lsSet('wd_free_intro', new Date().toISOString()); if (fresh === '1') setTimeout(() => openSetupWizard(null, 1), 300); } }, [isBeta, dbReady]); // eslint-disable-line
+            if (fresh) { lsSet('wd_welcomed', new Date().toISOString()); lsSet('wd_free_intro', new Date().toISOString()); queueSampleJob(); if (fresh === '1') setTimeout(() => openSetupWizard(null, 1), 300); } }, [isBeta, dbReady]); // eslint-disable-line
           const openSetupWizard = (kind, startStep) => {
             const co = { name: '', reocNumber: '', companyArn: '', phone: '', email: '', address: '', ...(db.companyProfile || {}) };
             const fleet = Object.entries(db.fleet || {}).map(([name, x]) => ({ key: name, name, weight: x.weight ?? '', cells: x.cells || '', registrationNo: x.registrationNo || '', registrationExpiry: x.registrationExpiry || '', serial: x.serial || '', keep: true }));
@@ -10711,6 +10789,7 @@ View in the Database & Settings tab.`);
               if (i >= 0) fleet[i] = { ...fleet[i], keep: true, highlight: true }; else fleet.unshift({ key: '', name: A.name, weight: A.spec.weight, cells: A.spec.cells, registrationNo: '', registrationExpiry: '', serial: '', keep: true, highlight: true });
               fleet.forEach(x => { if (!x.highlight && (db.fleet[x.key] || {}).sample) x.keep = false; }); }
             else fleet.forEach(x => { if ((db.fleet[x.key] || {}).sample) x.keep = false; });
+            fleet.forEach(x => { if ((db.fleet[x.key] || {}).suggested && !x.highlight) x.keep = false; }); // v7.34: popular picks start unticked
             setWiz({ step: startStep || 0, co, me: { name: co.crpName || '', arn: '', phone: co.phone || '', email: co.email || '' }, fleet, batt, gen: { prefix: '', count: 6, start: 1, rpa: '' }, dropSamplePilots: (db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) });
           };
           const finishSetupWizard = () => {
@@ -10722,7 +10801,7 @@ View in the Database & Settings tab.`);
                 if (i >= 0) pilots[i] = me; else pilots = [me, ...pilots]; }
               const fleet = {}; const renamed = {};
               w.fleet.filter(x => x.keep && x.name.trim()).forEach(x => { const old = (prev.fleet || {})[x.key] || {}; const nm = x.name.trim(); if (x.key && x.key !== nm) renamed[x.key] = nm;
-                fleet[nm] = { area: 0.05, cd: 1.2, ...old, sample: undefined, weight: parseFloat(x.weight) || old.weight || 0, cells: x.cells, registrationNo: String(x.registrationNo || '').trim().toUpperCase(), registrationExpiry: x.registrationExpiry, serial: x.serial }; });
+                fleet[nm] = { area: 0.05, cd: 1.2, ...(x.spec || {}), ...old, sample: undefined, suggested: undefined, weight: parseFloat(x.weight) || old.weight || 0, cells: x.cells, registrationNo: String(x.registrationNo || '').trim().toUpperCase(), registrationExpiry: x.registrationExpiry, serial: x.serial }; });
               const keptB = w.batt.filter(b => b.keep && b.name.trim());
               const rpaBatteries = {}; keptB.forEach(b => { const rpa = renamed[b.rpa] || b.rpa; if (rpa && fleet[rpa]) (rpaBatteries[rpa] = rpaBatteries[rpa] || []).push(b.name.trim()); });
               const next = { ...prev, companyProfile: co, pilots, fleet, batteries: keptB.map(b => b.name.trim()), rpaBatteries, setupDoneAt: new Date().toISOString() };
@@ -10905,6 +10984,7 @@ View in the Database & Settings tab.`);
               {AmendDialog()}
               <EnquiryDialog open={!!enquiry} source={enquiry} onClose={() => setEnquiry(null)} />
               <BetaDialog open={betaOpen} onClose={() => setBetaOpen(false)} />
+              <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} appVersion={APP_VERSION} />
               <BetaEndedDialog open={betaEndedOpen} onClose={() => { lsSet('wd_beta_end_seen', new Date().toISOString()); setBetaEndedOpen(false); }} onEnquire={() => { lsSet('wd_beta_end_seen', new Date().toISOString()); setBetaEndedOpen(false); setEnquiry('beta-ended'); }} />
               {showRoleWelcome && (() => {
                 // v7.22: one welcome card: who invited them and to which company, an optional password, and their next step
@@ -11133,6 +11213,13 @@ View in the Database & Settings tab.`);
                         <div className="flex gap-1.5 mt-3 flex-nowrap sm:flex-wrap overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-0.5" style={{ scrollbarWidth: 'none' }}>{STEPS.map((t, i) => <button key={t} type="button" onClick={() => set({ step: i })} className={`shrink-0 whitespace-nowrap text-[11px] font-semibold px-2.5 py-1 rounded-full ${i === w.step ? 'bg-white text-violet-900' : i < w.step ? 'bg-white/30 text-white' : 'bg-white/10 text-white/70'}`}>{i + 1}. {t}</button>)}</div>
                       </div>
                       <div className="p-4 sm:p-6 space-y-4 flex-1 min-h-0 overflow-y-auto overscroll-contain" data-wiz-body="1">
+                        {w.step <= 1 && (w.sampleCleared
+                          ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" data-wiz-sample-cleared="1"><i className="fa-solid fa-check mr-1.5"></i>Sample data cleared. You're starting clean.</div>
+                          : sampleDataCount(db).any && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 flex items-center gap-3 flex-wrap" data-wiz-sample-box="1">
+                            <div className="flex-1 min-w-[12rem] text-sm text-amber-900"><b>Sample data is loaded</b> (the sample job, its aircraft and sample people). Clear it when you're ready to set up your own.</div>
+                            <button type="button" data-wiz-clear-sample="1" onClick={() => { if (window.confirm('Clear all sample data?\n\nThis removes the sample job, the sample aircraft and their batteries, and the sample pilots and clients. Your own jobs and details are kept.')) clearSampleData(); }}
+                              className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700"><i className="fa-solid fa-broom mr-1.5"></i>Clear sample data</button>
+                          </div>)}
                         {w.step === 0 && (
                           <div className="space-y-3" data-wiz-intro="1">
                             <p className="text-sm text-slate-600">New here? Take a 2-minute tour with a <b>sample job</b> first: a short park shoot, already planned, so you can see each section, the risk register, authorisation, the flight log and the PDF. Nothing in your records changes. Pick the aircraft for the sample:</p>
@@ -11148,21 +11235,28 @@ View in the Database & Settings tab.`);
                         {w.step === 1 && (<>
                           <p className="text-sm text-slate-600">Your company details print on every plan and flight record.</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {F('co', 'name', 'Company / trading name', 'e.g. Waking Dream FPV')}{F('co', 'reocNumber', 'ReOC number', 'e.g. ReOC 9037')}
-                            {F('co', 'companyArn', 'Company (operator) ARN', 'e.g. 1266519')}{F('co', 'phone', 'Phone', '+61 4xx xxx xxx')}
+                            {F('co', 'name', 'Company / trading name', 'e.g. Skyline Aerial Pty Ltd')}{F('co', 'reocNumber', 'ReOC number', 'e.g. ReOC 1234')}
+                            {F('co', 'companyArn', 'Company (operator) ARN', 'e.g. 1234567')}{F('co', 'phone', 'Phone', '+61 4xx xxx xxx')}
                             {F('co', 'email', 'Email', 'ops@yourcompany.com.au', 'email')}{F('co', 'address', 'Address', 'Street, suburb, state')}
                           </div></>)}
                         {w.step === 2 && (<>
                           <p className="text-sm text-slate-600">You as Chief Remote Pilot. You're added to the pilot list, and your name fills the CRP sign-off.</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {F('me', 'name', 'Your full name', 'e.g. Michael Rubio')}{F('me', 'arn', 'Your ARN', 'e.g. 1209476')}
+                            {F('me', 'name', 'Your full name', 'e.g. Alex Smith')}{F('me', 'arn', 'Your ARN', 'e.g. 7654321')}
                             {F('me', 'phone', 'Mobile', '04xx xxx xxx')}{F('me', 'email', 'Email', 'you@company.com', 'email')}
                           </div>
                           {(db.pilots || []).some(p => SAMPLE_PILOTS.includes(p.name)) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={w.dropSamplePilots} onChange={e => set({ dropSamplePilots: e.target.checked })} />Remove the sample pilots ({SAMPLE_PILOTS.join(', ')})</label>}
                           <p className="text-xs text-slate-500">Add other pilots and observers later in Database &amp; Settings › Crew &amp; users.</p></>)}
                         {w.step === 3 && (<>
                           <p className="text-sm text-slate-600">Your aircraft, with their CASA registration. Untick any you don't fly. Weight sets the kinetic energy limits; cells match radio logs to the aircraft.</p>
-                          <div className="space-y-2">{w.fleet.map((x, i) => (
+                          <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3" data-wiz-popular="1">
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-violet-700 mb-1.5">Popular aircraft: tap to add</div>
+                            <div className="flex flex-wrap gap-1.5">{Object.entries(POPULAR_FLEET).map(([nm, A]) => { const i = w.fleet.findIndex(x => x.name === nm); const on = i >= 0 && w.fleet[i].keep;
+                              return <button key={nm} type="button" data-wiz-pop={nm} aria-pressed={on} onClick={() => { if (i >= 0) setRow('fleet', i, { keep: !on }); else { const { pack, ...spec } = A; set({ fleet: [...w.fleet, { key: '', name: nm, weight: A.weight, cells: A.cells, registrationNo: '', registrationExpiry: '', serial: '', keep: true, spec }] }); } }}
+                                className={`text-xs font-semibold px-2.5 py-1.5 rounded-full border ${on ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-violet-300 text-violet-800 hover:bg-violet-100'}`}><i className={`fa-solid ${on ? 'fa-check' : 'fa-plus'} mr-1`}></i>{nm}</button>; })}</div>
+                          </div>
+                          {!keptF.length && <p className="text-sm text-slate-400" data-wiz-nofleet="1">No aircraft yet. Tap the ones you fly above, or add your own below.</p>}
+                          <div className="space-y-2">{w.fleet.map((x, i) => ((db.fleet[x.key] || {}).suggested || POPULAR_FLEET[x.name]) && !x.keep ? null : (
                             <div key={i} className={`grid grid-cols-2 sm:grid-cols-12 gap-2 items-end border rounded-lg p-2 ${x.highlight ? 'border-violet-400 bg-violet-50' : x.keep ? 'border-slate-200' : 'border-slate-100 bg-slate-50 opacity-60'}`} data-wiz-fleet={i}>
                               <label className="col-span-2 sm:col-span-1 flex items-center gap-1 text-xs pb-2"><input type="checkbox" checked={x.keep} onChange={e => setRow('fleet', i, { keep: e.target.checked })} />Fly</label>
                               <div className="col-span-2 sm:col-span-3"><label className={lb}>Aircraft</label><input className={inp} value={x.name} onChange={e => setRow('fleet', i, { name: e.target.value })} data-wiz-fname={i} /></div>
@@ -11179,6 +11273,10 @@ View in the Database & Settings tab.`);
                           <p className="text-xs text-slate-500">Registration expiry dates feed the Compliance Calendar and the expiry check on each job. Aircraft that only fly under the excluded category can be left without a number.</p></>)}
                         {w.step === 4 && (<>
                           <p className="text-sm text-slate-600">Your battery packs and the aircraft they belong to. Name packs with the cells and capacity (e.g. <span className="font-mono">3S-720-11</span>) so the planner can auto-assign them to flights.</p>
+                          {keptF.some(x => POPULAR_FLEET[x.name.trim()]) && <div className="flex flex-wrap gap-1.5 items-center" data-wiz-poppacks="1"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Quick add</span>
+                            {keptF.filter(x => POPULAR_FLEET[x.name.trim()]).map(x => { const nm = x.name.trim(), A = POPULAR_FLEET[nm]; return (
+                              <button key={nm} type="button" data-wiz-poppack={nm} title={A.batteries} onClick={() => { const have = w.batt.filter(b => b.name.startsWith(A.pack + '-')).length; const add = Array.from({ length: 4 }, (_, k) => A.pack + '-' + String(have + k + 1).padStart(2, '0')).filter(n => !w.batt.some(b => b.name === n)).map(n => ({ name: n, rpa: nm, keep: true })); set({ batt: [...w.batt, ...add] }); }}
+                                className="text-xs font-semibold px-2.5 py-1.5 rounded-full border border-violet-300 bg-white text-violet-800 hover:bg-violet-100"><i className="fa-solid fa-plus mr-1"></i>4 × {A.batteries}</button>); })}</div>}
                           <div className="border border-violet-200 bg-violet-50/50 rounded-lg p-3 grid grid-cols-2 sm:grid-cols-12 gap-2 items-end">
                             <div className="col-span-2 sm:col-span-4"><label className={lb}>Name start</label><input className={inp + ' font-mono'} placeholder="e.g. 3S-720" value={w.gen.prefix} onChange={e => set({ gen: { ...w.gen, prefix: e.target.value } })} data-wiz-gen-prefix="1" /></div>
                             <div className="sm:col-span-2"><label className={lb}>How many</label><input className={inp} type="number" min="1" max="60" value={w.gen.count} onChange={e => set({ gen: { ...w.gen, count: e.target.value } })} data-wiz-gen-count="1" /></div>
@@ -11357,6 +11455,7 @@ View in the Database & Settings tab.`);
                 <div data-beta-banner="1" className="print:hidden bg-amber-50 border-b border-amber-200 text-amber-950 text-xs sm:text-sm">
                   <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
                     <span className="basis-full sm:basis-auto sm:flex-1 min-w-0"><b>Free beta</b> · the full planner on this device until {BETA_LAST_DAY_TEXT} ({betaDaysLeft()} days left) · back up now and then</span>
+                    <button type="button" data-allow-locked="1" data-beta-feedback="1" onClick={() => setFeedbackOpen(true)} className="font-semibold bg-violet-600 text-white rounded-full px-3 py-1"><i className="fa-solid fa-comment-dots mr-1"></i>Feedback &amp; bugs</button>
                     <button type="button" data-allow-locked="1" data-beta-backup="1" onClick={handleExportDb} className="font-semibold bg-white border border-amber-300 rounded-full px-3 py-1"><i className="fa-solid fa-download mr-1"></i>Back up</button>
                     <button type="button" data-allow-locked="1" data-beta-bar-enquiry="1" onClick={() => setEnquiry('beta-banner')} className="font-semibold bg-amber-400 text-amber-950 rounded-full px-3 py-1"><i className="fa-solid fa-building mr-1"></i>Get it for your company</button>
                   </div>
@@ -12372,7 +12471,7 @@ View in the Database & Settings tab.`);
                                     {a === 'no' && !editingPrelimChecklist && (
                                       <div className="pb-2">
                                         <input type="text" value={why} onChange={(e) => setPrelimWhy(item.id, e.target.value)}
-                                          placeholder="Not met: reason or covering approval (e.g. EVLOS 1, CASA.OONP.0079)"
+                                          placeholder="Not met: reason or covering approval (e.g. EVLOS 1, CASA.OONP.0001)"
                                           className={`w-full text-xs px-2 py-1.5 border rounded-md ${why ? 'border-green-400 bg-green-50 text-green-900 font-semibold' : 'border-amber-300 bg-amber-50'}`} />
                                       </div>
                                     )}
@@ -15474,7 +15573,7 @@ View in the Database & Settings tab.`);
                                       <thead><tr className="text-[10px] uppercase text-slate-500 text-left"><th className="px-1.5 py-1">Reference</th><th className="px-1.5 py-1">Description</th><th className="px-1.5 py-1">Applies to</th><th className="px-1.5 py-1">Expires</th><th className="px-1.5 py-1" title="Jobs of these kinds need this instrument; its copy is offered as a PDF attachment">Needed for</th><th className="px-1.5 py-1">Copy of instrument</th><th className="px-1.5 py-1">Doesn't cover</th><th className="px-1.5 py-1">Note</th><th></th></tr></thead>
                                       <tbody>{list.map(x => (
                                         <tr key={x.id} className="border-t border-slate-100 align-top" data-auth-row={x.id}>
-                                          <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0079" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
+                                          <td className="px-1.5 py-1"><input value={x.code || ''} placeholder="e.g. CASA.OONP.0001" onChange={e => upd(x.id, 'code', e.target.value)} className={inp + ' w-36 font-mono'} /></td>
                                           <td className="px-1.5 py-1"><input value={x.title || ''} placeholder="What it covers" onChange={e => upd(x.id, 'title', e.target.value)} className={inp + ' w-full min-w-[12rem]'} /></td>
                                           <td className="px-1.5 py-1"><select value={x.scope || 'operator'} onChange={e => upd(x.id, 'scope', e.target.value)} className={inp}><option value="operator">Your approval</option><option value="all">All operators</option></select></td>
                                           <td className="px-1.5 py-1"><input type="date" value={x.expiry || ''} onChange={e => upd(x.id, 'expiry', e.target.value)} className={inp + ' font-mono'} />
@@ -15673,7 +15772,7 @@ View in the Database & Settings tab.`);
                         </div>}
                         <div data-db-group="equip" className="space-y-2.5" hidden={isCrewRole || undefined}>
                           <div className="flex items-baseline gap-2 pt-2"><i className="fa-solid fa-helicopter text-indigo-500"></i><h2 className="text-base font-bold text-slate-800">Equipment</h2><span className="text-xs text-slate-500">aircraft, batteries and logged time</span></div>
-                        {dbFold('dbsec-fleet', 'RPAS fleet', 'fa-helicopter', <span>{Object.values(db.fleet || {}).filter(f => f && !f.sample).length} aircraft · {Object.values(db.fleet || {}).filter(f => f && !f.sample && String(f.registrationNo || '').trim()).length} with CASA rego</span>, (<>
+                        {dbFold('dbsec-fleet', 'RPAS fleet', 'fa-helicopter', <span>{Object.values(db.fleet || {}).filter(f => f && !f.sample && !f.suggested).length} aircraft · {Object.values(db.fleet || {}).filter(f => f && !f.sample && String(f.registrationNo || '').trim()).length} with CASA rego</span>, (<>
                             {/* RPAS Fleet DB */}
                             <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
                                 <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2 flex-wrap"><i className="fa-solid fa-plane-departure text-slate-400"></i> RPAS Fleet (Aircraft Times)

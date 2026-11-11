@@ -85,5 +85,16 @@ const e2 = await anon(() => tryq(`update public.enquiries set emailed_at = null`
 check('visitors cannot touch emailed_at', !!e2.error, e2.error);
 const e3 = await as(mike, () => tryq(`update public.enquiries set emailed_at = now() where id=$1 returning id`, [id]));
 check('the CRP cannot change emailed_at from the app', !!e3.error, e3.error);
+
+// v7.34: 0015 gives beta feedback its own daily limit (20), company enquiries stay at 3
+await db.exec(rd('0015_beta_feedback.sql')); await db.exec(rd('0015_beta_feedback.sql'));
+check('migration 0015 runs twice cleanly', true);
+const fb = []; for (let k = 0; k < 5; k++) fb.push(await anon(() => tryq(SUB, ['Sam', 'sam@example.com', null, null, null, 'Bug ' + k, 'feedback-bug', true])));
+check('a tester at the enquiry limit can still send 5 feedback reports', fb.every(r => r.rows && r.rows[0].id), JSON.stringify(fb.find(r => r.error) || ''));
+const f6 = await anon(() => tryq(SUB, ['Sam', 'sam@example.com', null, null, null, null, 'free-banner', true]));
+check('feedback does not lift the 3-a-day company enquiry limit', !!f6.error && /too many/.test(f6.error), f6.error);
+for (let k = 0; k < 15; k++) await anon(() => tryq(SUB, ['Sam', 'sam@example.com', null, null, null, 'Idea ' + k, 'feedback-idea', true]));
+const f21 = await anon(() => tryq(SUB, ['Sam', 'sam@example.com', null, null, null, 'one more', 'feedback-general', true]));
+check('feedback stops at 20 a day per email', !!f21.error && /too many/.test(f21.error), f21.error);
 console.log(pass + ' / ' + (pass + fail));
 if (fail) process.exit(1);

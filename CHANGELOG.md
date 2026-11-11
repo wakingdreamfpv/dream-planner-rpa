@@ -1,5 +1,14 @@
 # Planner changelog
 
+## v7.34 — 10 Nov 2026 — Beta feedback, sample job for new testers, clear sample data, popular drones
+- **Feedback & bugs (beta):** a **Feedback & bugs** button on the beta bar. Testers pick *Something's not working*, *Feature request* or *General feedback* and write a few words. It's emailed to you (subject "Bug report: …", "Feature request: …") and listed in Settings › Enquiries with a label. The app version and device type are added. Nothing from their jobs is sent. Testers can send up to 20 a day.
+- **Your business details are gone from the free planner and the beta:** no CASA.OONP.0079, CASA.EVLOS.0346 or CASA.RPAS.1040, no ReOC 9037 or ARNs in the examples, no "Ops Manual V7" or your manual review task, no battery numbers from your own packs, and your name and phone are out of the sample job. Their OONP and EVLOS approvals start blank ("add your instrument number"). Your own signed-in planner is unchanged.
+- **New beta testers find the sample job** (Acme Corp, Suncorp Stadium) waiting in their job list, marked SAMPLE.
+- **Clear sample data:** the setup wizard shows **Clear sample data** while any is loaded. One tap (after a check) removes the sample job, its aircraft and batteries, and the sample pilots and clients. Their own jobs stay.
+- **Popular aircraft and batteries:** the free planner and the beta start with a short list of 8 popular aircraft (Mini 5 Pro, Mini 4 Pro, Air 3S, Mavic 3 Pro, Mavic 4 Pro, Avata 2, Matrice 4E, 5" FPV) instead of the long list. In setup they tap the ones they fly, and **Quick add** makes 4 numbered batteries for each (e.g. MINI5-01 to 04).
+- **Supabase:** (1) run `0015_beta_feedback.sql` in the SQL Editor; (2) update the **enquiry-alert** edge function with the new `supabase/functions/enquiry-alert/index.ts` (header says v7.34) and Deploy.
+- **Tests:** new suite (25 checks) and 4 new database checks; everything passes.
+
 ## v7.33 — 10 Nov 2026 — Beta "set up now or later", landing page and poster
 - **Beta sign-up:** after your name and email, the beta asks **Set up now** (opens company setup) or **Set up later** (straight into the planner; set up any time from Database & Settings).
 - **"Get it for your company" form** now matches the plans: company accounts launch on 10 January 2027; options are Founding member (launch offer), Monthly and Annual plans (from 10 January 2027), Your own copy (source licence) and Just keep me posted. People not yet in the beta get a "Join the free beta" link.
