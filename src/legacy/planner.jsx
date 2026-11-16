@@ -13920,7 +13920,7 @@ View in the Database & Settings tab.`);
                             <RiskMatrixGraphic risks={risks} />
                           </div>
                           
-                          <div className="overflow-x-auto border border-gray-200 rounded-lg shadow-sm print:border-none print:shadow-none">
+                          <div data-risk-register="1">
                             {(() => {
                               const TH = ({w, bg, col, center}={}) => ({
                                 padding:'5px 6px', fontWeight:700, fontSize:'0.62rem',
@@ -13938,10 +13938,10 @@ View in the Database & Settings tab.`);
                               const Lmap = {'5':'Frequent','4':'Occasional','3':'Remote','2':'Improbable','1':'Ext. Impr.'};
                               const Cmap = {A:'Catastrophic',B:'Hazardous',C:'Moderate',D:'Minor',E:'Negligible'};
                               // L/C picker (v5.44): shows the chosen value large with its meaning; the native select sits on top, invisible
-                              const pick = (riskId, field, value, opts, map, border, tint) => (
-                                <div className="print:hidden" data-risk-pick={field} style={{position:'relative',border:'1px solid '+border,borderRadius:'4px',background:'white',padding:'3px 2px 2px',minHeight:'2.4rem',cursor:'pointer'}}>
-                                  <div style={{fontSize:'0.95rem',fontWeight:800,color:tint,lineHeight:1.1}}>{value || '–'}</div>
-                                  <div style={{fontSize:'0.55rem',color:'#475569',lineHeight:1.15,overflowWrap:'normal',hyphens:'auto'}} lang="en">{map[value] || 'choose'}</div>
+                              const pick = (riskId, field, value, opts, map, border, tint, big) => (
+                                <div className="print:hidden" {...(big ? { 'data-risk-card-pick': field } : { 'data-risk-pick': field })} style={{position:'relative',border:'1px solid '+border,borderRadius: big ? '8px' : '4px',background:'white',padding: big ? '6px 8px' : '3px 2px 2px',minHeight: big ? '3.2rem' : '2.4rem',cursor:'pointer'}}>
+                                  <div style={{fontSize: big ? '1.35rem' : '0.95rem',fontWeight:800,color:tint,lineHeight:1.1}}>{value || '–'}</div>
+                                  <div style={{fontSize: big ? '0.78rem' : '0.55rem',color:'#475569',lineHeight:1.15,overflowWrap:'normal',hyphens:'auto'}} lang="en">{map[value] || 'choose'}</div>
                                   <i className="fa-solid fa-caret-down" style={{position:'absolute',right:'3px',top:'3px',fontSize:'0.55rem',color:'#94a3b8'}}></i>
                                   <select value={value} onChange={e=>updateRisk(riskId,field,e.target.value)} title={(value?value+' – '+(map[value]||''):'')}
                                     style={{position:'absolute',inset:0,width:'100%',height:'100%',opacity:0,cursor:'pointer'}}>
@@ -13949,7 +13949,79 @@ View in the Database & Settings tab.`);
                                   </select>
                                 </div>
                               );
-                              return (
+                              // Mobile risk cards: on phones and small tablets the register is one card per risk (the table needs a wide screen); print / PDF always use the table
+                              const ratingChip = (L, C, label) => (
+                                <div style={{textAlign:'center'}}>
+                                  <div style={{fontSize:'0.62rem',fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>{label}</div>
+                                  <div style={{...getRiskStyle(L,C),fontWeight:800,padding:'3px 8px',borderRadius:'6px',fontSize:'0.85rem',minWidth:'3.2rem'}}>{(L||'')+(C||'') || '–'}<div style={{fontSize:'0.62rem',fontWeight:500}}>{getRiskLabel(L,C)}</div></div>
+                                </div>
+                              );
+                              const field = (risk, key, label, ph) => (
+                                <label className="block">
+                                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">{label}</span>
+                                  <textarea data-risk-card-field={key} value={risk[key]||''} placeholder={ph} rows={1}
+                                    onChange={e=>{ updateRisk(risk.id,key,e.target.value); const t=e.target; t.style.height='auto'; t.style.height=t.scrollHeight+'px'; }}
+                                    ref={t=>{ if (t) { t.style.height='auto'; t.style.height=Math.max(t.scrollHeight,44)+'px'; } }}
+                                    className="w-full text-[15px] leading-snug text-slate-800 border border-slate-200 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none resize-none" />
+                                </label>
+                              );
+                              const panel = (risk, which) => {
+                                const init = which === 'init', L = init ? 'initL' : 'resL', C = init ? 'initC' : 'resC';
+                                const bg = init ? '#eef2ff' : '#f0fdf4', bd = init ? '#c7d2fe' : '#86efac', tint = init ? '#1e3a8a' : '#14532d';
+                                return (
+                                  <div style={{background:bg,border:'1px solid '+bd,borderRadius:'10px',padding:'8px'}}>
+                                    <div style={{fontSize:'0.7rem',fontWeight:800,color:tint,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'6px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                      <span>{init ? 'Initial risk' : 'Residual risk'}</span>
+                                      <span style={{...getRiskStyle(risk[L],risk[C]),padding:'1px 6px',borderRadius:'4px',fontSize:'0.72rem'}}>{(risk[L]||'')+(risk[C]||'') || '–'}</span>
+                                    </div>
+                                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px'}}>
+                                      <div><div style={{fontSize:'0.62rem',color:'#64748b',marginBottom:'2px'}}>Likelihood</div>{pick(risk.id,L,risk[L],['5','4','3','2','1'],Lmap,bd,tint,true)}</div>
+                                      <div><div style={{fontSize:'0.62rem',color:'#64748b',marginBottom:'2px'}}>Consequence</div>{pick(risk.id,C,risk[C],['A','B','C','D','E'],Cmap,bd,tint,true)}</div>
+                                    </div>
+                                  </div>
+                                );
+                              };
+                              const cardList = (
+                                <div className="lg:hidden print:hidden space-y-3" data-risk-cards="1">
+                                  {risks.map((risk, idx) => (
+                                    <div key={risk.id} data-risk-card={risk.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                                      <div className="flex items-start gap-2 px-3 pt-3 pb-2 border-b border-slate-100 bg-slate-50">
+                                        <span className="shrink-0 mt-0.5 px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 text-xs font-mono font-bold">{risk.refNo||String(idx+1).padStart(3,'0')}</span>
+                                        <textarea data-risk-card-field="hazard" value={risk.hazard||''} placeholder="Hazard…" rows={1}
+                                          onChange={e=>{ updateRisk(risk.id,'hazard',e.target.value); const t=e.target; t.style.height='auto'; t.style.height=t.scrollHeight+'px'; }}
+                                          ref={t=>{ if (t) { t.style.height='auto'; t.style.height=t.scrollHeight+'px'; } }}
+                                          className="flex-1 min-w-0 text-base font-bold text-slate-900 bg-transparent border-none outline-none resize-none p-0 leading-snug" />
+                                        <div className="shrink-0 flex items-center gap-1.5">
+                                          {ratingChip(risk.initL, risk.initC, 'Init')}
+                                          <i className="fa-solid fa-arrow-right text-slate-400 text-xs mt-3"></i>
+                                          {ratingChip(risk.resL, risk.resC, 'Resid')}
+                                        </div>
+                                      </div>
+                                      <div className="p-3 space-y-3">
+                                        {field(risk,'riskDescription','Risk description','Describe the risk…')}
+                                        {field(risk,'existingControls','Existing controls','Controls already in place…')}
+                                        {panel(risk,'init')}
+                                        {field(risk,'additionalControls','Additional controls','Extra controls for this job…')}
+                                        {panel(risk,'res')}
+                                        <div className="grid grid-cols-2 gap-3">
+                                          <label className="block"><span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Risk owner</span>
+                                            <input type="text" value={risk.riskOwner||''} onChange={e=>updateRisk(risk.id,'riskOwner',e.target.value)} placeholder="RPIC" className="w-full text-[15px] border border-slate-200 rounded-lg px-3 py-2" /></label>
+                                          <label className="block"><span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Date added</span>
+                                            <input type="date" value={risk.dateAdded||''} onChange={e=>updateRisk(risk.id,'dateAdded',e.target.value)} className="w-full text-[15px] border border-slate-200 rounded-lg px-3 py-2 bg-white" /></label>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-1">
+                                          <label className="flex items-center gap-2 text-xs text-slate-500">Ref
+                                            <input type="text" value={risk.refNo||String(idx+1).padStart(3,'0')} onChange={e=>updateRisk(risk.id,'refNo',e.target.value)} className="w-16 text-sm border border-slate-200 rounded px-2 py-1 font-mono" /></label>
+                                          <button data-risk-card-remove="1" onClick={()=>removeRisk(risk.id)} className="text-sm text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg border border-slate-200"><i className="fa-solid fa-trash-can mr-1.5"></i>Remove</button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <button data-risk-card-add="1" onClick={addRiskRow} className="w-full py-3 rounded-xl border-2 border-dashed border-blue-300 text-blue-700 font-semibold bg-blue-50"><i className="fa-solid fa-plus mr-2"></i>Add risk</button>
+                                </div>
+                              );
+                              return (<>{cardList}
+                                <div className="hidden lg:block print:block overflow-x-auto border border-gray-200 rounded-lg shadow-sm print:border-none print:shadow-none">
                                 <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
                                   <thead>
                                     <tr>
@@ -14043,6 +14115,7 @@ View in the Database & Settings tab.`);
                                     ))}
                                   </tbody>
                                 </table>
+                                </div></>
                               );
                             })()}
                           </div>
