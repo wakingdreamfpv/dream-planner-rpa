@@ -10,4 +10,5 @@ for f in tests/e2e/t_*.py; do
   fails=$((fails + n + tb))
 done
 (cd supabase/tests && for f in rls*.test.mjs; do echo "DB:$f $(node $f 2>&1 | tail -1)"; done)
+r=$(node tests/unit_setup_merge.mjs 2>&1); echo "UNIT:setup_merge $(echo "$r" | tail -1)"; n=$(echo "$r" | grep -c '^FAIL'); fails=$((fails + n))
 echo "ALLDONE fails=$fails"
