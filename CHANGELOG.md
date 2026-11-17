@@ -1,5 +1,14 @@
 # Planner changelog
 
+## v7.38 — 17 Nov 2026 — All your jobs on every device; risk register readable on phones
+- **Fix: "I'm signed in on my iPad but my jobs aren't there."** Every job was already saved to your account, but other devices only listed upcoming, not-completed jobs on Home, and Database & Settings only showed jobs saved on that device. Now each device you sign in on as CRP downloads all your jobs into its own lists: drafts, approved plans (including past ones) and completed flight records. A green note says how many came across.
+  - If another device saved a newer version of a job, this device's copy is updated, and the photos and flight traces it already holds are kept.
+  - Edits on this device that haven't been sent yet are never overwritten, and neither is a completed record already on the device.
+  - Nothing is downloaded until your company setup has loaded.
+- **Risk register on phones:** below tablet width, each risk is now a card instead of the 14-column table. The hazard is the heading, with its Initial → Residual rating beside it. Description and controls are in large text boxes that grow as you type. Initial and Residual risk each have a coloured panel with big Likelihood and Consequence pickers. Owner, date, ref, Remove, and an **Add risk** button are at the bottom. Computers and the PDF keep the table. An iPad in landscape still shows the table; turn it to portrait for the cards.
+- **Supabase:** nothing to do.
+- **Tests:** new suites for jobs following the account (13 checks) and phone risk cards (9 checks); everything passes.
+
 ## v7.37 — 11 Nov 2026 — RPIC signatures from the pilot's own device now match
 - **Fix: "Benjamin signed, I signed, but I still can't approve."** The site map keeps each pin's position on the screen as well as its GPS position. The screen position is worked out again on every device (and is blank if the map hasn't been opened, as when a pilot goes straight to signing), and it was part of what the RPIC signs. So a pilot signing on their own phone always looked like they'd signed "an earlier version". Now only the GPS positions count.
 - Signatures already made this way (like Benjamin's) are accepted once you update: open the job and click **Add their signature**.

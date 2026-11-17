@@ -187,7 +187,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.37';
+        const APP_VERSION = '7.38';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10181,6 +10181,72 @@ View in the Database & Settings tab.`);
               const synced = lsJson('wd_cloud_synced', {}); synced[d.uid] = job.status + '|' + (job.when || '') + '|' + JSON.stringify(planCrew(job.p)); lsJsonSet('wd_cloud_synced', synced); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h);
           }); // eslint-disable-line
+          // ── Jobs follow the account: every job saved to the account is downloaded onto each CRP device ─────────
+          // New on this device → added to its list (draft / approved / completed). Already here but newer in the account, and this
+          // device hasn't changed it since → updated (this device's telemetry traces and site attachments are kept).
+          // Completed records already on this device are never replaced. Nothing runs until the company setup is settled.
+          const pullBusyRef = useRef(false);
+          const [cloudJobsTick, setCloudJobsTick] = useState(0);
+          useEffect(() => { const h = () => setCloudJobsTick(n => n + 1); window.addEventListener('wd-cloud-jobs', h); return () => window.removeEventListener('wd-cloud-jobs', h); }, []);
+          const uidOf = (p) => ((p && p.overview) || {}).uid || ('op:' + ((p && (p.id || (p.overview || {}).identifier)) || ''));
+          const whenOf = (p, status) => status === 'completed' ? ((p && (p.completedAt || p.savedAt)) || '') : ((p && p.savedAt) || '');
+          const keepLocalBits = (fresh, old) => { if (!old) return fresh; const p = { ...fresh };
+            if (old.siteAttachments && !p.siteAttachments) p.siteAttachments = old.siteAttachments; if (old.heatStrokes && !p.heatStrokes) p.heatStrokes = old.heatStrokes;
+            try { const ol = (old.log && old.log.rpaLogs) || {}, nl = (p.log && p.log.rpaLogs) || {};
+              Object.keys(nl).forEach(k => { const of = ((ol[k] || {}).flights) || []; ((nl[k] || {}).flights || []).forEach((f, i) => { const o = (f && f.id != null ? of.find(x => x && x.id === f.id) : of[i]);
+                if (f && f.telemetry && o && o.telemetry) ['trace', 'altRaw', 'spdRaw'].forEach(t => { if (o.telemetry[t] && !f.telemetry[t]) f.telemetry[t] = o.telemetry[t]; }); }); }); } catch (e) {}
+            return p; };
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || pullBusyRef.current) return;
+            const t = setTimeout(() => {
+              const list = (window.wdCloudJobs || []).filter(j => j && j.plan_uid); if (!list.length) return;
+              const local = {}; cloudJobsList().forEach(j => { local[j.uid] = j; });
+              const synced = lsJson('wd_cloud_synced', {}), pulled = lsJson('wd_cloud_pulled', {});
+              const need = list.filter(j => { const l = local[j.plan_uid];
+                if (!l) return true; // not on this device
+                if (l.status === 'completed') return false; // never replace a completed record here
+                const unchangedHere = synced[j.plan_uid] && synced[j.plan_uid] === l.status + '|' + (l.when || '') + '|' + JSON.stringify(planCrew(l.p));
+                return unchangedHere && j.updated_at && (!pulled[j.plan_uid] || Date.parse(j.updated_at) > Date.parse(pulled[j.plan_uid]) + 1000); });
+              if (!need.length) return;
+              pullBusyRef.current = true;
+              const req = 'pull' + Date.now();
+              const h = (e) => { const d = e.detail || {}; if (d.req !== req) return; window.removeEventListener('wd-cloud-jobs-fetched', h); pullBusyRef.current = false;
+                const got = (d.jobs || []).filter(j => j && j.plan && typeof j.plan === 'object' && j.plan.overview);
+                if (!got.length) return;
+                const pulledNow = lsJson('wd_cloud_pulled', {}), syncedNow = lsJson('wd_cloud_synced', {});
+                let added = 0, updated = 0;
+                setDb(prev => {
+                  const next = { ...prev, draftPlans: [...(prev.draftPlans || [])], savedPlans: [...(prev.savedPlans || [])], completedFlights: [...(prev.completedFlights || [])] };
+                  const rank = { draft: 1, approved: 2, completed: 3 };
+                  got.forEach(j => {
+                    const uid = j.plan_uid, st = rank[j.status] ? j.status : 'draft', p = j.plan;
+                    const listKey = st === 'draft' ? 'draftPlans' : st === 'approved' ? 'savedPlans' : (p.completedAt || !p.status ? 'completedFlights' : 'savedPlans');
+                    const all = [...next.draftPlans.map(x => ['draftPlans', x]), ...next.savedPlans.map(x => ['savedPlans', x]), ...next.completedFlights.map(x => ['completedFlights', x])].filter(([, x]) => uidOf(x) === uid);
+                    const best = all.reduce((b, [k, x]) => { const s = k === 'completedFlights' || x.status === 'completed' ? 'completed' : k === 'savedPlans' ? 'approved' : 'draft';
+                      return !b || rank[s] > rank[b.s] || (rank[s] === rank[b.s] && whenOf(x, s) > whenOf(b.x, b.s)) ? { s, x, k } : b; }, null);
+                    pulledNow[uid] = j.updated_at || new Date().toISOString();
+                    if (best && best.s === 'completed') return;
+                    if (best && (rank[best.s] > rank[st] || (rank[best.s] === rank[st] && whenOf(best.x, best.s) >= whenOf(p, st)))) return; // this device's copy is as new
+                    const fresh = keepLocalBits(p, best && best.x);
+                    if (best && best.k === listKey) next[listKey] = next[listKey].map(x => uidOf(x) === uid ? fresh : x);
+                    else next[listKey] = [fresh, ...next[listKey]];
+                    if (best) updated++; else added++;
+                    syncedNow[uid] = st + '|' + (whenOf(fresh, st) || '') + '|' + JSON.stringify(planCrew(fresh)); // came from the account: nothing to send back
+                  });
+                  return next;
+                });
+                lsJsonSet('wd_cloud_pulled', pulledNow); lsJsonSet('wd_cloud_synced', syncedNow);
+                setTimeout(() => { if (added || updated) setSetupNote(prev => (prev ? prev + ' ' : '') + (added ? `${added} job${added === 1 ? '' : 's'} downloaded from your account` : '') + (added && updated ? ', ' : '') + (updated ? `${updated} updated` : '') + '.'); }, 0);
+              };
+              window.addEventListener('wd-cloud-jobs-fetched', h);
+              setTimeout(() => { if (pullBusyRef.current) { window.removeEventListener('wd-cloud-jobs-fetched', h); pullBusyRef.current = false; } }, 60000);
+              window.dispatchEvent(new CustomEvent('wd-fetch-cloud-jobs', { detail: { req, ids: need.map(j => j.id) } }));
+            }, 1500);
+            return () => clearTimeout(t);
+          }, [isCrpCloud, cloudReady, dbReady, setupOk, cloudJobsTick]); // eslint-disable-line
+          // after this device sends a job, remember it as current (so it isn't downloaded straight back)
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const pl = lsJson('wd_cloud_pulled', {}); pl[d.uid] = new Date().toISOString(); lsJsonSet('wd_cloud_pulled', pl); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, []);
           // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
           useEffect(() => {
             if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || blankSetup(db)) return; // v7.28: a blank or unsettled device never overwrites what crew see
@@ -13920,7 +13986,7 @@ View in the Database & Settings tab.`);
                             <RiskMatrixGraphic risks={risks} />
                           </div>
                           
-                          <div className="overflow-x-auto border border-gray-200 rounded-lg shadow-sm print:border-none print:shadow-none">
+                          <div data-risk-register="1">
                             {(() => {
                               const TH = ({w, bg, col, center}={}) => ({
                                 padding:'5px 6px', fontWeight:700, fontSize:'0.62rem',
@@ -13938,10 +14004,10 @@ View in the Database & Settings tab.`);
                               const Lmap = {'5':'Frequent','4':'Occasional','3':'Remote','2':'Improbable','1':'Ext. Impr.'};
                               const Cmap = {A:'Catastrophic',B:'Hazardous',C:'Moderate',D:'Minor',E:'Negligible'};
                               // L/C picker (v5.44): shows the chosen value large with its meaning; the native select sits on top, invisible
-                              const pick = (riskId, field, value, opts, map, border, tint) => (
-                                <div className="print:hidden" data-risk-pick={field} style={{position:'relative',border:'1px solid '+border,borderRadius:'4px',background:'white',padding:'3px 2px 2px',minHeight:'2.4rem',cursor:'pointer'}}>
-                                  <div style={{fontSize:'0.95rem',fontWeight:800,color:tint,lineHeight:1.1}}>{value || '–'}</div>
-                                  <div style={{fontSize:'0.55rem',color:'#475569',lineHeight:1.15,overflowWrap:'normal',hyphens:'auto'}} lang="en">{map[value] || 'choose'}</div>
+                              const pick = (riskId, field, value, opts, map, border, tint, big) => (
+                                <div className="print:hidden" {...(big ? { 'data-risk-card-pick': field } : { 'data-risk-pick': field })} style={{position:'relative',border:'1px solid '+border,borderRadius: big ? '8px' : '4px',background:'white',padding: big ? '6px 8px' : '3px 2px 2px',minHeight: big ? '3.2rem' : '2.4rem',cursor:'pointer'}}>
+                                  <div style={{fontSize: big ? '1.35rem' : '0.95rem',fontWeight:800,color:tint,lineHeight:1.1}}>{value || '–'}</div>
+                                  <div style={{fontSize: big ? '0.78rem' : '0.55rem',color:'#475569',lineHeight:1.15,overflowWrap:'normal',hyphens:'auto'}} lang="en">{map[value] || 'choose'}</div>
                                   <i className="fa-solid fa-caret-down" style={{position:'absolute',right:'3px',top:'3px',fontSize:'0.55rem',color:'#94a3b8'}}></i>
                                   <select value={value} onChange={e=>updateRisk(riskId,field,e.target.value)} title={(value?value+' – '+(map[value]||''):'')}
                                     style={{position:'absolute',inset:0,width:'100%',height:'100%',opacity:0,cursor:'pointer'}}>
@@ -13949,7 +14015,79 @@ View in the Database & Settings tab.`);
                                   </select>
                                 </div>
                               );
-                              return (
+                              // Mobile risk cards: on phones and small tablets the register is one card per risk (the table needs a wide screen); print / PDF always use the table
+                              const ratingChip = (L, C, label) => (
+                                <div style={{textAlign:'center'}}>
+                                  <div style={{fontSize:'0.62rem',fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>{label}</div>
+                                  <div style={{...getRiskStyle(L,C),fontWeight:800,padding:'3px 8px',borderRadius:'6px',fontSize:'0.85rem',minWidth:'3.2rem'}}>{(L||'')+(C||'') || '–'}<div style={{fontSize:'0.62rem',fontWeight:500}}>{getRiskLabel(L,C)}</div></div>
+                                </div>
+                              );
+                              const field = (risk, key, label, ph) => (
+                                <label className="block">
+                                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">{label}</span>
+                                  <textarea data-risk-card-field={key} value={risk[key]||''} placeholder={ph} rows={1}
+                                    onChange={e=>{ updateRisk(risk.id,key,e.target.value); const t=e.target; t.style.height='auto'; t.style.height=t.scrollHeight+'px'; }}
+                                    ref={t=>{ if (t) { t.style.height='auto'; t.style.height=Math.max(t.scrollHeight,44)+'px'; } }}
+                                    className="w-full text-[15px] leading-snug text-slate-800 border border-slate-200 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none resize-none" />
+                                </label>
+                              );
+                              const panel = (risk, which) => {
+                                const init = which === 'init', L = init ? 'initL' : 'resL', C = init ? 'initC' : 'resC';
+                                const bg = init ? '#eef2ff' : '#f0fdf4', bd = init ? '#c7d2fe' : '#86efac', tint = init ? '#1e3a8a' : '#14532d';
+                                return (
+                                  <div style={{background:bg,border:'1px solid '+bd,borderRadius:'10px',padding:'8px'}}>
+                                    <div style={{fontSize:'0.7rem',fontWeight:800,color:tint,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'6px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                      <span>{init ? 'Initial risk' : 'Residual risk'}</span>
+                                      <span style={{...getRiskStyle(risk[L],risk[C]),padding:'1px 6px',borderRadius:'4px',fontSize:'0.72rem'}}>{(risk[L]||'')+(risk[C]||'') || '–'}</span>
+                                    </div>
+                                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px'}}>
+                                      <div><div style={{fontSize:'0.62rem',color:'#64748b',marginBottom:'2px'}}>Likelihood</div>{pick(risk.id,L,risk[L],['5','4','3','2','1'],Lmap,bd,tint,true)}</div>
+                                      <div><div style={{fontSize:'0.62rem',color:'#64748b',marginBottom:'2px'}}>Consequence</div>{pick(risk.id,C,risk[C],['A','B','C','D','E'],Cmap,bd,tint,true)}</div>
+                                    </div>
+                                  </div>
+                                );
+                              };
+                              const cardList = (
+                                <div className="lg:hidden print:hidden space-y-3" data-risk-cards="1">
+                                  {risks.map((risk, idx) => (
+                                    <div key={risk.id} data-risk-card={risk.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                                      <div className="flex items-start gap-2 px-3 pt-3 pb-2 border-b border-slate-100 bg-slate-50">
+                                        <span className="shrink-0 mt-0.5 px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 text-xs font-mono font-bold">{risk.refNo||String(idx+1).padStart(3,'0')}</span>
+                                        <textarea data-risk-card-field="hazard" value={risk.hazard||''} placeholder="Hazard…" rows={1}
+                                          onChange={e=>{ updateRisk(risk.id,'hazard',e.target.value); const t=e.target; t.style.height='auto'; t.style.height=t.scrollHeight+'px'; }}
+                                          ref={t=>{ if (t) { t.style.height='auto'; t.style.height=t.scrollHeight+'px'; } }}
+                                          className="flex-1 min-w-0 text-base font-bold text-slate-900 bg-transparent border-none outline-none resize-none p-0 leading-snug" />
+                                        <div className="shrink-0 flex items-center gap-1.5">
+                                          {ratingChip(risk.initL, risk.initC, 'Init')}
+                                          <i className="fa-solid fa-arrow-right text-slate-400 text-xs mt-3"></i>
+                                          {ratingChip(risk.resL, risk.resC, 'Resid')}
+                                        </div>
+                                      </div>
+                                      <div className="p-3 space-y-3">
+                                        {field(risk,'riskDescription','Risk description','Describe the risk…')}
+                                        {field(risk,'existingControls','Existing controls','Controls already in place…')}
+                                        {panel(risk,'init')}
+                                        {field(risk,'additionalControls','Additional controls','Extra controls for this job…')}
+                                        {panel(risk,'res')}
+                                        <div className="grid grid-cols-2 gap-3">
+                                          <label className="block"><span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Risk owner</span>
+                                            <input type="text" value={risk.riskOwner||''} onChange={e=>updateRisk(risk.id,'riskOwner',e.target.value)} placeholder="RPIC" className="w-full text-[15px] border border-slate-200 rounded-lg px-3 py-2" /></label>
+                                          <label className="block"><span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Date added</span>
+                                            <input type="date" value={risk.dateAdded||''} onChange={e=>updateRisk(risk.id,'dateAdded',e.target.value)} className="w-full text-[15px] border border-slate-200 rounded-lg px-3 py-2 bg-white" /></label>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-1">
+                                          <label className="flex items-center gap-2 text-xs text-slate-500">Ref
+                                            <input type="text" value={risk.refNo||String(idx+1).padStart(3,'0')} onChange={e=>updateRisk(risk.id,'refNo',e.target.value)} className="w-16 text-sm border border-slate-200 rounded px-2 py-1 font-mono" /></label>
+                                          <button data-risk-card-remove="1" onClick={()=>removeRisk(risk.id)} className="text-sm text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg border border-slate-200"><i className="fa-solid fa-trash-can mr-1.5"></i>Remove</button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <button data-risk-card-add="1" onClick={addRiskRow} className="w-full py-3 rounded-xl border-2 border-dashed border-blue-300 text-blue-700 font-semibold bg-blue-50"><i className="fa-solid fa-plus mr-2"></i>Add risk</button>
+                                </div>
+                              );
+                              return (<>{cardList}
+                                <div className="hidden lg:block print:block overflow-x-auto border border-gray-200 rounded-lg shadow-sm print:border-none print:shadow-none">
                                 <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
                                   <thead>
                                     <tr>
@@ -14043,6 +14181,7 @@ View in the Database & Settings tab.`);
                                     ))}
                                   </tbody>
                                 </table>
+                                </div></>
                               );
                             })()}
                           </div>
