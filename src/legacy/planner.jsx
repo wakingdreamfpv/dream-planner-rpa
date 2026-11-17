@@ -10181,6 +10181,72 @@ View in the Database & Settings tab.`);
               const synced = lsJson('wd_cloud_synced', {}); synced[d.uid] = job.status + '|' + (job.when || '') + '|' + JSON.stringify(planCrew(job.p)); lsJsonSet('wd_cloud_synced', synced); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h);
           }); // eslint-disable-line
+          // ── Jobs follow the account: every job saved to the account is downloaded onto each CRP device ─────────
+          // New on this device → added to its list (draft / approved / completed). Already here but newer in the account, and this
+          // device hasn't changed it since → updated (this device's telemetry traces and site attachments are kept).
+          // Completed records already on this device are never replaced. Nothing runs until the company setup is settled.
+          const pullBusyRef = useRef(false);
+          const [cloudJobsTick, setCloudJobsTick] = useState(0);
+          useEffect(() => { const h = () => setCloudJobsTick(n => n + 1); window.addEventListener('wd-cloud-jobs', h); return () => window.removeEventListener('wd-cloud-jobs', h); }, []);
+          const uidOf = (p) => ((p && p.overview) || {}).uid || ('op:' + ((p && (p.id || (p.overview || {}).identifier)) || ''));
+          const whenOf = (p, status) => status === 'completed' ? ((p && (p.completedAt || p.savedAt)) || '') : ((p && p.savedAt) || '');
+          const keepLocalBits = (fresh, old) => { if (!old) return fresh; const p = { ...fresh };
+            if (old.siteAttachments && !p.siteAttachments) p.siteAttachments = old.siteAttachments; if (old.heatStrokes && !p.heatStrokes) p.heatStrokes = old.heatStrokes;
+            try { const ol = (old.log && old.log.rpaLogs) || {}, nl = (p.log && p.log.rpaLogs) || {};
+              Object.keys(nl).forEach(k => { const of = ((ol[k] || {}).flights) || []; ((nl[k] || {}).flights || []).forEach((f, i) => { const o = (f && f.id != null ? of.find(x => x && x.id === f.id) : of[i]);
+                if (f && f.telemetry && o && o.telemetry) ['trace', 'altRaw', 'spdRaw'].forEach(t => { if (o.telemetry[t] && !f.telemetry[t]) f.telemetry[t] = o.telemetry[t]; }); }); }); } catch (e) {}
+            return p; };
+          useEffect(() => {
+            if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || pullBusyRef.current) return;
+            const t = setTimeout(() => {
+              const list = (window.wdCloudJobs || []).filter(j => j && j.plan_uid); if (!list.length) return;
+              const local = {}; cloudJobsList().forEach(j => { local[j.uid] = j; });
+              const synced = lsJson('wd_cloud_synced', {}), pulled = lsJson('wd_cloud_pulled', {});
+              const need = list.filter(j => { const l = local[j.plan_uid];
+                if (!l) return true; // not on this device
+                if (l.status === 'completed') return false; // never replace a completed record here
+                const unchangedHere = synced[j.plan_uid] && synced[j.plan_uid] === l.status + '|' + (l.when || '') + '|' + JSON.stringify(planCrew(l.p));
+                return unchangedHere && j.updated_at && (!pulled[j.plan_uid] || Date.parse(j.updated_at) > Date.parse(pulled[j.plan_uid]) + 1000); });
+              if (!need.length) return;
+              pullBusyRef.current = true;
+              const req = 'pull' + Date.now();
+              const h = (e) => { const d = e.detail || {}; if (d.req !== req) return; window.removeEventListener('wd-cloud-jobs-fetched', h); pullBusyRef.current = false;
+                const got = (d.jobs || []).filter(j => j && j.plan && typeof j.plan === 'object' && j.plan.overview);
+                if (!got.length) return;
+                const pulledNow = lsJson('wd_cloud_pulled', {}), syncedNow = lsJson('wd_cloud_synced', {});
+                let added = 0, updated = 0;
+                setDb(prev => {
+                  const next = { ...prev, draftPlans: [...(prev.draftPlans || [])], savedPlans: [...(prev.savedPlans || [])], completedFlights: [...(prev.completedFlights || [])] };
+                  const rank = { draft: 1, approved: 2, completed: 3 };
+                  got.forEach(j => {
+                    const uid = j.plan_uid, st = rank[j.status] ? j.status : 'draft', p = j.plan;
+                    const listKey = st === 'draft' ? 'draftPlans' : st === 'approved' ? 'savedPlans' : (p.completedAt || !p.status ? 'completedFlights' : 'savedPlans');
+                    const all = [...next.draftPlans.map(x => ['draftPlans', x]), ...next.savedPlans.map(x => ['savedPlans', x]), ...next.completedFlights.map(x => ['completedFlights', x])].filter(([, x]) => uidOf(x) === uid);
+                    const best = all.reduce((b, [k, x]) => { const s = k === 'completedFlights' || x.status === 'completed' ? 'completed' : k === 'savedPlans' ? 'approved' : 'draft';
+                      return !b || rank[s] > rank[b.s] || (rank[s] === rank[b.s] && whenOf(x, s) > whenOf(b.x, b.s)) ? { s, x, k } : b; }, null);
+                    pulledNow[uid] = j.updated_at || new Date().toISOString();
+                    if (best && best.s === 'completed') return;
+                    if (best && (rank[best.s] > rank[st] || (rank[best.s] === rank[st] && whenOf(best.x, best.s) >= whenOf(p, st)))) return; // this device's copy is as new
+                    const fresh = keepLocalBits(p, best && best.x);
+                    if (best && best.k === listKey) next[listKey] = next[listKey].map(x => uidOf(x) === uid ? fresh : x);
+                    else next[listKey] = [fresh, ...next[listKey]];
+                    if (best) updated++; else added++;
+                    syncedNow[uid] = st + '|' + (whenOf(fresh, st) || '') + '|' + JSON.stringify(planCrew(fresh)); // came from the account: nothing to send back
+                  });
+                  return next;
+                });
+                lsJsonSet('wd_cloud_pulled', pulledNow); lsJsonSet('wd_cloud_synced', syncedNow);
+                setTimeout(() => { if (added || updated) setSetupNote(prev => (prev ? prev + ' ' : '') + (added ? `${added} job${added === 1 ? '' : 's'} downloaded from your account` : '') + (added && updated ? ', ' : '') + (updated ? `${updated} updated` : '') + '.'); }, 0);
+              };
+              window.addEventListener('wd-cloud-jobs-fetched', h);
+              setTimeout(() => { if (pullBusyRef.current) { window.removeEventListener('wd-cloud-jobs-fetched', h); pullBusyRef.current = false; } }, 60000);
+              window.dispatchEvent(new CustomEvent('wd-fetch-cloud-jobs', { detail: { req, ids: need.map(j => j.id) } }));
+            }, 1500);
+            return () => clearTimeout(t);
+          }, [isCrpCloud, cloudReady, dbReady, setupOk, cloudJobsTick]); // eslint-disable-line
+          // after this device sends a job, remember it as current (so it isn't downloaded straight back)
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const pl = lsJson('wd_cloud_pulled', {}); pl[d.uid] = new Date().toISOString(); lsJsonSet('wd_cloud_pulled', pl); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, []);
           // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
           useEffect(() => {
             if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || blankSetup(db)) return; // v7.28: a blank or unsettled device never overwrites what crew see
