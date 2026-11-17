@@ -131,6 +131,18 @@ export function useCloudJobs(sb, me) {
       } catch (err) { emit('wd-cloud-job-fetched', { req: d.req, error: String((err && err.message) || err) }); }
     };
     window.addEventListener('wd-fetch-cloud-job', onFetch);
+    // jobs follow the account: download several jobs (with their plans) so a new device has them all
+    const onFetchMany = async (e) => {
+      const d = e.detail || {}, ids = d.ids || [], out = [];
+      try {
+        for (let i = 0; i < ids.length; i += 10) {
+          const { data, error } = await sb.from('jobs').select('id,plan_uid,op_id,title,status,updated_at,plan').in('id', ids.slice(i, i + 10));
+          if (error) throw error; out.push(...(data || []));
+        }
+        emit('wd-cloud-jobs-fetched', { req: d.req, jobs: out });
+      } catch (err) { emit('wd-cloud-jobs-fetched', { req: d.req, jobs: out, error: String((err && err.message) || err) }); }
+    };
+    window.addEventListener('wd-fetch-cloud-jobs', onFetchMany);
     // v7.5.7: ask crew on a job to fill in the post-flight log (the notify function checks they're on the job and emails them)
     const onRequestLog = async (e) => {
       const d = e.detail || {};
@@ -176,7 +188,7 @@ export function useCloudJobs(sb, me) {
     window.addEventListener('wd-currency-refresh', loadCurrency);
     loadPeople().then(() => { refreshInbox(); loadCurrency(); }); const iv = setInterval(refreshInbox, 60000);
     window.__wdCloudReady = true; window.dispatchEvent(new Event('wd-cloud-ready'));
-    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-request-rpic-sign', onAskSign); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
+    return () => { dead = true; clearInterval(iv); clearTimeout(pubTimer); window.removeEventListener('wd-job-saved', onSaved); window.removeEventListener('wd-fetch-cloud-jobs', onFetchMany); window.removeEventListener('wd-request-rpic-sign', onAskSign); window.removeEventListener('wd-cloud-publish', onPublish); window.removeEventListener('wd-currency-refresh', loadCurrency);
       window.removeEventListener('wd-decide-access', onDecide); window.removeEventListener('wd-fetch-cloud-job', onFetch); window.removeEventListener('wd-request-log', onRequestLog); window.removeEventListener('wd-cloud-refresh', refreshInbox); window.__wdCloudReady = false;
       window.removeEventListener('wd-crp-settings-save', onSaveSettings); window.removeEventListener('wd-crp-settings-load', loadSettings); document.removeEventListener('visibilitychange', onVis); };
   }, [sb, isCrp, me && me.id]); // eslint-disable-line
