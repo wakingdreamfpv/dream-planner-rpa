@@ -1,5 +1,16 @@
 # Planner changelog
 
+## v7.39 — 18 Nov 2026 — Safe merge of your company setup between devices; jobs never replace each other
+- **No more "Two different company setups: pick one".** When your phone and your computer have both changed the company setup (profile, fleet, batteries, crew, templates…), the planner now merges them:
+  - anything changed on only one device is kept automatically (e.g. a new aircraft added on the phone *and* a new email on the computer: you get both);
+  - only an item changed differently on both devices is asked about, one line each ("Company profile › Name"), showing both versions. The newer one is already ticked, so usually you just press **Save merged setup**. There are also "All from this device" / "All from iPhone" buttons;
+  - a safety copy of the setup from before is kept (Database & Settings → Restore safety copy);
+  - "Use only one copy for everything" is still there, tucked under the merge.
+- **Jobs keep coming down while that question is open.** Before, the question blocked new and updated jobs from downloading onto that device.
+- **Fix: a draft could vanish when two devices gave two jobs the same number** (e.g. OP-2026-0012 made on the phone and on the computer). Saving, approving, logging or deleting one job used to remove any other job with the same number. Jobs are now matched by their own hidden ID, so both are kept. New job numbers also skip numbers already used on your account.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for merging and same-number jobs (18 checks) plus 14 merge-rule checks; everything passes.
+
 ## v7.38 — 17 Nov 2026 — All your jobs on every device; risk register readable on phones
 - **Fix: "I'm signed in on my iPad but my jobs aren't there."** Every job was already saved to your account, but other devices only listed upcoming, not-completed jobs on Home, and Database & Settings only showed jobs saved on that device. Now each device you sign in on as CRP downloads all your jobs into its own lists: drafts, approved plans (including past ones) and completed flight records. A green note says how many came across.
   - If another device saved a newer version of a job, this device's copy is updated, and the photos and flight traces it already holds are kept.

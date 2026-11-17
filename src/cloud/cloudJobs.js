@@ -169,7 +169,7 @@ export function useCloudJobs(sb, me) {
     };
     const onSaveSettings = async (e) => { const d = e.detail || {};
       try { const { error } = await sb.from('crp_store').upsert({ key: 'settings', data: d.data, hash: d.hash, device: d.device || '' }, { onConflict: 'key' }); if (error) throw error;
-        emit('wd-crp-settings-saved', { ok: true, hash: d.hash });
+        emit('wd-crp-settings-saved', { ok: true, hash: d.hash, data: d.data });
       } catch (err) { emit('wd-crp-settings-saved', { ok: false, hash: d.hash, error: String((err && err.message) || err) }); } };
     const onVis = () => { if (document.visibilityState === 'visible') loadSettings(); };
     window.addEventListener('wd-crp-settings-save', onSaveSettings); window.addEventListener('wd-crp-settings-load', loadSettings); document.addEventListener('visibilitychange', onVis);

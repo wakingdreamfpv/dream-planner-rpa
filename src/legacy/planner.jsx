@@ -12,6 +12,7 @@ import Registers from '../compliance/Registers.jsx';
 import { RecordVersions } from '../compliance/Versions.jsx';
 import { getSupabase as wdSb } from '../cloud/client.js';
 import SignDialog from '../cloud/SignDialog.jsx';
+import { mergeSetup, applyPicks, preview as mergePreview } from '../cloud/setupMerge.js';
 import { CommentsPanel, SharePanel, refreshLinkSnapshots, SUGGEST_FIELDS, RISK_FIELDS } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { EnquiryDialog, EnquiriesList } from '../compliance/Enquiries.jsx';
@@ -187,7 +188,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.38';
+        const APP_VERSION = '7.39';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -200,8 +201,13 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
           [...(d.savedPlans || []), ...(d.draftPlans || []), ...(d.completedFlights || [])].forEach(p => {
             [p && p.id, p && p.overview && p.overview.identifier].forEach(id => { const m = re.exec(String(id || '').trim()); if (m) max = Math.max(max, parseInt(m[1], 10)); });
           });
+          // v7.39: also count job numbers already used on the account (made on another device), so two devices don't hand out the same number
+          try { (window.wdCloudJobs || []).forEach(j => { const m = re.exec(String((j && j.op_id) || '').trim()); if (m) max = Math.max(max, parseInt(m[1], 10)); }); } catch (e) {}
           return 'OP-' + y + '-' + String(max + 1).padStart(4, '0');
         };
+        // v7.39: the same job? Compare the job's own id (uid) when both have one: two different jobs can share an OP number
+        // when they were made on different devices, and replacing "by number" used to delete the other job.
+        const sameJob = (a, b) => { const ua = a && a.overview && a.overview.uid, ub = b && b.overview && b.overview.uid; return (ua && ub) ? ua === ub : ((a && a.id) === (b && b.id)); };
         const downloadJson = (obj, name) => {
           const blob = new Blob([typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -6456,8 +6462,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               ...buildPlanSnapshot(ov),
             };
             const newDb = { ...db,
-              savedPlans: [plan, ...(isFree ? [] : (db.savedPlans || []).filter(p => p.id !== plan.id))],
-              draftPlans: isFree ? [] : (db.draftPlans || []).filter(p => p.id !== plan.id) };
+              savedPlans: [plan, ...(isFree ? [] : (db.savedPlans || []).filter(p => !sameJob(p, plan)))],
+              draftPlans: isFree ? [] : (db.draftPlans || []).filter(p => !sameJob(p, plan)) };
             if (!(await persistDbNow(newDb))) return;
             setDb(newDb);
             { const problem = await verifySaved('savedPlans', plan); if (problem) { alert(`⚠ Plan saved, but the check after saving failed: ${problem}.\n\nExport a backup from Database & Settings before closing.`); return; } }
@@ -8051,7 +8057,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
                 const mergeList = (key) => {
                   const out = [...(stored[key] || [])];
                   (newDb[key] || []).forEach(p => {
-                    const i = out.findIndex(q => q.id === p.id);
+                    const i = out.findIndex(q => sameJob(q, p));
                     if (i < 0) out.unshift(p); else if ((Date.parse(p.savedAt || 0) || 0) > (Date.parse(out[i].savedAt || 0) || 0)) out[i] = p;
                   });
                   return out;
@@ -8289,7 +8295,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (opts.approvalPatch) draft.approval = { ...(draft.approval || {}), ...opts.approvalPatch };
             const newDb = isFree
               ? { ...db, draftPlans: [draft], savedPlans: (db.savedPlans || []).filter(p => p.id === draft.id) } // v6.8: free keeps one job
-              : { ...db, draftPlans: [draft, ...(db.draftPlans || []).filter(p => p.id !== draft.id)] };
+              : { ...db, draftPlans: [draft, ...(db.draftPlans || []).filter(p => !sameJob(p, draft))] };
             if (!(await persistDbNow(newDb))) return;
             setDb(newDb);
             const problem = await verifySaved('draftPlans', draft);
@@ -8297,7 +8303,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             markSaved();
             if (opts.quiet) return draft;
             if (isFree) { alert(`Saved on this device: "${title}"\n\nFree mode keeps this one job until you start a new one. Come back any time to finish the flight log, and keep your exported PDFs.`); return; }
-            const hasApproved = (db.savedPlans || []).some(p => p.id === draft.id);
+            const hasApproved = (db.savedPlans || []).some(p => sameJob(p, draft));
             alert(`Draft saved and checked: "${title}" (${draft.id})\n\nResume it any time from the Database & Settings tab.`
               + (hasApproved ? `\n\nNote: this job also has an APPROVED plan. That copy hasn't changed; open the draft (or save it as approved again) to see these edits.` : ''));
           };
@@ -8469,10 +8475,11 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               ...buildPlanSnapshot(),
             };
             updateDb('completedFlights', [record, ...(db.completedFlights || [])]);
+            const thisJob = { id: overview.identifier, overview };
             updateDb('savedPlans', (db.savedPlans || []).map(p =>
-              p.id === overview.identifier ? { ...p, status: 'completed', completedAt: record.completedAt } : p
+              sameJob(p, thisJob) ? { ...p, status: 'completed', completedAt: record.completedAt } : p
             ));
-            updateDb('draftPlans', (db.draftPlans || []).filter(p => p.id !== overview.identifier));
+            updateDb('draftPlans', (db.draftPlans || []).filter(p => !sameJob(p, thisJob)));
             alert(`Flight logged: "${title}"
 
 View in the Database & Settings tab.`);
@@ -9711,7 +9718,7 @@ View in the Database & Settings tab.`);
                       if (isFree) { const pl = { ...plan, status: plan.status === 'approved' ? 'approved' : 'draft' }; setDb(prev => ({ ...prev, draftPlans: pl.status === 'draft' ? [pl] : [], savedPlans: pl.status === 'approved' ? [pl] : [] }));
                         handleLoadPlan(pl, { silent: true }); alert(`Opened "${plan.title}".\n\nFree mode keeps one job at a time on this device.`); return; }
                       const targetList = plan.status === 'completed' ? 'completedFlights' : (plan.status === 'approved' ? 'savedPlans' : 'draftPlans');
-                      updateDb(targetList, [plan, ...(db[targetList] || []).filter(p => p.id !== plan.id)]);
+                      updateDb(targetList, [plan, ...(db[targetList] || []).filter(p => !sameJob(p, plan))]);
                       const targetLabel = targetList === 'draftPlans' ? 'Draft Flight Plans' : targetList === 'savedPlans' ? 'Saved Approved Plans' : 'Completed Flight Records';
                       alert(`Imported "${plan.title}" into ${targetLabel}.`);
                   } catch (error) {
@@ -10098,9 +10105,33 @@ View in the Database & Settings tab.`);
           const [setupNote, setSetupNote] = useState('');
           const setupOk = !isCrpCloud || setupSync === 'ready' || setupSync === 'off';
           const cloudSetupRef = useRef({ hash: '', missing: false });
+          // v7.39: the copy both sides last agreed on (for a three-way merge), and when this device last changed its setup
+          const setSetupBase = (data, hash) => { try { localStorage.setItem('wd_setup_base', JSON.stringify({ hash, data })); } catch (e) { try { localStorage.removeItem('wd_setup_base'); } catch (e2) {} } };
+          const getSetupBase = (hash) => { const b = lsJson('wd_setup_base', null); return b && b.hash && b.hash === hash && b.data ? b.data : null; };
+          const withJobs = (data, prev) => parseStoredDb(JSON.stringify({ ...data, draftPlans: prev.draftPlans || [], savedPlans: prev.savedPlans || [], completedFlights: prev.completedFlights || [] }));
           const applySavedSetup = (row) => {
-            setDb(prev => parseStoredDb(JSON.stringify({ ...row.data, draftPlans: prev.draftPlans || [], savedPlans: prev.savedPlans || [], completedFlights: prev.completedFlights || [] })));
-            lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); cloudSetupRef.current.hash = row.hash;
+            try { wdStore.saveSafety(dbRefLatest.current, 'Before loading the company setup from the account'); } catch (e) {}
+            setDb(prev => withJobs(row.data, prev));
+            lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); cloudSetupRef.current.hash = row.hash; setSetupBase(row.data, row.hash);
+          };
+          // both sides changed: merge them. Returns true when it needed no questions.
+          const mergeWithSaved = (row) => {
+            const local = settingsOf(dbRefLatest.current), last = (lsJson('wd_setup_synced', {}) || {}).hash || '';
+            const r = mergeSetup(local, row.data || {}, getSetupBase(last));
+            const localAt = (lsJson('wd_setup_local_at', {}) || {}).at || 0, cloudAt = Date.parse(row.updated_at || 0) || 0;
+            const newer = localAt > cloudAt ? 'local' : 'cloud';
+            const picks = {}; r.conflicts.forEach(c => { picks[c.id] = newer; });
+            if (!r.conflicts.length) { finishMerge(row, r.merged, r); return true; }
+            setSetupChoice({ ...row, merge: r, picks, newer }); setSetupSync('choose'); return false;
+          };
+          const finishMerge = (row, merged, r) => {
+            try { wdStore.saveSafety(dbRefLatest.current, 'Before merging the company setup with the account copy'); } catch (e) {}
+            setDb(prev => withJobs(merged, prev));
+            // the account copy is now the base; this device's merged copy differs from it, so it's uploaded
+            lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); cloudSetupRef.current.hash = row.hash; setSetupBase(row.data || {}, row.hash);
+            setSetupChoice(null); setSetupSync('ready');
+            const n = (r && r.conflicts ? r.conflicts.length : 0);
+            setSetupNote('Your company setup was merged with the copy saved' + (row.device ? ' on ' + row.device : '') + ': changes from both were kept' + (n ? ', and your ' + n + ' choice' + (n === 1 ? '' : 's') + ' applied' : '') + '. A copy from before is in Restore safety copy.');
           };
           useEffect(() => {
             if (!isCrpCloud) { setSetupSync('off'); return; }
@@ -10113,11 +10144,11 @@ View in the Database & Settings tab.`);
               const mine = settingsHash(settingsOf(dbRefLatest.current)), last = (lsJson('wd_setup_synced', {}) || {}).hash || '';
               if (row.none) { cloudSetupRef.current.hash = ''; setSetupSync(s => s === 'waiting' ? 'ready' : s); return; } // nothing saved yet: this device uploads its setup
               cloudSetupRef.current.hash = row.hash;
-              if (row.hash === mine) { lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); setSetupSync(s => s === 'choose' ? s : 'ready'); return; }
+              if (row.hash === mine) { lsJsonSet('wd_setup_synced', { hash: row.hash, at: Date.now() }); setSetupBase(row.data || settingsOf(dbRefLatest.current), row.hash); setSetupSync(s => s === 'choose' ? s : 'ready'); return; }
               if (blankSetup(dbRefLatest.current) || freshDbRef.current || (last && last === mine)) {
                 applySavedSetup(row); setSetupNote('Your company setup was loaded from your account' + (row.device ? ' (last saved on ' + row.device + ')' : '') + '.'); setSetupSync('ready'); return; }
               if (last === row.hash) { setSetupSync(s => s === 'choose' ? s : 'ready'); return; } // only this device changed: it uploads
-              setSetupChoice(row); setSetupSync('choose');
+              mergeWithSaved(row);
             };
             h(); window.addEventListener('wd-crp-settings', h); return () => window.removeEventListener('wd-crp-settings', h);
           }, [isCrpCloud, dbReady]); // eslint-disable-line
@@ -10130,17 +10161,48 @@ View in the Database & Settings tab.`);
               window.dispatchEvent(new CustomEvent('wd-crp-settings-save', { detail: { data, hash, device: deviceName() } })); }, 2500);
             return () => clearTimeout(t);
           }, [isCrpCloud, setupSync, db]); // eslint-disable-line
-          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (d.ok) { lsJsonSet('wd_setup_synced', { hash: d.hash, at: Date.now() }); cloudSetupRef.current.hash = d.hash; } };
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (d.ok) { lsJsonSet('wd_setup_synced', { hash: d.hash, at: Date.now() }); cloudSetupRef.current.hash = d.hash; if (d.data) setSetupBase(d.data, d.hash); } };
             window.addEventListener('wd-crp-settings-saved', h); return () => window.removeEventListener('wd-crp-settings-saved', h); }, []);
-          const SetupChoiceBanner = () => (setupSync === 'choose' && setupChoice) ? (
+          // v7.39: remember when this device's setup last changed (to pre-pick the newer copy when both changed)
+          const setupLocalHashRef = useRef(null);
+          useEffect(() => { if (!isCrpCloud || !dbReady) return; const t = setTimeout(() => { const h = settingsHash(settingsOf(db)); const rec = lsJson('wd_setup_local_at', null);
+              if (setupLocalHashRef.current === null) { setupLocalHashRef.current = h; if (!rec || rec.hash !== h) lsJsonSet('wd_setup_local_at', { hash: h, at: rec && rec.hash === h ? rec.at : 0 }); return; }
+              if (h !== setupLocalHashRef.current) { setupLocalHashRef.current = h; lsJsonSet('wd_setup_local_at', { hash: h, at: Date.now() }); } }, 800);
+            return () => clearTimeout(t); }, [isCrpCloud, dbReady, db]); // eslint-disable-line
+          const SetupChoiceBanner = () => (setupSync === 'choose' && setupChoice) ? (() => {
+            const m = setupChoice.merge || { conflicts: [] }, picks = setupChoice.picks || {};
+            const where = setupChoice.device || 'your other device', when = setupChoice.updated_at ? new Date(setupChoice.updated_at).toLocaleString() : '';
+            const pick = (id, side) => setSetupChoice(c => ({ ...c, picks: { ...c.picks, [id]: side } }));
+            const pickAll = (side) => setSetupChoice(c => { const p = {}; (c.merge.conflicts || []).forEach(x => { p[x.id] = side; }); return { ...c, picks: p }; });
+            return (
             <div data-setup-choice="1" data-allow-locked="1" className="print:hidden m-3 rounded-xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              <div className="font-bold mb-1"><i className="fa-solid fa-code-compare mr-1.5"></i>Two different company setups</div>
-              <div className="mb-2">The company setup on this device (company profile, fleet, batteries, crew, templates…) is different from the one saved to your account{setupChoice.device ? <> on <b>{setupChoice.device}</b></> : ''}{setupChoice.updated_at ? <>, {new Date(setupChoice.updated_at).toLocaleString()}</> : ''}. Which one do you want to keep? Your jobs aren't affected. Nothing is shared with crew until you choose.</div>
-              <div className="flex flex-wrap gap-2">
-                <button data-setup-use-saved="1" data-allow-locked="1" className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold" onClick={() => { applySavedSetup(setupChoice); setSetupChoice(null); setSetupSync('ready'); setSetupNote('Loaded the company setup saved to your account.'); }}>Use the one saved to my account</button>
-                <button data-setup-keep-local="1" data-allow-locked="1" className="px-3 py-1.5 rounded-lg border border-amber-600 text-amber-800 font-semibold bg-white" onClick={() => { cloudSetupRef.current.hash = ''; setSetupChoice(null); setSetupSync('ready'); setSetupNote('Keeping this device\'s company setup; it is now saved to your account.'); }}>Keep this device's setup</button>
+              <div className="font-bold mb-1"><i className="fa-solid fa-code-merge mr-1.5"></i>Company setup changed on two devices</div>
+              <div className="mb-2">Changes made on this device and on <b>{where}</b>{when ? <> ({when})</> : ''} have been combined. <b>{m.conflicts.length}</b> item{m.conflicts.length === 1 ? ' was' : 's were'} changed differently on both. Pick which to keep (the newer one is ticked). Your jobs aren't affected.</div>
+              <div className="space-y-1.5 mb-2 max-h-80 overflow-auto">
+                {m.conflicts.map(c => (
+                  <div key={c.id} data-merge-item={c.label} className="rounded-lg bg-white border border-amber-200 px-2.5 py-2">
+                    <div className="font-semibold text-slate-800 mb-1">{c.label}</div>
+                    <div className="grid sm:grid-cols-2 gap-1.5">
+                      {[['local', 'This device', c.local], ['cloud', 'Saved on ' + where, c.cloud]].map(([side, lbl, v]) => (
+                        <button key={side} type="button" data-allow-locked="1" data-merge-pick={side} onClick={() => pick(c.id, side)}
+                          className={`text-left rounded-md border px-2 py-1.5 ${picks[c.id] === side ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500"><i className={`fa-${picks[c.id] === side ? 'solid fa-circle-check text-emerald-600' : 'regular fa-circle'} mr-1`}></i>{lbl}{setupChoice.newer === side ? ' · newer' : ''}</div>
+                          <div className="text-slate-800 break-words">{mergePreview(v)}</div>
+                        </button>))}
+                    </div>
+                  </div>))}
               </div>
-            </div>) : setupNote ? (
+              <div className="flex flex-wrap gap-2 items-center">
+                <button data-setup-merge-save="1" data-allow-locked="1" className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold" onClick={() => finishMerge(setupChoice, applyPicks(m.merged, m.conflicts, setupChoice.picks || {}), m)}><i className="fa-solid fa-check mr-1"></i>Save merged setup</button>
+                <button type="button" data-allow-locked="1" data-merge-all="local" className="px-2 py-1 rounded-lg border border-amber-500 bg-white text-amber-800 text-xs font-semibold" onClick={() => pickAll('local')}>All from this device</button>
+                <button type="button" data-allow-locked="1" data-merge-all="cloud" className="px-2 py-1 rounded-lg border border-amber-500 bg-white text-amber-800 text-xs font-semibold" onClick={() => pickAll('cloud')}>All from {where}</button>
+              </div>
+              <details className="mt-2 text-xs"><summary className="cursor-pointer text-amber-800">Don't merge: use one copy for everything</summary>
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  <button data-setup-use-saved="1" data-allow-locked="1" className="px-2 py-1 rounded-lg border border-amber-600 text-amber-800 bg-white" onClick={() => { applySavedSetup(setupChoice); setSetupChoice(null); setSetupSync('ready'); setSetupNote('Loaded the company setup saved to your account. The copy from before is in Restore safety copy.'); }}>Use only the one saved to my account</button>
+                  <button data-setup-keep-local="1" data-allow-locked="1" className="px-2 py-1 rounded-lg border border-amber-600 text-amber-800 bg-white" onClick={() => { cloudSetupRef.current.hash = ''; setSetupChoice(null); setSetupSync('ready'); setSetupNote('Keeping this device\'s company setup; it is now saved to your account.'); }}>Use only this device's setup</button>
+                </div></details>
+            </div>); })() : setupNote ? (
             <div data-setup-note="1" className="print:hidden m-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 flex items-start gap-2">
               <span className="flex-1"><i className="fa-solid fa-cloud-arrow-down mr-1.5"></i>{setupNote}</span>
               <button data-allow-locked="1" className="text-emerald-700" onClick={() => setSetupNote('')} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
@@ -10197,7 +10259,7 @@ View in the Database & Settings tab.`);
                 if (f && f.telemetry && o && o.telemetry) ['trace', 'altRaw', 'spdRaw'].forEach(t => { if (o.telemetry[t] && !f.telemetry[t]) f.telemetry[t] = o.telemetry[t]; }); }); }); } catch (e) {}
             return p; };
           useEffect(() => {
-            if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || pullBusyRef.current) return;
+            if (!isCrpCloud || !cloudReady || !dbReady || setupSync === 'waiting' || pullBusyRef.current) return; // v7.39: jobs come down even while a setup question is open
             const t = setTimeout(() => {
               const list = (window.wdCloudJobs || []).filter(j => j && j.plan_uid); if (!list.length) return;
               const local = {}; cloudJobsList().forEach(j => { local[j.uid] = j; });
@@ -10243,7 +10305,7 @@ View in the Database & Settings tab.`);
               window.dispatchEvent(new CustomEvent('wd-fetch-cloud-jobs', { detail: { req, ids: need.map(j => j.id) } }));
             }, 1500);
             return () => clearTimeout(t);
-          }, [isCrpCloud, cloudReady, dbReady, setupOk, cloudJobsTick]); // eslint-disable-line
+          }, [isCrpCloud, cloudReady, dbReady, setupSync, cloudJobsTick]); // eslint-disable-line
           // after this device sends a job, remember it as current (so it isn't downloaded straight back)
           useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const pl = lsJson('wd_cloud_pulled', {}); pl[d.uid] = new Date().toISOString(); lsJsonSet('wd_cloud_pulled', pl); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, []);
@@ -15567,7 +15629,7 @@ View in the Database & Settings tab.`);
                                 <button onClick={() => handleCopyPlan(plan)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
                                   <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
                                 </button>
-                                    <button onClick={() => { if(window.confirm(`Delete draft "${plan.title}"?`)) updateDb('draftPlans', (db.draftPlans||[]).filter(p=>p.id!==plan.id)); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
+                                    <button onClick={() => { if(window.confirm(`Delete draft "${plan.title}"?`)) updateDb('draftPlans', (db.draftPlans||[]).filter(p=>!sameJob(p, plan))); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </div>
@@ -15613,7 +15675,7 @@ View in the Database & Settings tab.`);
                                 <button onClick={() => handleCopyPlan(plan)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
                                   <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
                                 </button>
-                                    <button onClick={() => { if(window.confirm(`Delete "${plan.title}"?`)) updateDb('savedPlans', (db.savedPlans||[]).filter(p=>p.id!==plan.id)); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
+                                    <button onClick={() => { if(window.confirm(`Delete "${plan.title}"?`)) updateDb('savedPlans', (db.savedPlans||[]).filter(p=>!sameJob(p, plan))); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </div>
