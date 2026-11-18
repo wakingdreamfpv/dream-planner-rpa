@@ -188,7 +188,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.39';
+        const APP_VERSION = '7.40';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10228,7 +10228,9 @@ View in the Database & Settings tab.`);
             if (!isCrpCloud || !cloudReady || !dbReady) return;
             const t = setTimeout(() => {
               const synced = lsJson('wd_cloud_synced', {});
+              const gone = new Set((window.wdCloudJobs || []).filter(j => j && j.status === 'cancelled' && !(lsJson('wd_job_keep', {}) || {})[j.plan_uid]).map(j => j.plan_uid));
               cloudJobsList().forEach(({ uid, p, status, when }) => {
+                if (gone.has(uid)) return; // v7.40: deleted on another device; wait for the CRP's answer
                 const sig = status + '|' + (when || '') + '|' + JSON.stringify(planCrew(p));
                 if (synced[uid] === sig) return;
                 const ov = p.overview || {};
@@ -10261,7 +10263,8 @@ View in the Database & Settings tab.`);
           useEffect(() => {
             if (!isCrpCloud || !cloudReady || !dbReady || setupSync === 'waiting' || pullBusyRef.current) return; // v7.39: jobs come down even while a setup question is open
             const t = setTimeout(() => {
-              const list = (window.wdCloudJobs || []).filter(j => j && j.plan_uid); if (!list.length) return;
+              const pendDel = lsJson('wd_job_cancel_pending', {});
+              const list = (window.wdCloudJobs || []).filter(j => j && j.plan_uid && j.status !== 'cancelled' && !pendDel[j.plan_uid]); if (!list.length) return; // v7.40: deleted jobs are never downloaded
               const local = {}; cloudJobsList().forEach(j => { local[j.uid] = j; });
               const synced = lsJson('wd_cloud_synced', {}), pulled = lsJson('wd_cloud_pulled', {});
               const need = list.filter(j => { const l = local[j.plan_uid];
@@ -10309,6 +10312,70 @@ View in the Database & Settings tab.`);
           // after this device sends a job, remember it as current (so it isn't downloaded straight back)
           useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const pl = lsJson('wd_cloud_pulled', {}); pl[d.uid] = new Date().toISOString(); lsJsonSet('wd_cloud_pulled', pl); };
             window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }, []);
+          // ── v7.40: deleting a job reaches the other devices, but they ask first ───────────────────────────────
+          // Deleting here marks it "cancelled" in the account (nothing is erased there). Another device that still has it shows
+          // "deleted on another device: delete here too / keep it". Keep → it's sent back to the account as it was.
+          const cancelInAccount = (plan) => {
+            if (!isCrpCloud) return; const uid = uidOf(plan); if (!uid || uid === 'op:') return;
+            const pend = lsJson('wd_job_cancel_pending', {}); pend[uid] = new Date().toISOString(); lsJsonSet('wd_job_cancel_pending', pend);
+            const kp = lsJson('wd_job_keep', {}); delete kp[uid]; lsJsonSet('wd_job_keep', kp);
+            const sy = lsJson('wd_cloud_synced', {}); delete sy[uid]; lsJsonSet('wd_cloud_synced', sy);
+            window.dispatchEvent(new CustomEvent('wd-job-cancel', { detail: { uid } }));
+          };
+          const deleteJob = (listKey, plan) => {
+            const elsewhere = isCrpCloud ? '\n\nIt will also be removed from your account. Your other devices will ask before removing their copy.' : '';
+            if (!window.confirm(`Delete "${plan.title || getOpTitle(plan.overview || {}) || plan.id}"?${elsewhere}`)) return;
+            try { wdStore.saveSafety(db, 'Before deleting "' + (plan.title || plan.id) + '"'); } catch (e) {}
+            const others = ['draftPlans', 'savedPlans', 'completedFlights'].filter(k => k !== listKey).some(k => (db[k] || []).some(x => sameJob(x, plan)));
+            updateDb(listKey, (db[listKey] || []).filter(x => !sameJob(x, plan)));
+            if (!others) cancelInAccount(plan); // another copy (e.g. the approved plan) still here: the job lives on
+          };
+          useEffect(() => { // send deletions made while offline
+            if (!isCrpCloud || !cloudReady) return; const pend = lsJson('wd_job_cancel_pending', {});
+            Object.keys(pend).forEach(uid => window.dispatchEvent(new CustomEvent('wd-job-cancel', { detail: { uid } })));
+          }, [isCrpCloud, cloudReady]); // eslint-disable-line
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const pend = lsJson('wd_job_cancel_pending', {}); delete pend[d.uid]; lsJsonSet('wd_job_cancel_pending', pend); };
+            window.addEventListener('wd-job-cancelled', h); return () => window.removeEventListener('wd-job-cancelled', h); }, []);
+          useEffect(() => { const h = (e) => { const d = e.detail || {}; if (!d.ok || !d.uid) return; const kp = lsJson('wd_job_keep', {}); if (!kp[d.uid]) return; delete kp[d.uid]; lsJsonSet('wd_job_keep', kp); // kept job is back in the account
+              const job = cloudJobsList().find(j => j.uid === d.uid);
+              window.wdCloudJobs = (window.wdCloudJobs || []).map(j => j.plan_uid === d.uid ? { ...j, status: job ? job.status : 'draft', updated_at: new Date().toISOString() } : j); window.dispatchEvent(new Event('wd-cloud-jobs')); };
+            window.addEventListener('wd-job-synced', h); return () => window.removeEventListener('wd-job-synced', h); }); // eslint-disable-line (re-bound each render: reads the latest jobs)
+          const goneElsewhereFn = () => {
+            if (!isCrpCloud) return [];
+            const keep = lsJson('wd_job_keep', {}), pend = lsJson('wd_job_cancel_pending', {}), local = {}; cloudJobsList().forEach(j => { local[j.uid] = j; });
+            return (cloudJobsAll || []).filter(j => j && j.status === 'cancelled' && local[j.plan_uid] && !keep[j.plan_uid] && !pend[j.plan_uid])
+              .map(j => ({ uid: j.plan_uid, title: j.title || getOpTitle((local[j.plan_uid].p || {}).overview || {}) || j.op_id, op: j.op_id, at: j.updated_at, status: local[j.plan_uid].status }));
+          };
+          const [goneTick, setGoneTick] = useState(0);
+          const removeHereToo = (list) => {
+            const uids = new Set(list.map(g => g.uid));
+            try { wdStore.saveSafety(db, 'Before removing ' + list.length + ' job' + (list.length === 1 ? '' : 's') + ' deleted on another device'); } catch (e) {}
+            setDb(prev => ({ ...prev, draftPlans: (prev.draftPlans || []).filter(x => !uids.has(uidOf(x))), savedPlans: (prev.savedPlans || []).filter(x => !uids.has(uidOf(x))), completedFlights: (prev.completedFlights || []).filter(x => !uids.has(uidOf(x))) }));
+            setSetupNote((list.length === 1 ? '"' + list[0].title + '" was' : list.length + ' jobs were') + ' removed from this device too. A copy from before is in Restore safety copy.');
+          };
+          const keepHere = (list) => {
+            const kp = lsJson('wd_job_keep', {}), sy = lsJson('wd_cloud_synced', {});
+            list.forEach(g => { kp[g.uid] = new Date().toISOString(); delete sy[g.uid]; }); // forget "already sent", so it goes back to the account
+            lsJsonSet('wd_job_keep', kp); lsJsonSet('wd_cloud_synced', sy); setGoneTick(n => n + 1);
+            setDb(prev => ({ ...prev, draftPlans: [...(prev.draftPlans || [])] })); // nudge the upload
+            setSetupNote((list.length === 1 ? '"' + list[0].title + '" is' : list.length + ' jobs are') + ' kept and put back in your account.');
+          };
+          const GoneElsewhereBanner = () => { const goneElsewhere = goneElsewhereFn(); return goneElsewhere.length ? (
+            <div data-gone-elsewhere="1" data-allow-locked="1" className="print:hidden m-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              <div className="font-bold mb-1"><i className="fa-solid fa-trash-can mr-1.5"></i>{goneElsewhere.length === 1 ? 'A job was deleted on another device' : goneElsewhere.length + ' jobs were deleted on another device'}</div>
+              <div className="mb-2">It's still on this device. Delete it here too, or keep it (it goes back into your account and onto your other devices).</div>
+              <div className="space-y-1.5">
+                {goneElsewhere.map(g => (
+                  <div key={g.uid} data-gone-job={g.uid} className="flex flex-wrap items-center gap-2 rounded-lg bg-white border border-rose-200 px-2.5 py-1.5">
+                    <span className="flex-1 min-w-[10rem]"><b>{g.title}</b>{g.op ? <span className="text-slate-500"> · {g.op}</span> : ''} <span className="text-slate-500">({g.status === 'draft' ? 'draft' : g.status === 'approved' ? 'approved plan' : 'flight record'}{g.at ? ', deleted ' + new Date(g.at).toLocaleString() : ''})</span></span>
+                    <button type="button" data-allow-locked="1" data-gone-delete={g.uid} onClick={() => { if (window.confirm('Delete "' + g.title + '" from this device too?')) removeHereToo([g]); }} className="px-2.5 py-1 rounded-md bg-rose-600 text-white text-xs font-semibold">Delete here too</button>
+                    <button type="button" data-allow-locked="1" data-gone-keep={g.uid} onClick={() => keepHere([g])} className="px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-semibold">Keep it</button>
+                  </div>))}
+              </div>
+              {goneElsewhere.length > 1 && <div className="flex gap-2 mt-2">
+                <button type="button" data-allow-locked="1" data-gone-delete-all="1" onClick={() => { if (window.confirm('Delete all ' + goneElsewhere.length + ' from this device too?')) removeHereToo(goneElsewhere); }} className="px-2.5 py-1 rounded-md bg-rose-600 text-white text-xs font-semibold">Delete all here too</button>
+                <button type="button" data-allow-locked="1" data-gone-keep-all="1" onClick={() => keepHere(goneElsewhere)} className="px-2.5 py-1 rounded-md border border-slate-300 bg-white text-xs font-semibold">Keep all</button></div>}
+            </div>) : null; };
           // CRP: company, fleet, batteries, job records and each person's logged time, for crew to read
           useEffect(() => {
             if (!isCrpCloud || !cloudReady || !dbReady || !setupOk || blankSetup(db)) return; // v7.28: a blank or unsettled device never overwrites what crew see
@@ -10709,7 +10776,7 @@ View in the Database & Settings tab.`);
               .sort((x, y) => Date.parse(y.savedAt || 0) - Date.parse(x.savedAt || 0));
             // v7.5.6: company jobs in the cloud that aren't saved on this device
             if (isCrpCloud) { const have = new Set(cloudJobsList().map(j => j.uid));
-              (cloudJobsAll || []).filter(j => j.plan_uid && !have.has(j.plan_uid) && j.status !== 'completed').forEach(j => drafts.push({ key: 'cloud:' + j.id, id: j.op_id, name: j.title || j.op_id || 'Untitled job', date: j.start_date || '', client: 'in the cloud',
+              (cloudJobsAll || []).filter(j => j.plan_uid && !have.has(j.plan_uid) && j.status !== 'completed' && j.status !== 'cancelled').forEach(j => drafts.push({ key: 'cloud:' + j.id, id: j.op_id, name: j.title || j.op_id || 'Untitled job', date: j.start_date || '', client: 'in the cloud',
                 savedAt: j.updated_at, approved: j.status === 'approved', cloudJob: j })); }
             const completed = [...(db.completedFlights || [])].sort((x, y) => Date.parse(y.completedAt || 0) - Date.parse(x.completedAt || 0)).slice(0, 12).map(r => {
               const st = loggedTimeStats([r]).acft; const fl = Object.values(st).reduce((t, x) => t + x.flights, 0), sec = Object.values(st).reduce((t, x) => t + x.sec, 0);
@@ -11590,6 +11657,7 @@ View in the Database & Settings tab.`);
                 </div>
               )}
               {SetupChoiceBanner()}
+              {GoneElsewhereBanner()}
               {tabRole === 'reader' && (
                 <div className="print:hidden sticky top-0 z-[2000] bg-amber-400 text-amber-950 text-sm px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shadow-md" data-testid="readonly-banner">
                   <span><i className="fa-solid fa-lock mr-1.5"></i><b>Read-only:</b> the planner is also open in another tab or window, so this tab can't save to the database. {dirty ? <b>Your edits here are kept and autosaved to Recovery copies.</b> : 'Anything you type is still autosaved to Recovery copies.'}</span>
@@ -15629,7 +15697,7 @@ View in the Database & Settings tab.`);
                                 <button onClick={() => handleCopyPlan(plan)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
                                   <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
                                 </button>
-                                    <button onClick={() => { if(window.confirm(`Delete draft "${plan.title}"?`)) updateDb('draftPlans', (db.draftPlans||[]).filter(p=>!sameJob(p, plan))); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
+                                    <button data-del-job="draftPlans" onClick={() => { deleteJob('draftPlans', plan); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </div>
@@ -15675,7 +15743,7 @@ View in the Database & Settings tab.`);
                                 <button onClick={() => handleCopyPlan(plan)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
                                   <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
                                 </button>
-                                    <button onClick={() => { if(window.confirm(`Delete "${plan.title}"?`)) updateDb('savedPlans', (db.savedPlans||[]).filter(p=>!sameJob(p, plan))); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
+                                    <button data-del-job="savedPlans" onClick={() => { deleteJob('savedPlans', plan); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </div>
@@ -15725,7 +15793,7 @@ View in the Database & Settings tab.`);
                                 <button onClick={() => handleCopyPlan(record)} title="Start a new job from this one (new ID and date, approvals and log cleared)" className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1">
                                   <i className="fa-regular fa-copy text-[10px]"></i> Copy as new job
                                 </button>
-                                      <button onClick={() => { if(window.confirm(`Delete "${record.title}"?`)) updateDb('completedFlights', (db.completedFlights||[]).filter(r2=>r2.id!==record.id)); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
+                                      <button data-del-job="completedFlights" onClick={() => { deleteJob('completedFlights', record); }} className="text-xs text-slate-400 hover:text-red-500 px-2 py-1.5 rounded transition-colors">
                                         <i className="fa-solid fa-trash-can"></i>
                                       </button>
                                     </div>

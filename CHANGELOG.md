@@ -1,5 +1,16 @@
 # Planner changelog
 
+## v7.40 — 18 Nov 2026 — Deleted jobs stay deleted (other devices ask first)
+- **Fix: a job you deleted came back.** Your other devices downloaded it again from your account. Now deleting a draft, approved plan or flight record also marks it deleted in your account. It isn't erased there: it's marked "cancelled", which crew see too.
+- **Other devices ask before removing their copy.** If your phone still has a job you deleted on your computer, the phone shows "A job was deleted on another device" with the job's name, number and when it was deleted:
+  - **Delete here too** removes it from the phone (a safety copy from before is kept in Restore safety copy);
+  - **Keep it** puts it back in your account as it was, and onto your other devices.
+  - Until you answer, the phone doesn't send that job back to the account.
+- A new device never downloads a deleted job, and Home doesn't list it.
+- Deleting while offline is sent to the account the next time you're online.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for deleting on one device and answering on another (18 checks); everything passes.
+
 ## v7.39 — 18 Nov 2026 — Safe merge of your company setup between devices; jobs never replace each other
 - **No more "Two different company setups: pick one".** When your phone and your computer have both changed the company setup (profile, fleet, batteries, crew, templates…), the planner now merges them:
   - anything changed on only one device is kept automatically (e.g. a new aircraft added on the phone *and* a new email on the computer: you get both);
