@@ -1,6 +1,7 @@
 // Dream Planner connector for Claude (MCP over stdio). Claude starts it; it uses your saved planner login.
 // Sign in first: node connector/login.mjs
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { client } from './session.mjs';
 import { makeTools } from './tools.mjs';
 const VERSION = '7.41';
@@ -29,7 +30,7 @@ rl.on('line', async (line) => {
     if (method === 'tools/list') return reply(id, { tools: Object.entries(tools).map(([name, t]) => ({ name, description: t.description, inputSchema: t.schema })) });
     if (method === 'tools/call') {
       const user = await ready;
-      if (!user) return reply(id, { isError: true, content: [{ type: 'text', text: 'Not signed in. In Terminal, run: node "' + new URL('./login.mjs', import.meta.url).pathname + '"' }] });
+      if (!user) return reply(id, { isError: true, content: [{ type: 'text', text: 'Not signed in. In Terminal, run: node "' + fileURLToPath(new URL('./login.mjs', import.meta.url)) + '"' }] });
       const t = tools[params && params.name]; if (!t) return fail(id, -32602, 'Unknown tool ' + (params && params.name));
       try { const out = await t.run((params && params.arguments) || {}); return reply(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 1) }] }); }
       catch (e) { return reply(id, { isError: true, content: [{ type: 'text', text: e.user ? e.message : 'Error: ' + (e && e.message || e) }] }); }
