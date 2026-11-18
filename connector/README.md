@@ -12,7 +12,7 @@ filled in), and approval can't be set from here.
    ```
    ~/.local/node/bin/node "/Users/michaelrubio/Desktop/RPAS App/Projects/dream-planner-rpa/connector/login.mjs"
    ```
-3. Quit and reopen the Claude app. "dream-planner" is listed under connectors (it was added to
+3. Quit Claude (Cmd+Q), then in Terminal run `~/.local/node/bin/node "/Users/michaelrubio/Desktop/RPAS App/Projects/dream-planner-rpa/connector/install.mjs"`, then open Claude again. "dream-planner" is listed under connectors (it is added to
    `~/Library/Application Support/Claude/claude_desktop_config.json`; the old file is kept next to it as
    `claude_desktop_config.json.backup-before-dream-planner`).
 
