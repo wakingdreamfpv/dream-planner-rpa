@@ -1,5 +1,19 @@
 # Planner changelog
 
+## v7.41 — 18 Nov 2026 — Add a stack of flight logs from Home; Claude connector (Mike only)
+- **Home → Add flight logs** (everyone, including the free planner and the beta): pick or drop a whole stack of radio logs (EdgeTX CSV).
+  - Each flight is put on the job flown that day (by the job's dates), and matched to an aircraft by the radio model in the file name, then by battery cells. It works the same way as the log dump inside a job.
+  - The check screen groups flights by day. Change the job or aircraft on any flight, or use **All to** to send a whole day to one job. A day with no job is left for you to choose.
+  - Approved plans get their flights too. If an aircraft isn't on the approved plan, it asks first, because adding it withdraws the approval.
+  - Flights already logged are skipped, so dropping the same logs twice does nothing.
+  - Afterwards it lists each job with **Open its flight log**, and says what's left for you: the battery used and OONP / Non-OONP on each flight, then signing the log. A safety copy from before is kept.
+- **Claude connector (just for Mike's Mac):** in a Claude chat you can say "here's a folder of logs, put them on my jobs", "fill in the batteries", or "start a draft for Hezzelic Homes on 2 Dec".
+  - Claude reads your jobs and setup through your own planner login, which you sign into once in Terminal. Your password is never stored or seen by Claude.
+  - Claude can add flights and fill in logs, and create or edit draft jobs. It can't re-plan or approve signed plans.
+  - Setup steps are in `connector/README.md`.
+- **Supabase:** nothing to do.
+- **Tests:** new suites for the Home flight-log import (17 checks) and the connector (17 checks); everything passes.
+
 ## v7.40 — 18 Nov 2026 — Deleted jobs stay deleted (other devices ask first)
 - **Fix: a job you deleted came back.** Your other devices downloaded it again from your account. Now deleting a draft, approved plan or flight record also marks it deleted in your account. It isn't erased there: it's marked "cancelled", which crew see too.
 - **Other devices ask before removing their copy.** If your phone still has a job you deleted on your computer, the phone shows "A job was deleted on another device" with the job's name, number and when it was deleted:
