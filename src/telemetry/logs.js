@@ -197,3 +197,18 @@ export const flightFromTelemetry = (t) => {
     telemetry: t,
   };
 };
+
+// v7.42: the radio's clock was set wrong at import (UTC vs local). The log holds wall-clock times; reading them as UTC
+// or as local time gives two instants that differ by the time-zone offset. Move a flight to the other reading.
+export const retimeTelemetry = (t, to) => {
+  if (!t || !t.startMs || (t.clock || 'utc') === to) return t;
+  const off = (ms) => new Date(ms).getTimezoneOffset() * 60000; // Brisbane: -10 h
+  const shift = to === 'local' ? off(t.startMs) : -off(t.startMs - off(t.startMs));
+  return { ...t, clock: to, startMs: t.startMs + shift, endMs: (t.endMs || t.startMs) + shift };
+};
+export const retimeFlight = (f, to) => {
+  if (!f || !f.telemetry) return f;
+  const t2 = retimeTelemetry(f.telemetry, to); if (t2 === f.telemetry) return f;
+  const auto = (t) => fmtTlmDate(t.startMs) + ' ' + fmtTlmTime(t.startMs) + '–' + fmtTlmTime(t.endMs);
+  return { ...f, telemetry: t2, label: f.label === auto(f.telemetry) ? auto(t2) : f.label };
+};

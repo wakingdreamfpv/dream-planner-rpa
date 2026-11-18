@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { parseTelemetryCsv, flightFromTelemetry, guessAircraft, fmtMmSs } from '../src/telemetry/logs.js';
+import { parseTelemetryCsv, flightFromTelemetry, guessAircraft, fmtMmSs, retimeFlight } from '../src/telemetry/logs.js';
 
 const slim = (plan) => { const p = JSON.parse(JSON.stringify(plan || {}));
   Object.values((p.log && p.log.rpaLogs) || {}).forEach(rl => ((rl && rl.flights) || []).forEach(f => { if (f && f.telemetry) { delete f.telemetry.trace; delete f.telemetry.altRaw; delete f.telemetry.spdRaw; } }));
@@ -19,7 +19,8 @@ const localIso = (ms) => { const d = new Date(ms); return d.getFullYear() + '-' 
 const localDay = (ms) => localIso(ms).slice(0, 10);
 
 export function makeTools(sb, opts = {}) {
-  const clock = opts.clock || 'utc';
+  const defClock = opts.clock || 'utc';
+  const clockOf = (c) => c === 'local' || c === 'utc' ? c : defClock;
   const err = (m) => { const e = new Error(m); e.user = true; return e; };
 
   const listRows = async () => {
@@ -68,10 +69,10 @@ export function makeTools(sb, opts = {}) {
       if (st.isDirectory()) fs.readdirSync(p).filter(n => /\.csv$/i.test(n)).sort().forEach(n => out.push(path.join(p, n)));
       else out.push(p); });
     return out; };
-  const readFlights = (paths) => { const out = [], empty = [];
+  const readFlights = (paths, clock) => { const out = [], empty = [];
     csvFiles(paths).forEach(f => { let fl = [];
       try { fl = parseTelemetryCsv(fs.readFileSync(f, 'utf8'), path.basename(f), clock); } catch (e) { empty.push(path.basename(f) + ' (' + e.message + ')'); return; }
-      if (!fl.length) empty.push(path.basename(f)); fl.forEach((t, i) => out.push({ ref: f + '#' + i, file: f, t })); });
+      if (!fl.length) empty.push(path.basename(f)); fl.forEach((t, i) => out.push({ ref: f + '#' + i + '@' + clock, file: f, t })); });
     return { flights: out, empty }; };
 
   const tools = {
@@ -98,21 +99,21 @@ export function makeTools(sb, opts = {}) {
     },
     read_flight_logs: {
       description: 'Read radio flight logs (EdgeTX / ELRS telemetry CSV files, or folders of them) from this Mac, the same way the planner does. Lists each armed flight with its start time, length, height, battery voltage, the aircraft it most likely is, and the job flown that day. Nothing is saved.',
-      schema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, description: 'CSV files or folders' } }, required: ['paths'] },
-      run: async ({ paths }) => {
-        const { flights, empty } = readFlights(paths); const setup = await getSetup(); const rows = (await listRows()).filter(r => r.status === 'draft' || r.status === 'approved');
+      schema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, description: 'CSV files or folders' }, clock: { type: 'string', enum: ['utc', 'local'], description: 'How the radio clock was set when these logs were recorded. Mike\'s radio: local (Brisbane) time from November 2026, UTC before that. If unsure, compare a flight\'s start time with when the user remembers flying.' } }, required: ['paths'] },
+      run: async ({ paths, clock }) => {
+        const { flights, empty } = readFlights(paths, clockOf(clock)); const setup = await getSetup(); const rows = (await listRows()).filter(r => r.status === 'draft' || r.status === 'approved');
         return { flights: flights.map(x => { const day = localDay(x.t.startMs);
             const jobs = rows.filter(r => r.start_date && r.start_date <= day && day <= (r.end_date || r.start_date));
             const g = guessAircraft(x.t, path.basename(x.file), setup.fleet || {}, []);
             return { ref: x.ref, file: path.basename(x.file), start: localIso(x.t.startMs), armed: fmtMmSs(x.t.durationSec), maxAltFt: Math.round((x.t.maxAltM || 0) * 3.28084), startVolts: x.t.vStart,
-              aircraft_guess: g.rpa || '', why: g.why, options: g.options, jobs_that_day: jobs.map(r => `${r.op_id || ''} ${r.title} (${r.status})`) }; }),
+              clock: x.t.clock, aircraft_guess: g.rpa || '', why: g.why, options: g.options, jobs_that_day: jobs.map(r => `${r.op_id || ''} ${r.title} (${r.status})`) }; }),
           files_without_flights: empty };
       },
     },
     add_flight_logs: {
       description: 'Add flights (from read_flight_logs refs) to a job\'s flight log, each with its aircraft and optionally the battery used and OONP true/false. Flights already on the job are skipped. On an approved plan only aircraft already on the plan are allowed (adding one would withdraw the approval: do that in the planner).',
-      schema: { type: 'object', properties: { job: { type: 'string' }, flights: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, aircraft: { type: 'string' }, battery: { type: 'string' }, oonp: { type: 'boolean' } }, required: ['ref', 'aircraft'] } } }, required: ['job', 'flights'] },
-      run: async ({ job, flights }) => {
+      schema: { type: 'object', properties: { job: { type: 'string' }, flights: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, aircraft: { type: 'string' }, battery: { type: 'string' }, oonp: { type: 'boolean' } }, required: ['ref', 'aircraft'] } }, clock: { type: 'string', enum: ['utc', 'local'], description: 'How the radio clock was set when these logs were recorded. Mike\'s radio: local (Brisbane) time from November 2026, UTC before that. If unsure, compare a flight\'s start time with when the user remembers flying.' } }, required: ['job', 'flights'] },
+      run: async ({ job, flights, clock }) => { const clk = clockOf(clock);
         const row = await findJob(job); if (row.status === 'completed') throw err('That job is a completed record; it can\'t be changed here.');
         const plan = JSON.parse(JSON.stringify(row.plan || {})), ov = plan.overview = plan.overview || {}, lg = plan.log = plan.log || {};
         const approved = !!((plan.approval || {}).flightAuthApproved), setup = await getSetup(), fleet = setup.fleet || {};
@@ -120,11 +121,12 @@ export function makeTools(sb, opts = {}) {
         const have = new Set(); Object.values(rpaLogs).forEach(rl => ((rl && rl.flights) || []).forEach(f => { if (f.telemetry) have.add(f.telemetry.startMs); }));
         const cache = {}; const added = [], skipped = [];
         for (const it of flights || []) {
-          const [file, idx] = String(it.ref || '').split(/#(?=\d+$)/);
+          const rm = /^(.*)#(\d+)(?:@(utc|local))?$/.exec(String(it.ref || '')); if (!rm) { skipped.push(it.ref + ': not a flight reference from read_flight_logs'); continue; }
+          const file = rm[1], idx = rm[2], fclk = clock ? clk : (rm[3] || clk);
           if (!fleet[it.aircraft]) { skipped.push(it.ref + ': no aircraft called "' + it.aircraft + '" in the fleet'); continue; }
           if (approved && !rpaTypes.includes(it.aircraft)) { skipped.push(it.ref + ': ' + it.aircraft + ' is not on this approved plan (add it in the planner)'); continue; }
-          if (!cache[file]) { try { cache[file] = parseTelemetryCsv(fs.readFileSync(file, 'utf8'), path.basename(file), clock); } catch (e) { skipped.push(it.ref + ': ' + e.message); continue; } }
-          const t = cache[file][parseInt(idx, 10)]; if (!t) { skipped.push(it.ref + ': flight not found in the file'); continue; }
+          const ck = file + '@' + fclk; if (!cache[ck]) { try { cache[ck] = parseTelemetryCsv(fs.readFileSync(file, 'utf8'), path.basename(file), fclk); } catch (e) { skipped.push(it.ref + ': ' + e.message); continue; } }
+          const t = cache[ck][parseInt(idx, 10)]; if (!t) { skipped.push(it.ref + ': flight not found in the file'); continue; }
           if (have.has(t.startMs)) { skipped.push(it.ref + ': already on this job'); continue; } have.add(t.startMs);
           const cells = parseInt((fleet[it.aircraft] || {}).cells) || 0;
           const f = flightFromTelemetry(cells ? { ...t, cells } : t); delete f.telemetry.trace; delete f.telemetry.altRaw; delete f.telemetry.spdRaw;
@@ -160,6 +162,32 @@ export function makeTools(sb, opts = {}) {
         const row = await findJob(job); if (row.status === 'completed') throw err('That job is a completed record; it can\'t be changed here.');
         const plan = JSON.parse(JSON.stringify(row.plan || {})); plan.log = { ...(plan.log || {}) }; Object.entries(fields).forEach(([k, v]) => { plan.log[k] = String(v); });
         plan.savedAt = new Date().toISOString(); await saveJob(row, plan); return { saved: Object.keys(fields) };
+      },
+    },
+    fix_flight_clock: {
+      description: 'Move flights that were imported with the wrong radio clock: re-reads their times as local time (to: "local") or UTC (to: "utc"). For Brisbane that moves them by 10 hours. Only flights saved with the other clock move; length, heights, batteries and OONP stay. Optionally only one aircraft, or only flights first saved on/after a date (YYYY-MM-DD, as currently shown).',
+      schema: { type: 'object', properties: { job: { type: 'string' }, to: { type: 'string', enum: ['utc', 'local'] }, aircraft: { type: 'string' }, from_date: { type: 'string' } }, required: ['job', 'to'] },
+      run: async ({ job, to, aircraft, from_date }) => {
+        const row = await findJob(job); if (row.status === 'completed') throw err('That job is a completed record; it can\'t be changed here.');
+        const plan = JSON.parse(JSON.stringify(row.plan || {})), moved = [];
+        Object.entries((plan.log || {}).rpaLogs || {}).forEach(([rpa, rl]) => { if (aircraft && rpa !== aircraft) return;
+          rl.flights = (rl.flights || []).map(f => { if (!f.telemetry || !f.telemetry.startMs || (f.telemetry.clock || 'utc') === to) return f;
+            if (from_date && localDay(f.telemetry.startMs) < from_date) return f;
+            const g = retimeFlight(f, to); moved.push(`${rpa}: ${localIso(f.telemetry.startMs)} → ${localIso(g.telemetry.startMs)}`); return g; })
+            .sort((a, b) => ((a.telemetry && a.telemetry.startMs) || 0) - ((b.telemetry && b.telemetry.startMs) || 0)); });
+        if (moved.length) { plan.savedAt = new Date().toISOString(); await saveJob(row, plan); }
+        return { job: `${row.op_id || ''} ${row.title}`, moved, note: moved.length ? 'Saved to the account.' : 'No flights needed moving.' };
+      },
+    },
+    remove_flight: {
+      description: 'Remove one flight from a job\'s log (find it with get_job: aircraft + index). Use for a flight put on the wrong job or a duplicate. Ask the user first.',
+      schema: { type: 'object', properties: { job: { type: 'string' }, aircraft: { type: 'string' }, index: { type: 'integer' } }, required: ['job', 'aircraft', 'index'] },
+      run: async ({ job, aircraft, index }) => {
+        const row = await findJob(job); if (row.status === 'completed') throw err('That job is a completed record; it can\'t be changed here.');
+        const plan = JSON.parse(JSON.stringify(row.plan || {})), rl = ((plan.log || {}).rpaLogs || {})[aircraft];
+        const f = rl && (rl.flights || [])[index]; if (!f) throw err('No flight ' + index + ' for ' + aircraft + ' on that job.');
+        rl.flights.splice(index, 1); plan.savedAt = new Date().toISOString(); await saveJob(row, plan);
+        return { removed: flightSummary(aircraft, f, index), left_for_aircraft: rl.flights.length };
       },
     },
     create_draft_job: {

@@ -63,4 +63,18 @@ refused = ''; try { await tools.create_draft_job.run({ name: 'X', date: '2026-12
 ok('create_draft_job: unknown aircraft refused', /Not in the fleet/.test(refused), refused);
 refused = ''; try { await tools.get_job.run({ job: 'OP-2026-01' }); } catch (e) { refused = e.message; }
 ok('ambiguous job name asks for the OP number', /Several jobs match|No job matches/.test(refused), refused);
+// v7.42: radio clock
+const rdL = await tools.read_flight_logs.run({ paths: [dir], clock: 'local' });
+ok('read as local time: 10 hours earlier than as UTC, and the ref remembers it', rdL.flights[0].start === '2026-11-15 01:00' && rd.flights[0].start === '2026-11-15 11:00' && /@local$/.test(rdL.flights[0].ref), [rdL.flights[0].start, rd.flights[0].start, rdL.flights[0].ref]);
+const before = (await tools.get_job.run({ job: 'Beach' })).flights[0].start;
+const fx = await tools.fix_flight_clock.run({ job: 'Beach', to: 'local' });
+const after = (await tools.get_job.run({ job: 'Beach' })).flights[0];
+ok('fix_flight_clock: a UTC-read flight moves 10 hours earlier, label follows', fx.moved.length === 1 && before === '2026-11-15 11:00' && after.start === '2026-11-15 01:00' && /01:00/.test(after.label) && after.batteries === '6S-01', [before, after]);
+const fx2 = await tools.fix_flight_clock.run({ job: 'Beach', to: 'local' });
+ok('...running it again moves nothing', !fx2.moved.length, fx2);
+await tools.add_flight_logs.run({ job: 'Beach', flights: [{ ref: rdL.flights[1].ref, aircraft: 'Nazgul 5' }] });
+const bj = await tools.get_job.run({ job: 'Beach' });
+ok('add_flight_logs uses the clock the flight was read with', bj.flights.length === 2 && bj.flights[1].start === '2026-11-16 02:00', bj.flights.map(f => f.start));
+const rmv = await tools.remove_flight.run({ job: 'Beach', aircraft: 'Nazgul 5', index: 1 });
+ok('remove_flight: takes off just that flight', rmv.left_for_aircraft === 1 && (await tools.get_job.run({ job: 'Beach' })).flights.length === 1, rmv);
 console.log(fails ? `FAILED ${fails}` : 'ALL PASS'); process.exit(fails ? 1 : 0);

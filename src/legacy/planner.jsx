@@ -13,7 +13,7 @@ import { RecordVersions } from '../compliance/Versions.jsx';
 import { getSupabase as wdSb } from '../cloud/client.js';
 import SignDialog from '../cloud/SignDialog.jsx';
 import { mergeSetup, applyPicks, preview as mergePreview } from '../cloud/setupMerge.js';
-import { TLM_DISARMED, parseTelemetryCsv, fmtTlmTime, fmtTlmDate, fmtMmSs, packCells, dumpNorm, edgeTxModel, cellCandidates, likelyCells, guessAircraft, flightFromTelemetry } from '../telemetry/logs.js';
+import { TLM_DISARMED, parseTelemetryCsv, fmtTlmTime, fmtTlmDate, fmtMmSs, packCells, dumpNorm, edgeTxModel, cellCandidates, likelyCells, guessAircraft, flightFromTelemetry, retimeTelemetry, retimeFlight } from '../telemetry/logs.js';
 import { CommentsPanel, SharePanel, refreshLinkSnapshots, SUGGEST_FIELDS, RISK_FIELDS } from '../collab/Comments.jsx';
 import NotificationSettings from '../compliance/NotificationSettings.jsx';
 import { EnquiryDialog, EnquiriesList } from '../compliance/Enquiries.jsx';
@@ -189,7 +189,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.41';
+        const APP_VERSION = '7.42';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -4097,6 +4097,12 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           // ── Telemetry import (EdgeTX CSV logs from the radio's /LOGS folder) ──
           const [tlmClock, setTlmClock] = React.useState(() => { try { return localStorage.getItem('wd_tlm_clock') || 'utc'; } catch (e) { return 'utc'; } });
           const changeClock = (v) => { setTlmClock(v); try { localStorage.setItem('wd_tlm_clock', v); } catch (e) {} };
+          // v7.42: flights already imported with the other clock can be moved to the right time
+          const wrongClock = flights.filter(f => f.telemetry && f.telemetry.startMs && (f.telemetry.clock || 'utc') !== tlmClock);
+          const fixClock = () => { const n = wrongClock.length; if (!n) return;
+            const h = Math.abs(Math.round((retimeTelemetry(wrongClock[0].telemetry, tlmClock).startMs - wrongClock[0].telemetry.startMs) / 360000) / 10);
+            if (!window.confirm(`Move ${n} flight${n === 1 ? '' : 's'} imported with the radio clock as ${tlmClock === 'local' ? 'UTC' : 'local time'} to ${tlmClock === 'local' ? 'local time' : 'UTC'}?\n\nTheir start times move by ${h} hours. Length, heights and batteries stay the same.`)) return;
+            commit(flights.map(f => (f.telemetry && (f.telemetry.clock || 'utc') !== tlmClock) ? retimeFlight(f, tlmClock) : f)); };
           const readCsvFiles = async (files) => {
             const raw = await wdReadFiles(files, 'text', 'Importing radio logs for ' + rpa);
             const out = [];
@@ -4187,6 +4193,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                       <option value="utc">UTC</option>
                       <option value="local">Local</option>
                     </select>
+                    {wrongClock.length > 0 && <button type="button" data-fix-clock="1" onClick={fixClock} title="These flights were imported with the other radio clock setting" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 border border-amber-300 text-amber-900">Move {wrongClock.length} to {tlmClock === 'local' ? 'local' : 'UTC'}</button>}
                     <button onClick={importTelemetry} className="flex items-center gap-1.5 text-xs bg-cyan-600 hover:bg-cyan-700 text-white font-semibold px-2.5 py-1 rounded-md transition-colors" title="Import one or more EdgeTX telemetry CSV logs (ELRS/Crossfire) — each armed period becomes a flight">
                       <i className="fa-solid fa-satellite-dish text-[10px]"></i> Import telemetry
                     </button>
@@ -5254,6 +5261,10 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.csv,text/csv'; inp.multiple = true;
             inp.onchange = (e) => go(e.target.files); inp.click();
           };
+          const setBulkClock = (to) => setBulkLogs(prev => { if (!prev || prev.clock === to) return prev; try { localStorage.setItem('wd_tlm_clock', to); } catch (e) {}
+            const items = prev.items.map(it => { const t = retimeTelemetry({ ...it.t, clock: prev.clock }, to); const m = bulkMatch({ ...it, t }, prev.jobs);
+              return { ...it, t, job: it.jobSet ? it.job : m.job, jobWhy: m.jobWhy, jobOptions: m.options || [], g: it.jobSet ? it.g : m.g, rpa: it.rpaSet ? it.rpa : (m.g.rpa || it.rpa) }; }).sort((a, b) => a.t.startMs - b.t.startMs);
+            return { ...prev, clock: to, items }; });
           const applyBulkLogs = () => {
             const d = bulkLogs; if (!d) return;
             const chosen = d.items.filter(it => it.include && it.rpa && it.job);
@@ -11492,7 +11503,7 @@ View in the Database & Settings tab.`);
                 const nReady = d.items.filter(it => it.include && it.rpa && it.job).length, nOpen = d.items.filter(it => it.include && (!it.rpa || !it.job)).length;
                 const fmtT = (ms) => new Date(ms).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false });
                 const days = []; d.items.forEach(it => { const day = bulkLocalDay(it.t.startMs); let g = days.find(x => x.day === day); if (!g) days.push(g = { day, items: [] }); g.items.push(it); });
-                const setDayJob = (day, job) => setBulkLogs(prev => ({ ...prev, items: prev.items.map(it => { if (bulkLocalDay(it.t.startMs) !== day) return it; const j = d.jobs.find(x => x.key === job); const g = guessAircraft(it.t, it.file, db.fleet, j ? j.rpas : []); return { ...it, job, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g.rpa || it.rpa), g }; }) }));
+                const setDayJob = (day, job) => setBulkLogs(prev => ({ ...prev, items: prev.items.map(it => { if (bulkLocalDay(it.t.startMs) !== day) return it; const j = d.jobs.find(x => x.key === job); const g = guessAircraft(it.t, it.file, db.fleet, j ? j.rpas : []); return { ...it, job, jobSet: true, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g.rpa || it.rpa), g }; }) }));
                 const jobLabel = (j) => j.title + (j.op ? ' · ' + j.op : '') + (j.from ? ' · ' + new Date(j.from + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + (j.to !== j.from ? '–' + new Date(j.to + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : '') : ' · no date');
                 return (
                   <div className="fixed inset-0 z-[3000] bg-slate-900/60 flex items-center justify-center p-2 sm:p-3 print:hidden" data-testid="bulk-logs">
@@ -11501,7 +11512,11 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-layer-group text-indigo-600"></i>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-slate-800">{d.done ? 'Flight logs added' : `Add flight logs: ${d.items.length} flight${d.items.length === 1 ? '' : 's'} found`}</h3>
-                          {!d.done && <p className="text-xs text-slate-500">Each flight is put on the job flown that day, and matched to an aircraft by the radio model in the file name, then the battery. Check the matches, then add them. Radio clock: {d.clock === 'local' ? 'local' : 'UTC'}.</p>}
+                          {!d.done && <p className="text-xs text-slate-500">Each flight is put on the job flown that day, and matched to an aircraft by the radio model in the file name, then the battery. Check the matches and the times, then add them.</p>}
+                          {!d.done && <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-bulk-clock={d.clock}>
+                            <span className="text-slate-600 font-semibold">Radio clock:</span>
+                            {[['utc', 'UTC'], ['local', 'Local time']].map(([v, l]) => <button key={v} type="button" data-bulk-clock-set={v} onClick={() => setBulkClock(v)} className={`px-2 py-0.5 rounded-full border ${d.clock === v ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300 text-slate-700'}`}>{l}</button>)}
+                            <span className="text-slate-500">Times look {d.clock === 'local' ? '' : 'about 10 hours '}off? Switch it.</span></div>}
                         </div>
                         <button onClick={() => setBulkLogs(null)} className="text-slate-400 hover:text-slate-700 text-lg px-2" title="Close"><i className="fa-solid fa-xmark"></i></button>
                       </div>
@@ -11540,7 +11555,7 @@ View in the Database & Settings tab.`);
                                   <div><div className="font-mono font-semibold text-slate-800">{fmtT(it.t.startMs)} · {fmtMmSs(it.t.durationSec)}</div>
                                     <div className="text-[10px] text-slate-400 truncate" title={it.file}>{it.file}{lc ? ' · ' + lc + 'S' : ''}{it.t.maxAltM != null ? ' · ' + Math.round(it.t.maxAltM * 3.28084) + ' ft' : ''}</div></div>
                                   <div className="col-span-2 sm:col-span-1">
-                                    <select data-bulk-job={it.key} value={it.job} onChange={e => { const jj = d.jobs.find(x => x.key === e.target.value); const g2 = guessAircraft(it.t, it.file, db.fleet, jj ? jj.rpas : []); setItem(it.key, { job: e.target.value, g: g2, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g2.rpa || it.rpa) }); }}
+                                    <select data-bulk-job={it.key} value={it.job} onChange={e => { const jj = d.jobs.find(x => x.key === e.target.value); const g2 = guessAircraft(it.t, it.file, db.fleet, jj ? jj.rpas : []); setItem(it.key, { job: e.target.value, jobSet: true, g: g2, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g2.rpa || it.rpa) }); }}
                                       className={`w-full px-1.5 py-1 border rounded bg-white ${it.job ? 'border-slate-300' : 'border-amber-400'}`}>
                                       <option value="">Choose job… ({it.jobWhy})</option>
                                       {d.jobs.map(jj => <option key={jj.key} value={jj.key}>{jobLabel(jj)}</option>)}
@@ -11548,7 +11563,7 @@ View in the Database & Settings tab.`);
                                     {j && j.approved && <div className="text-[10px] text-emerald-700 mt-0.5">approved plan</div>}
                                   </div>
                                   <div className="col-span-2 sm:col-span-1">
-                                    <select data-bulk-rpa={it.key} value={it.rpa} onChange={e => setItem(it.key, { rpa: e.target.value })} className={`w-full px-1.5 py-1 border rounded bg-white ${it.rpa ? 'border-slate-300' : 'border-amber-400'}`}>
+                                    <select data-bulk-rpa={it.key} value={it.rpa} onChange={e => setItem(it.key, { rpa: e.target.value, rpaSet: true })} className={`w-full px-1.5 py-1 border rounded bg-white ${it.rpa ? 'border-slate-300' : 'border-amber-400'}`}>
                                       <option value="">Choose aircraft… ({it.g.why})</option>
                                       {fleetNames.map(r => <option key={r} value={r}>{r}{((db.fleet[r] || {}).cells && (db.fleet[r] || {}).cells !== 'none') ? ' · ' + db.fleet[r].cells + 'S' : ''}{j && !j.rpas.includes(r) ? ' (not on job)' : ''}</option>)}
                                     </select>

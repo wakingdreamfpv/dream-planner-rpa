@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.42 — 19 Nov 2026 — Radio clock: fix flights read 10 hours out
+- **Fix: flights showing 10 hours late (e.g. 19 Nov 07:16 instead of 18 Nov 21:16).** Radio logs only hold the radio's clock time. The planner reads them as UTC unless told otherwise, so a radio set to Brisbane time came out 10 hours late, sometimes on the next day's job.
+  - **Home → Add flight logs:** the check screen now has a **Radio clock: UTC / Local time** switch. Switching moves every flight to the right time and re-matches it to the job flown that day. Jobs and aircraft you picked by hand stay. The choice is remembered.
+  - **Inside a job's flight log:** if flights were imported with the other clock setting, a **Move N to local** (or UTC) button appears next to Radio clock. It asks first and moves only those flights; length, heights, batteries and OONP stay the same.
+  - **Claude connector:** you can say which clock the radio was on when reading or adding logs. Claude can also move flights already saved with the wrong clock, and remove a flight put on the wrong job. Restart Claude to get this.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for the radio clock (11 checks), and the connector checks grew to 22; everything passes.
+
 ## v7.41 — 18 Nov 2026 — Add a stack of flight logs from Home; Claude connector (Mike only)
 - **Home → Add flight logs** (everyone, including the free planner and the beta): pick or drop a whole stack of radio logs (EdgeTX CSV).
   - Each flight is put on the job flown that day (by the job's dates), and matched to an aircraft by the radio model in the file name, then by battery cells. It works the same way as the log dump inside a job.
