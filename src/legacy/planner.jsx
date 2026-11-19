@@ -189,7 +189,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.42';
+        const APP_VERSION = '7.43';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -15894,7 +15894,7 @@ View in the Database & Settings tab.`);
                           ? <ManualAdmin />
                           : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
-                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · Google Forms import · audit packs · CSV / PDF</span>, (<Registers crpName={auth.name || ''} company={(db.companyProfile && db.companyProfile.name) || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
+                        {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · Google Forms import · audit packs · CSV / PDF</span>, (<Registers autoSign={(db.compliance || {}).crpAutoSignoff !== false} onAutoSign={(v) => updateDb('compliance', { ...(db.compliance || {}), crpAutoSignoff: v })} crpName={auth.name || ''} company={(db.companyProfile && db.companyProfile.name) || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
                         {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-enquiries', 'Enquiries', 'fa-inbox', <span>People who asked about the planner from the free version · mark contacted · CSV</span>, (<EnquiriesList />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-observers', 'EVLOS observer register', 'fa-binoculars', <span>Trained and assessed observers · status, due dates · training links · CSV</span>, (<ObserverRegister crpName={auth.name || ''} />))}
