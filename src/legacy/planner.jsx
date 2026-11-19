@@ -21,6 +21,7 @@ import { BetaDialog, BetaEndedDialog, FeedbackDialog, betaActiveNow, betaEnded, 
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
+import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
 
@@ -189,7 +190,7 @@ import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVi
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.43';
+        const APP_VERSION = '7.44';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -9713,6 +9714,10 @@ View in the Database & Settings tab.`);
           // "release" items must be done before the flight can be approved; "log" items complete the record after flying.
           // Sources: CASA Part 101 MOS 10.04 (operational release), 10.05 (operational log), 10.06 (remote pilot log),
           // and the operator's Flight Record form F.1 (ops manual).
+          // v7.44: a job flown under another operator's ReOC (kept in the setup, outside the signed plan): no crew currency checks
+          const otherReocOf = (uid) => (uid && (db.otherReocJobs || {})[uid]) || null;
+          const otherReocHere = otherReocOf(overview.uid);
+          const setOtherReoc = (v) => { const m = { ...(db.otherReocJobs || {}) }; if (v) m[overview.uid] = v; else delete m[overview.uid]; updateDb('otherReocJobs', m); };
           const reqItems = (() => {
             const t = (v) => String(v == null ? '' : v).trim();
             const ops = jsa.operationTypes || [];
@@ -9750,7 +9755,7 @@ View in the Database & Settings tab.`);
               I('log', 'crewRP', 'Remote pilot who flew', t(log.crewRP), 'CASA MOS 10.06 (remote pilot log)', 'log'),
               I('log', 'flights', 'Each flight with its length and height AGL', flown.length && withHeight.length === flown.length, '__M5__ and 10.06: each flight segment, its height AGL, and its length', 'log'),
               // v7.11 (Chunk 8): everyone on the job must be current for this job's operation and aircraft (CRP can override with a reason)
-              ...((signedIn && auth.role === 'crp' && currency && !currency.error) ? checkJobCrew({ overview, jsa, approval, log }, currency).map(c => ({ ...I('approval', c.id, c.name + ' (' + (c.role === 'rpic' ? 'RPIC' : c.role) + '): ' + c.label + ' — ' + (CUR_STATUS[c.status] || (c.status === 'hours' ? 'not enough hours on type' : c.status)), crewItemOk(c), 'Ops manual: crew currency (12 months, or 24 months with 3 flights in each 12-month period)'), crpOnly: true, crew: c })) : []),
+              ...((signedIn && auth.role === 'crp' && currency && !currency.error && !otherReocHere) ? checkJobCrew({ overview, jsa, approval, log }, currency).map(c => ({ ...I('approval', c.id, c.name + ' (' + (c.role === 'rpic' ? 'RPIC' : c.role) + '): ' + c.label + ' — ' + (CUR_STATUS[c.status] || (c.status === 'hours' ? 'not enough hours on type' : c.status)), crewItemOk(c), 'Ops manual: crew currency (12 months, or 24 months with 3 flights in each 12-month period)'), crpOnly: true, crew: c })) : []),
             ].map(x => ({ ...x, why: x.why.replace(/__M4__/g, '__MOS4__').replace(/__M5__/g, '__MOS5__').replace('__MOS4__', '__MOS4__') }))
               // v7.5.5: an item the RPIC has declared not needed (with a reason) counts as recorded, and is flagged
               .map(x => { const o = (approval.reqOverrides || {})[x.id]; return !x.ok && o && String(o.reason || '').trim() ? { ...x, ok: true, overridden: o } : x; });
@@ -10214,7 +10219,7 @@ View in the Database & Settings tab.`);
                     if (best && (rank[best.s] > rank[st] || (rank[best.s] === rank[st] && whenOf(best.x, best.s) >= whenOf(p, st)))) return; // this device's copy is as new
                     const fresh = keepLocalBits(p, best && best.x);
                     if (best && best.k === listKey) next[listKey] = next[listKey].map(x => uidOf(x) === uid ? fresh : x);
-                    else next[listKey] = [fresh, ...next[listKey]];
+                    else { next[listKey] = [fresh, ...next[listKey]]; if (best) next[best.k] = next[best.k].filter(x => uidOf(x) !== uid); } // v7.44: a draft that became approved isn't left behind as a draft
                     if (best) updated++; else added++;
                     syncedNow[uid] = st + '|' + (whenOf(fresh, st) || '') + '|' + JSON.stringify(planCrew(fresh)); // came from the account: nothing to send back
                   });
@@ -10727,8 +10732,44 @@ View in the Database & Settings tab.`);
             if (isCrpCloud) aw.push(...cloudAwaiting());
             if (awaitingInd > 0) aw.push({ icon: 'fa-id-card', color: 'text-violet-600', label: `${awaitingInd} pilot induction${awaitingInd === 1 ? '' : 's'} to review`, sub: 'Check, sign and certify', cta: 'Review', act: () => window.dispatchEvent(new Event('wd-open-account')) });
             if (curStarted && curMissing > 0) aw.push({ icon: 'fa-asterisk', color: 'text-rose-500', label: `${curMissing} mandatory item${curMissing === 1 ? '' : 's'} left on “${cur.name}”`, cta: 'Fix', act: () => setActiveTab('preliminary') });
+            drafts.forEach(x => { const u = x.plan ? uidOf(x.plan) : (x.cloudJob && x.cloudJob.plan_uid); x.otherReoc = !!otherReocOf(u); });
             drafts.forEach(x => { if (x.approved && x.rpName && !x.rpSigned) aw.push({ icon: 'fa-signature', color: 'text-sky-600', label: `RPIC signature pending: ${x.name}`, sub: x.rpName, act: () => openDashJob(x) }); });
-            drafts.forEach(x => { if (x.date && x.date < todayIso) aw.push({ icon: 'fa-clipboard-list', color: 'text-amber-500', label: `Flown? Log and complete: ${x.name}`, sub: fmtDate(x.date), cta: 'Log', act: () => { openDashJob(x); setTimeout(() => setActiveTab('log'), 300); } }); });
+            drafts.forEach(x => { if (x.date && x.date < todayIso && !x.otherReoc) aw.push({ icon: 'fa-clipboard-list', color: 'text-amber-500', label: `Flown? Log and complete: ${x.name}`, sub: fmtDate(x.date), cta: 'Log', act: () => { openDashJob(x); setTimeout(() => setActiveTab('log'), 300); } }); });
+            // v7.44: compliance to-do (CRP): everything that's missing, expired or not closed out, in one list. Items can be ignored.
+            const todo = [];
+            if (!isFree && !isCrewRole) {
+              const dis = db.todoDismissed || {};
+              const T = (id, group, label, sub, sev, act, cta) => todo.push({ id, group, label, sub, sev, act, cta, ignored: !!dis[id] });
+              const toDb = (sec) => () => { setActiveTab('database'); setTimeout(() => jumpToDbSection(sec), 350); };
+              ((db.compliance || {}).expiries || COMPLIANCE_DEFAULT_EXPIRIES).forEach(e => { const st = cExpiryStatus(e);
+                if (!st.d) T('exp:' + e.id + ':nodate', 'Company', 'No date recorded: ' + e.label, 'Add it in the compliance calendar', 'amber', () => setActiveTab('compliance'), 'Add');
+                else if (st.days < 0) T('exp:' + e.id + ':' + e.date, 'Company', e.label + ' has expired', fmtDate(e.date), 'red', () => setActiveTab('compliance'), 'Open');
+                else if (st.days <= (Number(e.leadDays) || 30)) T('exp:' + e.id + ':' + e.date + ':soon', 'Company', e.label + ' due in ' + st.days + ' day' + (st.days === 1 ? '' : 's'), fmtDate(e.date), 'amber', () => setActiveTab('compliance'), 'Open'); });
+              Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && !f.suggested).forEach(([name, f]) => {
+                const go = toDb('dbsec-fleet');
+                if (!f.registrationNo) T('fleet:' + name + ':norego', 'Aircraft', name + ': no CASA registration', 'Add it on the fleet card, or ignore if it doesn\'t need one', 'amber', go, 'Fleet');
+                else if (f.registrationExpiry) { const dd = cDiff(cParse(f.registrationExpiry), today);
+                  if (dd < 0) T('fleet:' + name + ':rego:' + f.registrationExpiry, 'Aircraft', name + ': CASA registration expired', fmtDate(f.registrationExpiry), 'red', go, 'Fleet');
+                  else if (dd <= 30) T('fleet:' + name + ':rego:' + f.registrationExpiry + ':soon', 'Aircraft', name + ': CASA registration due in ' + dd + ' day' + (dd === 1 ? '' : 's'), fmtDate(f.registrationExpiry), 'amber', go, 'Fleet'); }
+                if (!parseFloat(f.weight)) T('fleet:' + name + ':noweight', 'Aircraft', name + ': no weight', 'Needed for the risk and ballistic numbers', 'amber', go, 'Fleet');
+                if (!((db.rpaBatteries || {})[name] || []).length) T('fleet:' + name + ':nopacks', 'Aircraft', name + ': no battery packs', 'Add its packs so flights can record which one was used', 'amber', toDb('dbsec-batteries'), 'Packs');
+                if (f.maintenanceDue && cDiff(cParse(f.maintenanceDue), today) < 0) T('fleet:' + name + ':maint:' + f.maintenanceDue, 'Aircraft', name + ': maintenance overdue', fmtDate(f.maintenanceDue), 'red', toDb('dbsec-maintenance'), 'Log');
+              });
+              if (currency && !currency.error && Array.isArray(currency.people)) {
+                (currency.people || []).filter(p => p && p.active !== false && p.role === 'pilot').forEach(p => {
+                  const rows = (currency.rows || []).filter(r => r.person_id === p.id), go = toDb('dbsec-registers');
+                  if (!rows.length) T('crew:' + p.id + ':none', 'Crew', p.full_name + ': no sign-offs on record', 'Record their checks in Registers & currency', 'red', go, 'Registers');
+                  else { const ex = rows.filter(r => r.status === 'expired'); if (ex.length) T('crew:' + p.id + ':expired:' + ex.map(r => r.competency + r.due).join(','), 'Crew', p.full_name + ': ' + ex.length + ' sign-off' + (ex.length === 1 ? '' : 's') + ' expired', ex.map(r => curCompLabel(r.competency)).join(', '), 'red', go, 'Registers'); }
+                  if (p.arn === null || p.arn === '') T('crew:' + p.id + ':noarn', 'Crew', p.full_name + ': no ARN on record', 'Add it in Crew & users', 'amber', toDb('dbsec-crew-users'), 'Crew');
+                });
+              }
+              drafts.filter(x => !x.otherReoc).forEach(x => {
+                if (x.approved && x.date && x.date < todayIso) T('job:' + x.key + ':close', 'Jobs', 'Close out: ' + x.name, 'Flown ' + fmtDate(x.date) + ': post-flight and mark it complete', 'amber', () => { openDashJob(x); setTimeout(() => setActiveTab('log'), 120); }, 'Log');
+                const fl = x.plan ? Object.values(((x.plan.log || {}).rpaLogs) || {}).flatMap(r => (r && r.flights) || []) : [];
+                const nb = fl.filter(f => f && !String(f.batteries || '').trim()).length;
+                if (nb) T('job:' + x.key + ':nobatt:' + nb, 'Jobs', nb + ' flight' + (nb === 1 ? '' : 's') + ' with no battery: ' + x.name, 'Pick the pack used for each flight in the flight log', 'amber', () => { openDashJob(x); setTimeout(() => setActiveTab('log'), 120); }, 'Log');
+              });
+            }
             // batteries and monthly activity
             const batteries = Object.entries(all.bat).map(([name, x]) => ({ name, ...x })).sort((x, y) => y.flights - x.flights);
             const monthly = []; for (let k = 5; k >= 0; k--) { const d0 = new Date(today.getFullYear(), today.getMonth() - k, 1); const key = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0');
@@ -10743,7 +10784,7 @@ View in the Database & Settings tab.`);
               company: isFree ? ((overview.operatorProfile || {}).name || '') : isCrewRole ? (((crewCloud || {}).company || {}).name || '') : ((db.companyProfile || {}).name || ''),
               current: { started: curStarted, name: String(overview.operationName || '').trim() },
               jobLoc: jl ? { ...jl, label: (String(overview.operationName || '').trim() || 'Current job') + ' site' } : null,
-              nextJob: upcoming[0] || null, drafts, completed, pilots, fleet: fleetRows, compliance: comp, awaiting: aw, batteries, monthly,
+              nextJob: upcoming[0] || null, drafts, completed, todo, pilots, fleet: fleetRows, compliance: comp, awaiting: aw, batteries, monthly,
               setup: { items: setupItems, done: setupItems.filter(i => i.done).length, total: setupItems.length },
               fleetLimits: fleetRows.map(f => /mini|air ?3|mavic/i.test(f.name) ? { name: f.name, wind: 38, gust: 45 } : /whoop|avata|fpv|pavo|cine/i.test(f.name) ? { name: f.name, wind: 25, gust: 32 } : { name: f.name, wind: 30, gust: 38 }),
             };
@@ -10758,6 +10799,7 @@ View in the Database & Settings tab.`);
             newJob: () => { if (isFree) handleResetForm(); else { if (!dirty || window.confirm('Start a new operation? Unsaved changes to the open job will be lost.')) handleResetFormQuiet(); } },
             continueJob: () => setActiveTab('preliminary'),
             goTab: (t) => setActiveTab(t),
+            todoIgnore: (id, on) => { const m = { ...(db.todoDismissed || {}) }; if (on) m[id] = new Date().toISOString(); else delete m[id]; updateDb('todoDismissed', m); },
             exportBackup: () => handleExportDb(),
             openPlanFile: () => planFileRef.current && planFileRef.current.click(),
             openJob: openDashJob,
@@ -14521,7 +14563,14 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation<CommentChip sec="approval" /></h2>
                       </div>
-                      {isCrpCloud && (() => {
+                      {!isFree && !isCrewRole && overview.uid && <div className={`mx-4 sm:mx-6 mt-4 rounded-xl border px-4 py-2 text-sm print:hidden ${otherReocHere ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`} data-allow-locked="1" data-other-reoc={otherReocHere ? '1' : '0'}>
+                        <label className="flex items-center gap-2 font-semibold text-slate-800"><input type="checkbox" data-other-reoc-toggle="1" checked={!!otherReocHere}
+                          onChange={(e) => setOtherReoc(e.target.checked ? { operator: '', at: new Date().toISOString() } : null)} />Flown under another operator's ReOC (not ours)</label>
+                        {otherReocHere && <div className="mt-1.5 space-y-1"><input data-other-reoc-operator="1" className="w-full px-2 py-1 border border-amber-300 rounded-md text-sm bg-white" placeholder="Whose ReOC (operator / ReOC number)"
+                          value={otherReocHere.operator || ''} onChange={(e) => setOtherReoc({ ...otherReocHere, operator: e.target.value })} />
+                          <p className="text-xs text-amber-900">Our crew currency checks and to-do items are skipped for this job, and it's marked “Other ReOC” on Home. Records for it belong with that operator.</p></div>}
+                      </div>}
+                      {isCrpCloud && !otherReocHere && (() => {
                         const items = reqItems.filter(x => x.crew);
                         if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
                         if (currency.error) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 print:hidden" data-crew-currency="error">Crew currency couldn't load ({currency.error}). Run the latest Supabase migration (0008).</div>;
@@ -15894,6 +15943,8 @@ View in the Database & Settings tab.`);
                           ? <ManualAdmin />
                           : <div className="text-sm space-y-2"><p className="text-slate-600">The company's Operations Manual, read-only. It's watermarked with your name and your reading is logged for the CRP.</p>
                               <button type="button" data-crew-manual="1" onClick={() => setManualOpen(true)} className="px-3 py-2 rounded-lg bg-violet-600 text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Read the Operations Manual</button></div>))}
+                        {!isFree && dbFold('dbsec-maintenance', 'Maintenance log', 'fa-screwdriver-wrench', <span>{(db.maintenanceLog || []).length} entries · firmware, repairs, inspections · Technical Log</span>,
+                          (<Maintenance log={db.maintenanceLog || []} fleet={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} by={auth.name || (db.companyProfile || {}).crpName || ''} onAdd={(e) => updateDb('maintenanceLog', [...(db.maintenanceLog || []), e])} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-registers', 'Registers & currency', 'fa-id-badge', <span>Induction, type, EVLOS, OONP, night and observers · 12 / 24-month currency · record a check · Google Forms import · audit packs · CSV / PDF</span>, (<Registers autoSign={(db.compliance || {}).crpAutoSignoff !== false} onAutoSign={(v) => updateDb('compliance', { ...(db.compliance || {}), crpAutoSignoff: v })} crpName={auth.name || ''} company={(db.companyProfile && db.companyProfile.name) || ''} fleetTypes={Object.keys(db.fleet || {}).filter(k => !(db.fleet[k] || {}).sample)} />))}
                         {IS_HOSTED && signedIn && auth.role && dbFold('dbsec-notifications', 'Email notifications', 'fa-envelope', <span>Weekly or fortnightly compliance digest · expiry alerts · which emails you get</span>, (<NotificationSettings userId={auth.userId} role={auth.role} />))}
                         {IS_HOSTED && signedIn && auth.role === 'crp' && dbFold('dbsec-enquiries', 'Enquiries', 'fa-inbox', <span>People who asked about the planner from the free version · mark contacted · CSV</span>, (<EnquiriesList />))}

@@ -238,6 +238,38 @@ export function makeTools(sb, opts = {}) {
         return { saved: Object.keys(c), job: `${row.op_id || ''} ${plan.title || row.title}` };
       },
     },
+    // v7.44: maintenance log (Technical Log), kept in the company setup. Entries are only added; a correction is a new entry.
+    list_maintenance: {
+      description: 'List the maintenance log (Technical Log): date, kind, aircraft, other equipment, what was done, result, who did it. Optional "aircraft" filter.',
+      schema: { type: 'object', properties: { aircraft: { type: 'string' } } },
+      run: async ({ aircraft } = {}) => {
+        const { data: st, error } = await sb.from('crp_store').select('data').eq('key', 'settings').maybeSingle(); if (error) throw err('Could not read the setup: ' + error.message);
+        const log = (((st && st.data) || {}).maintenanceLog || []).filter(e => !aircraft || (e.aircraft || []).includes(aircraft)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+        return { entries: log };
+      },
+    },
+    add_maintenance: {
+      description: 'Add a maintenance log entry: date YYYY-MM-DD (not in the future), kind maintenance | firmware | repair | inspection | test | other, aircraft (fleet names), equipment (e.g. goggles, radio, batteries, control system), work (what was done), result pass | fail | note, by (who did it), corrects (id of an earlier entry this one corrects, optional).',
+      schema: { type: 'object', properties: { date: { type: 'string' }, kind: { type: 'string' }, aircraft: { type: 'array', items: { type: 'string' } }, equipment: { type: 'array', items: { type: 'string' } }, work: { type: 'string' }, result: { type: 'string' }, by: { type: 'string' }, corrects: { type: 'string' } }, required: ['date', 'work'] },
+      run: async (a = {}) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || ''))) throw err('date must be YYYY-MM-DD.');
+        const t = new Date(), today = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+        if (a.date > today) throw err('The date can\'t be in the future.');
+        const kind = a.kind || 'maintenance', result = a.result || 'pass';
+        if (!['maintenance', 'firmware', 'repair', 'inspection', 'test', 'other'].includes(kind)) throw err('kind must be maintenance, firmware, repair, inspection, test or other.');
+        if (!['pass', 'fail', 'note'].includes(result)) throw err('result must be pass, fail or note.');
+        if (!String(a.work || '').trim()) throw err('Say what was done (work).');
+        const { data: st, error } = await sb.from('crp_store').select('data').eq('key', 'settings').maybeSingle(); if (error || !st) throw err('Could not read the setup' + (error ? ': ' + error.message : '.'));
+        const d = JSON.parse(JSON.stringify(st.data || {})); const fleet = Object.keys(d.fleet || {});
+        const ac = (a.aircraft || []).map(String); const bad = ac.filter(x => !fleet.includes(x)); if (bad.length) throw err('Not in the fleet: ' + bad.join(', ') + '. Use the exact names: ' + fleet.join(', '));
+        const eq = (a.equipment || []).map(x => String(x).trim()).filter(Boolean); if (!ac.length && !eq.length) throw err('Say which aircraft or equipment.');
+        const log = d.maintenanceLog || []; if (a.corrects && !log.some(e => e.id === a.corrects)) throw err('No earlier entry with id ' + a.corrects + '.');
+        const e = { id: 'mnt-' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex'), date: a.date, kind, aircraft: ac, equipment: eq, work: String(a.work).trim(), result, by: String(a.by || '').trim(), createdAt: new Date().toISOString(), ...(a.corrects ? { corrects: a.corrects } : {}) };
+        d.maintenanceLog = [...log, e];
+        const { error: e2 } = await sb.from('crp_store').upsert({ key: 'settings', data: d, hash: 'connector-' + Date.now(), device: 'Claude connector', updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (e2) throw err('Not saved: ' + e2.message); return { added: e, note: 'Saved to the company setup. Each device merges it in when it next loads the setup.' };
+      },
+    },
     // v7.43: crew records (people + certifications). Checks are only ever added (a correction is a newer check), never edited.
     list_crew: {
       description: 'List the crew (pilots, observers, CRP) with their ARN, RePL number, contact details and each certification\'s status (current / due soon / expired), due date and assessor.',

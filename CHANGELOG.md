@@ -1,5 +1,19 @@
 # Planner changelog
 
+## v7.44 — 19 Nov 2026 — Compliance to-do on Home, maintenance log, jobs under another ReOC
+- **Home → Compliance to-do** (CRP). One list of everything still to sort out, grouped by Company, Aircraft, Crew and Jobs:
+  - company dates missing, due or expired (ReOC, insurance, OONP and other approvals);
+  - aircraft with no CASA registration, an expired or nearly due registration, no weight, no battery packs, or overdue maintenance;
+  - pilots with no sign-offs, expired sign-offs, or no ARN;
+  - approved jobs that were flown but not closed out, and flights with no battery recorded.
+  - Each item has a button that takes you to the right place. **Ignore** hides an item on every device (for example an aircraft that doesn't need a registration). Ignored items can be shown and restored.
+- **Database & Settings → Maintenance log** (your Technical Log). Add an entry with the date, kind (maintenance, firmware, repair, inspection, test flight), the aircraft and other equipment (goggles, radio, batteries, control system…), what was done, the result and who did it. Entries are never edited or removed; to fix one, add an entry that corrects it. It syncs to every CRP device with the setup.
+- **A job flown under another operator's ReOC.** On a job's Authorisation tab, tick "Flown under another operator's ReOC" and say whose. Our crew currency checks and to-do items are then skipped for that job, and it shows "Other ReOC" on Home. The tick is kept outside the signed plan, so it doesn't affect any signatures.
+- **Fix:** when a job was approved on another device, this device could keep an old draft copy as well. It now moves the job across.
+- **Claude connector:** Claude can read and add maintenance log entries. Restart Claude to get this.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for the to-do, maintenance log and other-ReOC jobs (19 checks); the connector crew checks grew to 20. Everything passes.
+
 ## v7.43 — 19 Nov 2026 — The CRP is signed off by default; Claude can keep crew records
 - **The CRP is signed off on every aircraft and approval automatically.** When the CRP signs in, any missing sign-off for the CRP (induction, EVLOS, OONP, night, and a type sign-off for each aircraft in the fleet) is recorded as an ordinary check dated that day. A new aircraft gets one as soon as the setup is saved. Checks already on record are never changed. This stops plans flagging the CRP as "Not certified".
   - **To change it:** Database & Settings → Registers & currency has a switch, **Sign me (the CRP) off automatically**. Turning it off stops new automatic sign-offs and leaves the ones already recorded. Any sign-off can be re-recorded there with a different date or assessor ("Record a check").

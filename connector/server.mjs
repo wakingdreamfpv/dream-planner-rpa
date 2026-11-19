@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { client } from './session.mjs';
 import { makeTools } from './tools.mjs';
-const VERSION = '7.43';
+const VERSION = '7.44';
 const sb = client();
 let tools = null;
 const ready = (async () => {
@@ -23,7 +23,7 @@ rl.on('line', async (line) => {
   try {
     if (method === 'initialize') return reply(id, { protocolVersion: (params && params.protocolVersion) || '2025-06-18', capabilities: { tools: {} },
       serverInfo: { name: 'dream-planner', version: VERSION },
-      instructions: 'Tools for the Dream Planner RPA account of the signed-in CRP: list and read jobs, read the company setup, read EdgeTX flight-log CSVs from this Mac (say which radio clock: Mike\'s radio is on local Brisbane time from November 2026, UTC before), add flights to a job\'s log, fill in batteries / OONP / crew log, create or edit DRAFT jobs, and keep crew records (list, add and update crew; record checks, which are only ever added). Approved plans are never re-planned here. Before saving, tell the user what you will change.' });
+      instructions: 'Tools for the Dream Planner RPA account of the signed-in CRP: list and read jobs, read the company setup, read EdgeTX flight-log CSVs from this Mac (say which radio clock: Mike\'s radio is on local Brisbane time from November 2026, UTC before), add flights to a job\'s log, fill in batteries / OONP / crew log, create or edit DRAFT jobs, and keep crew records (list, add and update crew; record checks, which are only ever added), and keep the maintenance log. Approved plans are never re-planned here. Before saving, tell the user what you will change.' });
     if (method === 'notifications/initialized' || (method && method.startsWith('notifications/'))) return;
     if (method === 'ping') return reply(id, {});
     await ready;
