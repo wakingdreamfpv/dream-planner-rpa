@@ -23,6 +23,26 @@ export function makeTools(sb, opts = {}) {
   const clockOf = (c) => c === 'local' || c === 'utc' ? c : defClock;
   const err = (m) => { const e = new Error(m); e.user = true; return e; };
 
+  const CREW_COLS = 'full_name,role,email,phone,address,arn,repl_no,nok_name,nok_relationship,nok_phone,total_hours,medical_expiry,training_expiry,notes';
+  const crewFields = (a, isNew) => { const o = {};
+    const ok = ['full_name', 'role', 'email', 'phone', 'address', 'arn', 'repl_no', 'nok_name', 'nok_relationship', 'nok_phone', 'total_hours', 'medical_expiry', 'training_expiry', 'notes', 'active'];
+    const bad = Object.keys(a).filter(k => !ok.includes(k)); if (bad.length) throw err('Can\'t set ' + bad.join(', ') + ' here. Allowed: ' + ok.join(', '));
+    for (const k of ok) { if (!(k in a)) continue; let v = a[k];
+      if (k === 'role') { if (!['pilot', 'observer'].includes(v)) throw err('role must be pilot or observer.'); }
+      else if (k === 'active') v = v !== false && v !== 'false';
+      else if (k === 'total_hours') { v = v === '' || v == null ? null : Number(v); if (v != null && !(v >= 0)) throw err('total_hours must be a number.'); }
+      else if (/_expiry$/.test(k)) { v = v ? String(v) : null; if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw err(k + ' must be YYYY-MM-DD.'); }
+      else { v = String(v == null ? '' : v).trim(); if (k === 'email') v = v.toLowerCase(); if (v === '') v = null; }
+      if (k === 'full_name' && !v) throw err('full_name can\'t be blank.');
+      o[k] = v; }
+    return o; };
+  const findPerson = async (q) => { const s = String(q || '').trim().toLowerCase(); if (!s) throw err('Say who (name, email or id).');
+    const { data, error } = await sb.from('people').select('id,full_name,email,role'); if (error) throw err('Could not read the crew: ' + error.message);
+    let hit = (data || []).filter(p => p.id === s || String(p.email || '') === s || String(p.full_name || '').trim().toLowerCase() === s);
+    if (!hit.length) hit = (data || []).filter(p => String(p.full_name || '').toLowerCase().includes(s));
+    if (!hit.length) throw err('No one in the crew list matches "' + q + '".');
+    if (hit.length > 1) throw err('Several people match "' + q + '": ' + hit.map(p => p.full_name).join(', ') + '.'); return hit[0]; };
+
   const listRows = async () => {
     const { data, error } = await sb.from('jobs').select('id,plan_uid,op_id,title,status,start_date,end_date,updated_at').order('start_date', { ascending: false });
     if (error) throw err('Could not read jobs: ' + error.message); return data || [];
@@ -216,6 +236,55 @@ export function makeTools(sb, opts = {}) {
         const plan = deepMerge(row.plan || {}, c); if (c.overview && c.overview.operationName) plan.title = c.overview.operationName;
         plan.savedAt = new Date().toISOString(); await saveJob(row, plan, 'draft');
         return { saved: Object.keys(c), job: `${row.op_id || ''} ${plan.title || row.title}` };
+      },
+    },
+    // v7.43: crew records (people + certifications). Checks are only ever added (a correction is a newer check), never edited.
+    list_crew: {
+      description: 'List the crew (pilots, observers, CRP) with their ARN, RePL number, contact details and each certification\'s status (current / due soon / expired), due date and assessor.',
+      schema: { type: 'object', properties: { include_inactive: { type: 'boolean' } } },
+      run: async ({ include_inactive } = {}) => {
+        const [{ data: ppl, error }, { data: cur }] = await Promise.all([sb.from('people').select(CREW_COLS + ',id,user_id,active').order('full_name'), sb.rpc('crew_currency')]);
+        if (error) throw err('Could not read the crew: ' + error.message);
+        return { crew: (ppl || []).filter(p => include_inactive || p.active !== false).map(p => ({ ...Object.fromEntries(Object.entries(p).filter(([k, v]) => v != null && k !== 'user_id')), has_login: !!p.user_id,
+          certifications: (cur || []).filter(r => r.person_id === p.id).map(r => ({ competency: r.competency, checked: r.check_date, due: r.due, status: r.status, assessor: r.assessor || '', extended_by_flights: !!r.extended })) })) };
+      },
+    },
+    add_crew_member: {
+      description: 'Add a pilot or observer to the crew list (no login is created; invite them from the planner). Fields: full_name (required), role pilot|observer, email, phone, address, arn, repl_no, nok_name, nok_relationship, nok_phone, total_hours, medical_expiry, training_expiry (YYYY-MM-DD), notes.',
+      schema: { type: 'object', properties: { full_name: { type: 'string' }, role: { type: 'string', enum: ['pilot', 'observer'] } }, required: ['full_name'] },
+      run: async (a = {}) => {
+        const name = String(a.full_name || '').trim(); if (name.length < 2) throw err('Give their full name.');
+        const { data: ppl } = await sb.from('people').select('id,full_name,email');
+        if ((ppl || []).some(p => String(p.full_name).trim().toLowerCase() === name.toLowerCase())) throw err(name + ' is already in the crew list. Use update_crew_member.');
+        const row = crewFields({ ...a, role: a.role || 'pilot' }, true); row.full_name = name;
+        if (row.email && (ppl || []).some(p => p.email === row.email)) throw err('Someone in the crew list already has ' + row.email + '.');
+        const { data, error } = await sb.from('people').insert(row).select('id,full_name,role').single();
+        if (error) throw err('Not saved: ' + error.message); return { added: data };
+      },
+    },
+    update_crew_member: {
+      description: 'Change a crew member\'s details: give "person" (name, email or id) and "changes" with any of: full_name, role (pilot|observer), email, phone, address, arn, repl_no, nok_name, nok_relationship, nok_phone, total_hours, medical_expiry, training_expiry, notes, active. Blank a field with "".',
+      schema: { type: 'object', properties: { person: { type: 'string' }, changes: { type: 'object' } }, required: ['person', 'changes'] },
+      run: async ({ person, changes }) => {
+        const p = await findPerson(person);
+        if (changes && changes.role && p.role === 'crp') throw err('The CRP\'s role can\'t be changed here.');
+        const row = crewFields(changes || {}, false); if (!Object.keys(row).length) throw err('Nothing to change.');
+        row.updated_at = new Date().toISOString();
+        const { error } = await sb.from('people').update(row).eq('id', p.id); if (error) throw err('Not saved: ' + error.message);
+        return { person: p.full_name, saved: Object.keys(row).filter(k => k !== 'updated_at') };
+      },
+    },
+    add_certification: {
+      description: 'Record a check (sign-off) for a crew member, the same as "Record a check" in Registers & currency: competency induction | evlos | oonp | night | type:<fleet aircraft name>, check_date YYYY-MM-DD (not in the future), assessor. Due 12 months later, or up to 24 months while they keep flying. Adds a new record; earlier ones are kept.',
+      schema: { type: 'object', properties: { person: { type: 'string' }, competency: { type: 'string' }, check_date: { type: 'string' }, assessor: { type: 'string' } }, required: ['person', 'competency', 'check_date'] },
+      run: async ({ person, competency, check_date, assessor }) => {
+        const p = await findPerson(person); const c = String(competency || '').trim();
+        if (!['induction', 'evlos', 'oonp', 'night'].includes(c) && !/^type:.+/.test(c)) throw err('competency must be induction, evlos, oonp, night or type:<aircraft name>.');
+        if (c.startsWith('type:')) { const { data: st } = await sb.from('crp_store').select('data').eq('key', 'settings').maybeSingle(); const fleet = Object.keys(((st && st.data) || {}).fleet || {});
+          if (fleet.length && !fleet.includes(c.slice(5))) throw err('"' + c.slice(5) + '" isn\'t in the fleet. Use the exact name: ' + fleet.join(', ')); }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(check_date || ''))) throw err('check_date must be YYYY-MM-DD.');
+        const { data, error } = await sb.rpc('record_check', { p_person: p.id, p_competency: c, p_check_date: check_date, p_assessor: assessor || 'CRP' });
+        if (error) throw err('Not saved: ' + error.message); return { person: p.full_name, recorded: c, check_date, id: data };
       },
     },
   };

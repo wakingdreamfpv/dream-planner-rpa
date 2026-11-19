@@ -170,14 +170,36 @@ export function useCloudJobs(sb, me) {
     const loadCompany = async () => { try { const { data } = await sb.from('shared_data').select('data').eq('area', 'company').maybeSingle(); if (!dead) publish('wdCompanyShared', (data && data.data) || null, 'wd-company-shared'); } catch (e) {} };
     loadCompany();
     // v7.28: the CRP's whole company setup, saved to the account so every device the CRP signs in on gets it
+    // v7.43: the CRP is signed off on every aircraft in the fleet and every approval (induction, EVLOS, OONP, night) by
+    // default. Missing ones are recorded as ordinary checks (dated today), so they can be re-recorded in the registers;
+    // switch it off in Registers & currency. Existing checks are never changed.
+    let autoBusy = false;
+    const autoSignCrp = async (data) => {
+      if (autoBusy || dead || !data || (data.compliance || {}).crpAutoSignoff === false) return;
+      autoBusy = true;
+      try {
+        const ppl = peopleRef.current.length ? peopleRef.current : await loadPeople();
+        const mine = ppl.find(p => p.user_id === me.id && p.role === 'crp' && p.active !== false); if (!mine) return;
+        const { data: have, error } = await sb.from('certifications').select('competency').eq('person_id', mine.id); if (error) return;
+        const got = new Set((have || []).map(r => r.competency));
+        const fleet = data.fleet || {};
+        const todo = ['induction', 'evlos', 'oonp', 'night', ...Object.keys(fleet).filter(k => k && k.trim() && !(fleet[k] || {}).sample).map(k => 'type:' + k)].filter(c => !got.has(c));
+        const day = new Date().toISOString().slice(0, 10), added = [];
+        for (const c of todo) { if (dead) break;
+          const { error: e2 } = await sb.rpc('record_check', { p_person: mine.id, p_competency: c, p_check_date: day, p_assessor: (mine.full_name || 'CRP') + ' (CRP, automatic sign-off)' });
+          if (!e2) added.push(c); }
+        if (added.length && !dead) { emit('wd-crp-auto-signed', { added }); window.dispatchEvent(new Event('wd-currency-refresh')); }
+      } catch (e) { /* offline: try again next time the setup loads */ } finally { autoBusy = false; }
+    };
     const loadSettings = async () => {
       try { const { data, error } = await sb.from('crp_store').select('data,hash,device,updated_at').eq('key', 'settings').maybeSingle();
         if (dead) return; if (error) throw error; publish('wdCrpSettings', data ? { ...data, at: Date.now() } : { none: true, at: Date.now() }, 'wd-crp-settings');
+        if (data) autoSignCrp(data.data);
       } catch (e) { if (!dead) publish('wdCrpSettings', { error: String((e && e.message) || e), at: Date.now() }, 'wd-crp-settings'); }
     };
     const onSaveSettings = async (e) => { const d = e.detail || {};
       try { const { error } = await sb.from('crp_store').upsert({ key: 'settings', data: d.data, hash: d.hash, device: d.device || '' }, { onConflict: 'key' }); if (error) throw error;
-        emit('wd-crp-settings-saved', { ok: true, hash: d.hash, data: d.data });
+        emit('wd-crp-settings-saved', { ok: true, hash: d.hash, data: d.data }); autoSignCrp(d.data);
       } catch (err) { emit('wd-crp-settings-saved', { ok: false, hash: d.hash, error: String((err && err.message) || err) }); } };
     const onVis = () => { if (document.visibilityState === 'visible') loadSettings(); };
     window.addEventListener('wd-crp-settings-save', onSaveSettings); window.addEventListener('wd-crp-settings-load', loadSettings); document.addEventListener('visibilitychange', onVis);

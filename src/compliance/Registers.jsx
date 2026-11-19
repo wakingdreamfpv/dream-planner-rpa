@@ -13,7 +13,7 @@ const iso = (d) => (d ? String(d).slice(0, 10) : '');
 const tone = (s) => s === 'current' ? 'bg-emerald-100 text-emerald-800' : s === 'due_soon' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800';
 const RECENCY = (c) => ['evlos', 'oonp', 'night'].includes(c) || String(c).startsWith('type:');
 
-export default function Registers({ fleetTypes = [], crpName = '', company = '' }) {
+export default function Registers({ fleetTypes = [], crpName = '', company = '', autoSign = true, onAutoSign = null }) {
   const sb = getSupabase();
   const [st, setSt] = useState({ loading: true, rows: [], people: [], hours: [] });
   const [tab, setTab] = useState('all');
@@ -84,6 +84,10 @@ export default function Registers({ fleetTypes = [], crpName = '', company = '' 
           <button type="button" data-cur-print="1" onClick={() => printRegisters(rows, { company, filter: [tab !== 'all' ? (TABS.find((t) => t[0] === tab) || [])[1] : '', issues ? 'only due / expired' : '', q.trim() ? 'search “' + q.trim() + '”' : ''].filter(Boolean).join(' · ') })} className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 bg-white"><i className="fa-solid fa-print mr-1"></i>Print / PDF</button>
         </div>
       </div>
+      {onAutoSign && <label className="flex items-start gap-2 text-xs text-slate-700 border border-slate-200 rounded-lg px-3 py-2" data-crp-auto="1">
+        <input type="checkbox" className="mt-0.5" checked={autoSign} data-crp-auto-toggle="1" onChange={(e) => onAutoSign(e.target.checked)} />
+        <span><b>Sign me (the CRP) off automatically</b> on every aircraft in the fleet and every approval (EVLOS, OONP, night). New aircraft get a sign-off when they're saved. Each one is an ordinary check you can re-record above; turning this off stops new ones and changes nothing already recorded.</span>
+      </label>}
       {imp && <RegisterImport fleetTypes={fleetTypes} onDone={load} onClose={() => setImp(false)} />}
       {msg && <p className="text-xs text-emerald-800" data-cur-msg="1">{msg}</p>}
       {rec && <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 grid sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end" data-cur-form="1">

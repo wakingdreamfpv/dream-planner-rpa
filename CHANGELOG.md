@@ -1,5 +1,12 @@
 # Planner changelog
 
+## v7.43 — 19 Nov 2026 — The CRP is signed off by default; Claude can keep crew records
+- **The CRP is signed off on every aircraft and approval automatically.** When the CRP signs in, any missing sign-off for the CRP (induction, EVLOS, OONP, night, and a type sign-off for each aircraft in the fleet) is recorded as an ordinary check dated that day. A new aircraft gets one as soon as the setup is saved. Checks already on record are never changed. This stops plans flagging the CRP as "Not certified".
+  - **To change it:** Database & Settings → Registers & currency has a switch, **Sign me (the CRP) off automatically**. Turning it off stops new automatic sign-offs and leaves the ones already recorded. Any sign-off can be re-recorded there with a different date or assessor ("Record a check").
+- **Claude connector: crew records.** Claude can list the crew with their sign-offs, add a pilot or observer, update details (ARN, RePL, phone, next of kin, medical and training expiry…), and record a check. Checks are only ever added, never edited or deleted. Nobody can be made a CRP from the connector, and no logins are created (invite people from the planner). Restart Claude to get this.
+- **Supabase:** nothing to do.
+- **Tests:** new suite for the automatic CRP sign-off (8 checks) and for the connector crew tools (14 checks); everything passes.
+
 ## v7.42 — 19 Nov 2026 — Radio clock: fix flights read 10 hours out
 - **Fix: flights showing 10 hours late (e.g. 19 Nov 07:16 instead of 18 Nov 21:16).** Radio logs only hold the radio's clock time. The planner reads them as UTC unless told otherwise, so a radio set to Brisbane time came out 10 hours late, sometimes on the next day's job.
   - **Home → Add flight logs:** the check screen now has a **Radio clock: UTC / Local time** switch. Switching moves every flight to the right time and re-matches it to the job flown that day. Jobs and aircraft you picked by hand stay. The choice is remembered.
