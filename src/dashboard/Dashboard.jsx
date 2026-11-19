@@ -17,6 +17,7 @@ export const WIDGETS = {
   completed:  { title: 'Recently completed jobs',  icon: 'fa-circle-check',        size: 'm' },
   pilots:     { title: 'Pilot flight hours',       icon: 'fa-user-astronaut',      size: 'm' },
   fleet:      { title: 'RPA fleet hours',          icon: 'fa-helicopter',          size: 'm' },
+  todo:       { title: 'Compliance to-do',         icon: 'fa-clipboard-check',     size: 'l' },
   compliance: { title: 'Upcoming compliance',      icon: 'fa-calendar-check',      size: 'm' },
   setup:      { title: 'Setup completion',         icon: 'fa-list-check',          size: 's' },
   links:      { title: 'Quick links',              icon: 'fa-link',                size: 's', free: true },
@@ -38,7 +39,7 @@ export const AREAS = [
   { id: 'records', label: 'Job records', sub: 'Completed jobs and flight totals' },
   { id: 'planning', label: 'Flight planning', sub: 'Draft plans for the CRP to review' },
 ];
-const ORDER = ['myjobs', 'myhours', 'access', 'shfleet', 'shbatt', 'shrecords', 'actions', 'nextjob', 'weather', 'gonogo', 'daylight', 'sunpath', 'kp', 'awaiting', 'drafts', 'completed', 'compliance', 'pilots', 'fleet', 'setup', 'links', 'battery', 'monthly', 'notes'];
+const ORDER = ['myjobs', 'myhours', 'access', 'shfleet', 'shbatt', 'shrecords', 'actions', 'todo', 'nextjob', 'weather', 'gonogo', 'daylight', 'sunpath', 'kp', 'awaiting', 'drafts', 'completed', 'compliance', 'pilots', 'fleet', 'setup', 'links', 'battery', 'monthly', 'notes'];
 const DEFAULT_LINKS = [
   { label: 'OK2FLY', url: 'https://www.ok2fly.com.au/' },
   { label: 'NAIPS', url: 'https://www.airservicesaustralia.com/naips/' },
@@ -53,7 +54,8 @@ const DEFAULTS = {
   draftsN: 5, completedN: 5, compDays: 60, links: DEFAULT_LINKS, notes: '',
 };
 const load = () => { try { const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); if (!s) return DEFAULTS;
-  const order = [...(s.order || []).filter(k => WIDGETS[k]), ...ORDER.filter(k => !(s.order || []).includes(k))];
+  const order = (s.order || []).filter(k => WIDGETS[k]);
+  ORDER.forEach((k, i) => { if (order.includes(k)) return; const prev = ORDER.slice(0, i).reverse().find(x => order.includes(x)); order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, k); });
   return { ...DEFAULTS, ...s, order, limits: { ...DEFAULTS.limits, ...(s.limits || {}) }, loc: { ...DEFAULTS.loc, ...(s.loc || {}) } }; } catch (e) { return DEFAULTS; } };
 
 const fmtHM = (sec) => { sec = Math.round(sec || 0); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`; };
@@ -363,6 +365,7 @@ function JobList({ list, n, a, kind }) {
     <div key={j.key} className="flex items-center gap-3 py-2" data-dash-job={kind}>
       <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800 truncate">{j.name}</div>
         <div className="text-xs text-slate-500 truncate">{kind === 'completed' ? [fmtD(j.date), j.flights + ' flight' + (j.flights === 1 ? '' : 's'), fmtHM(j.sec)].filter(Boolean).join(' · ') : [fmtD(j.date), j.client, 'saved ' + ago(Date.parse(j.savedAt))].filter(Boolean).join(' · ')}</div></div>
+      {j.otherReoc && <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900" data-other-reoc-badge="1" title="Flown under another operator's ReOC">Other ReOC</span>}
       {kind !== 'completed' && <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${j.approved ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>{j.approved ? 'Approved' : 'Draft'}</span>}
       <Btn onClick={() => a.openJob(j)}>Open</Btn>
     </div>
@@ -385,6 +388,33 @@ function Hours({ rows, kind, a }) {
       </div>
     </div>
   ))}</div>;
+}
+
+// v7.44: everything missing, expired or not closed out (CRP). "Ignore" hides an item on every device; ignored ones can be shown again.
+const TODO_GROUPS = [['Company', 'fa-building'], ['Aircraft', 'fa-helicopter'], ['Crew', 'fa-users'], ['Jobs', 'fa-clipboard-list']];
+function Todo({ d, a }) {
+  const [showIgnored, setShowIgnored] = useState(false);
+  const all = d.todo || [], open = all.filter(t => !t.ignored), ignored = all.filter(t => t.ignored);
+  const list = showIgnored ? ignored : open;
+  const red = open.filter(t => t.sev === 'red').length;
+  return <div data-todo="1">
+    <div className="flex items-center gap-2 mb-1 text-xs">
+      {open.length ? <span className="font-semibold text-slate-700" data-todo-count={open.length}>{open.length} to do{red ? <span className="text-rose-700"> · {red} urgent</span> : null}</span>
+        : <span className="text-emerald-700 font-semibold"><i className="fa-solid fa-check mr-1"></i>All compliance items are sorted.</span>}
+      {ignored.length > 0 && <button type="button" data-todo-show-ignored="1" onClick={() => setShowIgnored(v => !v)} className="ml-auto text-slate-500 underline">{showIgnored ? 'Back to the list' : ignored.length + ' ignored'}</button>}
+    </div>
+    {TODO_GROUPS.map(([g, icon]) => { const items = list.filter(t => t.group === g).sort((x, y) => (x.sev === 'red' ? 0 : 1) - (y.sev === 'red' ? 0 : 1)); if (!items.length) return null;
+      return <div key={g} className="mt-2" data-todo-group={g}>
+        <div className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5"><i className={`fa-solid ${icon} mr-1`}></i>{g} · {items.length}</div>
+        <div className="divide-y divide-slate-100">{items.map(t => (
+          <div key={t.id} className="flex items-center gap-3 py-1.5" data-todo-item={t.id} data-todo-sev={t.sev}>
+            <i className={`fa-solid ${t.sev === 'red' ? 'fa-circle-exclamation text-rose-600' : 'fa-circle-dot text-amber-500'} text-sm`}></i>
+            <div className="flex-1 min-w-0"><div className="text-sm text-slate-800 truncate">{t.label}</div>{t.sub && <div className="text-[11px] text-slate-500 truncate">{t.sub}</div>}</div>
+            {!showIgnored && t.act && <Btn onClick={t.act} data-todo-go="1">{t.cta || 'Open'}</Btn>}
+            {a.todoIgnore && <button type="button" data-todo-ignore={t.id} onClick={() => a.todoIgnore(t.id, !t.ignored)} className="text-[11px] text-slate-400 hover:text-slate-700 underline">{t.ignored ? 'Restore' : 'Ignore'}</button>}
+          </div>))}</div>
+      </div>; })}
+  </div>;
 }
 
 function Compliance({ d, cfg, a }) {
@@ -511,6 +541,7 @@ export default function Dashboard({ d, a }) {
       case 'fleet': { const all = d.fleet || [], used = all.filter(f => f.sec > 0 || f.rego); const rows = used.slice(0, 8);
         return <>{rows.length ? <Hours rows={rows} kind="fleet" a={a} /> : <Empty>No logged flights or CASA registrations yet. Hours appear here from completed flight records.</Empty>}
           {used.length > 8 && <div className="text-xs text-slate-500 mt-2">+ {used.length - 8} more in Database &amp; Settings › Fleet</div>}</>; }
+      case 'todo': return <Todo d={d} a={a} />;
       case 'compliance': return <Compliance d={d} cfg={cfg} a={a} />;
       case 'setup': return <Setup d={d} />;
       case 'links': return <Links cfg={cfg} />;

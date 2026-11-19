@@ -37,7 +37,7 @@ export function useCloudJobs(sb, me) {
   useEffect(() => {
     if (!isCrp) { publish('wdCrewFlights', null, 'wd-crew-flights'); publish('wdAccessRequests', null, 'wd-access-requests'); return; }
     let dead = false;
-    const loadPeople = async () => { const { data } = await sb.from('people').select('id,user_id,full_name,email,role,active,total_hours'); peopleRef.current = data || []; return peopleRef.current; };
+    const loadPeople = async () => { const { data } = await sb.from('people').select('id,user_id,full_name,email,role,active,total_hours,arn'); peopleRef.current = data || []; return peopleRef.current; };
     const findPerson = (name, email) => {
       const ppl = peopleRef.current;
       return (email && ppl.find(p => low(p.email) === low(email))) || (name && ppl.find(p => low(p.full_name) === low(name))) || null;

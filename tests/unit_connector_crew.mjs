@@ -10,12 +10,13 @@ const calls = [];
 const sb = {
   from(t) { const filt = []; let op = 'select', payload = null, one = false;
     const run = () => {
+      if (op === 'upsert') { const i = T[t].findIndex(r => r.key === payload.key); if (i >= 0) T[t][i] = { ...T[t][i], ...payload }; else T[t].push(payload); calls.push({ t, op, payload }); return { data: null, error: null }; }
       if (op === 'insert') { const r = { id: 'n' + T[t].length, active: true, ...payload }; T[t].push(r); return { data: r, error: null }; }
       const hit = (T[t] || []).filter(x => filt.every(f => f(x)));
       if (op === 'update') { hit.forEach(x => Object.assign(x, payload)); calls.push({ t, op, payload }); return { data: null, error: null }; }
       return { data: one ? hit[0] || null : hit, error: null }; };
     const api = { select() { return api; }, order() { return api; }, eq(k, v) { filt.push(x => x[k] === v); return api; }, single() { one = true; return api; }, maybeSingle() { one = true; return api; },
-      insert(p) { op = 'insert'; payload = p; return api; }, update(p) { op = 'update'; payload = p; return api; }, then(a, b) { return Promise.resolve(run()).then(a, b); } };
+      insert(p) { op = 'insert'; payload = p; return api; }, upsert(p) { op = 'upsert'; payload = p; return api; }, update(p) { op = 'update'; payload = p; return api; }, then(a, b) { return Promise.resolve(run()).then(a, b); } };
     return api; },
   async rpc(name, args) {
     if (name === 'record_check') { if (args.p_check_date > '2099') return { error: { message: 'future' } }; T.certifications.push({ id: 'c' + T.certifications.length, person_id: args.p_person, competency: args.p_competency, check_date: args.p_check_date, assessor: args.p_assessor }); return { data: 'c' + (T.certifications.length - 1), error: null }; }
@@ -47,4 +48,15 @@ ok('...a second check is added, the first kept', T.certifications.length === 2 &
 l = await tools.list_crew.run({});
 ok('list_crew shows the checks', l.crew.find(p => p.full_name === 'Brendan Hollands').certifications.length === 2);
 ok('no tool edits or deletes certifications', !calls.some(x => x.t === 'certifications'));
+// v7.44: maintenance log
+const m1 = await tools.add_maintenance.run({ date: '2026-10-22', kind: 'maintenance', aircraft: ['Pavo 20 Pro'], equipment: ['Goggles', 'Radio'], work: 'Full maintenance', result: 'pass', by: 'Michael Rubio' });
+const set = () => T.crp_store[0].data;
+ok('add_maintenance: saved to the setup with a new hash, fleet kept', set().maintenanceLog.length === 1 && set().fleet['Pavo 20 Pro'] && /^connector-/.test(T.crp_store[0].hash) && m1.added.id, T.crp_store[0]);
+ok('...an aircraft not in the fleet is refused', /Not in the fleet/.test(await err(() => tools.add_maintenance.run({ date: '2026-10-22', aircraft: ['Pavo'], work: 'x' }))));
+ok('...a future date is refused', /future/.test(await err(() => tools.add_maintenance.run({ date: '2099-01-01', aircraft: ['Pavo 20 Pro'], work: 'x' }))));
+ok('...needs an aircraft or equipment', /which aircraft/.test(await err(() => tools.add_maintenance.run({ date: '2026-10-22', work: 'x' }))));
+await tools.add_maintenance.run({ date: '2026-11-18', kind: 'firmware', equipment: ['Control system'], work: 'Firmware', corrects: m1.added.id });
+const lm = await tools.list_maintenance.run({});
+ok('list_maintenance: newest first, a correction is a new entry', lm.entries.length === 2 && lm.entries[0].date === '2026-11-18' && lm.entries[0].corrects === m1.added.id && lm.entries[1].work === 'Full maintenance', lm);
+ok('...filter by aircraft', (await tools.list_maintenance.run({ aircraft: 'Pavo 20 Pro' })).entries.length === 1);
 console.log(fails ? 'FAILED ' + fails : 'ALL PASS'); process.exit(fails ? 1 : 0);
