@@ -1,5 +1,21 @@
 # Planner changelog
 
+## v7.45 — 19 Nov 2026 — One Crew list, one Batteries section, prior time in hours and minutes
+- **Database & Settings → Crew & users is now one list, one row per person.** Before, the same person could appear as a pilot card, an observer name and a login, plus a separate Assessors list. Now each row shows:
+  - what they do: **Pilot**, **Observer**, **Assessor** (click to switch on or off; this decides which pickers they show in on a job);
+  - their login: **Login**, **Invited** or **No login · invite**;
+  - their sign-offs from Registers & currency (current, due soon or expired), and medical / currency dates;
+  - ARN, phone and email, with Edit and Remove. Remove only takes them off the pickers; past jobs, sign-offs and logins are kept.
+  - Filters: Everyone, Pilots, Observers, Assessors, No login, Switched off. People who only have an account record (for example invited crew) show too.
+  - The separate **Assessors & observers** section is gone (Assessor is now a role on the row). Login roles, password resets, inductions and switching people off stay under "Your account and login accounts" in the same section. The EVLOS observer register stays as the signed record, linked from each observer.
+- **Batteries is now one section.** The old "Batteries" list (which mixed battery types like "6S LiPo" with real packs), the Battery register and the second CSV import are merged:
+  - packs are grouped by aircraft; each has a Type, its aircraft (change it to move the pack), cycles, limit, time, lowest voltage, last used and Retired;
+  - **Add packs**: pick the aircraft, type names or a range like 6S-2200-17..20, and an optional type;
+  - anything not on an aircraft is pointed out, so old type names can be removed (packs with logged flights can't be removed; tick Retired instead);
+  - each aircraft card in RPAS fleet shows its pack count with a link.
+- **RPAS fleet → Prior time** is entered in hours and minutes instead of minutes only (existing times carry over).
+- Supabase: nothing to do.
+
 ## v7.44 — 19 Nov 2026 — Compliance to-do on Home, maintenance log, jobs under another ReOC
 - **Home → Compliance to-do** (CRP). One list of everything still to sort out, grouped by Company, Aircraft, Crew and Jobs:
   - company dates missing, due or expired (ReOC, insurance, OONP and other approvals);

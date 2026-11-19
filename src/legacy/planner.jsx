@@ -21,6 +21,7 @@ import { BetaDialog, BetaEndedDialog, FeedbackDialog, betaActiveNow, betaEnded, 
 import { fmtSpeed as opsFmtSpeed, hasOpsContent, opsSignable, checkOps, opsSummary, KINDS as OPS_KINDS, POINT_KINDS as OPS_POINT_KINDS, kindStyle as opsKindStyle, zoneTag as opsZoneTag, zoneBuffer as opsZoneBuffer, simpleKe as opsSimpleKe } from '../opsmap/geo.js';
 import { opsAdvPrint } from '../opsmap/print.js';
 import { FlightReplay, videoInfo, matchVideos, offsetFor, pickVideos, rememberVideo, openLinkedVideo, linkKey } from '../video/FlightVideo.jsx';
+import CrewList from '../compliance/CrewList.jsx';
 import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         // Extract React Hooks
         const { useState, useEffect, useRef, useMemo } = React;
@@ -190,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.44';
+        const APP_VERSION = '7.45';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5159,6 +5160,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
 
           const [dbInputAssessor, setDbInputAssessor] = useState('');
           const [batteryFilter, setBatteryFilter] = useState('active');
+          const [battAdd, setBattAdd] = useState(null); // v7.45: the Add packs form in Batteries
 
           // ── Log dump: many radio logs from several aircraft at once (v5.29) ──
           const [logDump, setLogDump] = useState(null); // { items:[{key,file,model,t,g,rpa,include}], dupes, empty }
@@ -16010,7 +16012,7 @@ View in the Database & Settings tab.`);
                               );
                             })()}
                         </>))}
-                        {dbFold('dbsec-crew-users', 'Crew & users', 'fa-users', <span>{(db.pilots || []).length} pilots · {(db.observers || []).length} observers · logins, inductions and invites</span>, (<>
+                        {dbFold('dbsec-crew-users', 'Crew & users', 'fa-users', <span>{(db.pilots || []).length} pilots · {(db.observers || []).length} observers · {(db.assessors || []).length} assessors · logins and sign-offs</span>, (<>
                         {/* v6.1: Users & logins (cloud accounts, crew roles, invites) */}
                         <div className="border border-violet-200 rounded-xl overflow-hidden shadow-sm" data-users-section="1">
                           <div className="bg-violet-50 px-4 py-3 border-b border-violet-200 flex items-center gap-2">
@@ -16018,86 +16020,12 @@ View in the Database & Settings tab.`);
                             <h3 className="font-semibold text-violet-900 text-sm">Crew &amp; users</h3>
                           </div>
                           <div className="p-4 space-y-4">
-                            <p className="text-xs text-slate-500">Everyone you fly with. A login is optional: invite the people who should sign plans or log flights from their own device. Without one they stay records you manage.</p>
-                            {/* Pilots DB */}
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-users text-slate-400"></i> Pilots</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-1">
-                                    {db.pilots.map((p, i) => (
-                                        <div key={i} className="text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                            {isEditingDb('pilots', i) ? (
-                                                <div className="space-y-1.5">
-                                                    <input type="text" value={editDbDraft.name} onChange={e=>setEditDbDraft(prev=>({...prev, name: e.target.value}))} placeholder="Pilot Name" className="w-full text-sm border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    <input type="text" value={editDbDraft.arn || ''} onChange={e=>setEditDbDraft(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono" />
-                                                    <input type="tel" value={editDbDraft.phone || ''} onChange={e=>setEditDbDraft(prev=>({...prev, phone: e.target.value}))} placeholder="Phone (optional)" className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    <input type="email" value={editDbDraft.email || ''} onChange={e=>setEditDbDraft(prev=>({...prev, email: e.target.value}))} placeholder="Email (needed for a login)" className="w-full text-xs border rounded px-2 py-1" />
-                                                    <div>
-                                                        <label className="text-[10px] uppercase font-bold text-slate-400">Medical Expiry</label>
-                                                        <input type="date" value={editDbDraft.medicalExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, medicalExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    </div>
-                                                    <div>
-                                                        <label className="text-[10px] uppercase font-bold text-slate-400">RePL / Training Currency Due</label>
-                                                        <input type="date" value={editDbDraft.trainingExpiry || ''} onChange={e=>setEditDbDraft(prev=>({...prev, trainingExpiry: e.target.value}))} className="w-full text-xs border rounded px-2 py-1 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                                    </div>
-                                                    <div className="flex gap-1.5 justify-end pt-0.5">
-                                                        <button onClick={saveEditDb} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition-colors"><i className="fa-solid fa-check"></i> Save</button>
-                                                        <button onClick={cancelEditDb} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1 rounded transition-colors">Cancel</button>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="flex justify-between items-center">
-                                                    <div>
-                                                      <span className="font-semibold text-slate-800">{p.name}</span><br/>
-                                                      <span className="text-xs text-slate-500 font-mono mt-0.5">ARN: {p.arn}{p.phone ? ' · ' + p.phone : ''}</span>
-                                                      {p.email && <span className="block text-xs text-slate-500 truncate">{p.email}</span>}
-                                                      <LoginBadge name={p.name} email={p.email} role="pilot" onNeedEmail={() => startEditDb('pilots', i, p)} />
-                                                      {(() => {
-                                                        const medBadge = getExpiryBadge(p.medicalExpiry);
-                                                        const trainBadge = getExpiryBadge(p.trainingExpiry);
-                                                        if (!medBadge && !trainBadge) return null;
-                                                        return (
-                                                          <div className="flex flex-wrap gap-1 mt-1">
-                                                            {medBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${medBadge.cls}`} title="Medical Certificate">Med: {medBadge.text}</span>}
-                                                            {trainBadge && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${trainBadge.cls}`} title="RePL / Training Currency">Currency: {trainBadge.text}</span>}
-                                                          </div>
-                                                        );
-                                                      })()}
-                                                    </div>
-                                                    <div className="flex gap-0.5 flex-shrink-0">
-                                                        <button onClick={() => startEditDb('pilots', i, p)} className="text-slate-400 hover:text-blue-500 transition-colors p-1"><i className="fa-solid fa-pen text-sm"></i></button>
-                                                        <button onClick={() => { if (window.confirm(`Delete pilot "${p.name}"? This cannot be undone.`)) updateDb('pilots', db.pilots.filter(x => x.name !== p.name)); }} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="flex flex-wrap gap-2 mt-3">
-                                    <input type="text" value={dbInputPilot.name} onChange={e=>setDbInputPilot(prev=>({...prev, name: e.target.value}))} placeholder="New Pilot Name" className="flex-1 min-w-[8rem] text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <input type="text" value={dbInputPilot.arn} onChange={e=>setDbInputPilot(prev=>({...prev, arn: e.target.value}))} placeholder="ARN" className="flex-1 min-w-[8rem] text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <input type="email" value={dbInputPilot.email || ''} onChange={e=>setDbInputPilot(prev=>({...prev, email: e.target.value}))} placeholder="Email (optional)" className="flex-1 min-w-[10rem] text-sm border rounded px-3 py-1.5" />
-                                    <button onClick={handleAddPilotDirect} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                </div>
-                            </div>
-                                {/* Observers DB */}
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                    <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-eye text-slate-400"></i> Observers / spotters</h3>
-                                    <ul className="mb-4 space-y-2 max-h-60 overflow-y-auto pr-1">
-                                        {db.observers.map((c, i) => (
-                                            <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                                <span className="font-medium text-slate-700 flex-1">{c}</span>
-                                                <span className="mr-1 -mt-1"><LoginBadge name={c} role="observer" /></span>
-                                                <button onClick={() => updateDb('observers', db.observers.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                            </li>
-                                        ))}
-                                        {db.observers.length === 0 && <li className="text-sm text-slate-400 italic text-center py-2">No observers saved.</li>}
-                                    </ul>
-                                    <div className="flex gap-2">
-                                        <input type="text" value={dbInputObserver} onChange={e=>setDbInputObserver(e.target.value)} placeholder="New Observer Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                        <button onClick={() => {if(dbInputObserver) {updateDb('observers', [...db.observers, dbInputObserver]); setDbInputObserver('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                    </div>
-                                </div>
-                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-2 border-t border-slate-100">Logins</div>
+                            <p className="text-xs text-slate-500">Everyone you fly with, one row each. Tick what they do (Pilot, Observer, Assessor) so they show on jobs. A login is optional: invite the people who sign plans or log flights from their own device.</p>
+                            <CrewList pilots={db.pilots || []} observers={db.observers || []} assessors={db.assessors || []}
+                              cloud={(typeof window !== 'undefined' && window.wdCloud && window.wdCloud.isCrp) ? window.wdCloud : null} currency={currency}
+                              onSave={(r) => { updateDb('pilots', r.pilots); updateDb('observers', r.observers); updateDb('assessors', r.assessors); }}
+                              onRegisters={() => jumpToDbSection('dbsec-registers')} onObserverRegister={() => jumpToDbSection('dbsec-observers')} />
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-2 border-t border-slate-100">Your account and login accounts <span className="normal-case font-normal tracking-normal">· invite, change login roles, reset passwords, inductions, switch off</span></div>
                             <div id="wd-account-settings-slot" className="wd-acct-slot"></div>
                             <p className="wd-acct-offline text-sm text-slate-500">Logins, crew roles and invites work in the online planner (planner.wakingdreamfpv.com). This offline copy keeps everything on this device only.</p>
                           </div>
@@ -16129,29 +16057,6 @@ View in the Database & Settings tab.`);
                                     <input type="text" value={dbInputClient.name} onChange={e=>setDbInputClient(prev=>({...prev, name: e.target.value}))} placeholder="New Client Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
                                     <button onClick={() => {if(dbInputClient.name) {updateDb('clients', [...db.clients, {name: dbInputClient.name, email: '', phone: ''}]); setDbInputClient({name:'', email:'', phone:''});}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
                                 </div>
-                            </div>
-                        </>))}
-                        {dbFold('dbsec-assessors', 'Assessors & observers', 'fa-user-check', <span>{(db.assessors || []).length} assessors · {(db.observers || []).length} observers</span>, (<>
-                            {/* Assessors & Observers Grid block */}
-                            <div className="space-y-8">
-                                {/* Assessors DB */}
-                                <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                    <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2"><i className="fa-solid fa-clipboard-user text-slate-400"></i> Assessors</h3>
-                                    <ul className="mb-4 space-y-2 max-h-32 overflow-y-auto pr-1">
-                                        {db.assessors.map((c, i) => (
-                                            <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                                <span className="font-medium text-slate-700">{c}</span>
-                                                <button onClick={() => updateDb('assessors', db.assessors.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                            </li>
-                                        ))}
-                                        {db.assessors.length === 0 && <li className="text-sm text-slate-400 italic text-center py-2">No assessors saved.</li>}
-                                    </ul>
-                                    <div className="flex gap-2">
-                                        <input type="text" value={dbInputAssessor} onChange={e=>setDbInputAssessor(e.target.value)} placeholder="New Assessor Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                        <button onClick={() => {if(dbInputAssessor) {updateDb('assessors', [...db.assessors, dbInputAssessor]); setDbInputAssessor('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                    </div>
-                                </div>
-
                             </div>
                         </>))}
                         <div className="pt-1">
@@ -16217,15 +16122,20 @@ View in the Database & Settings tab.`);
                                             </div>
                                             {(() => { const st = (fleetLogged[rpa] || { sec: 0, flights: 0 }), prior = (parseFloat(db.fleet[rpa].priorMinutes) || 0) + (parseFloat(db.fleet[rpa].totalFlightTime) || 0); return (
                                               <div className="text-xs text-slate-500 mt-1" data-fleet-logged={rpa}>Airframe: <strong className="text-indigo-600">{fmtHrsMin(st.sec + prior * 60)}</strong>
-                                                <span className="text-[10px] text-slate-400"> · {st.flights} logged flight{st.flights === 1 ? '' : 's'}{prior ? ` + ${prior} min before the planner` : ''}</span></div>); })()}
+                                                <span className="text-[10px] text-slate-400"> · {st.flights} logged flight{st.flights === 1 ? '' : 's'}{prior ? ` + ${fmtHrsMin(prior * 60)} before the planner` : ''}</span></div>); })()}
                                             <div className="flex items-center gap-2 mb-1">
                                                 <label className="text-[10px] uppercase font-bold text-slate-400 w-14 flex-shrink-0" title="Airframe time flown before you started logging in the planner">Prior</label>
-                                                <input type="number" min="0" step="1" value={db.fleet[rpa].priorMinutes || ''} placeholder="0" data-fleet-prior={rpa}
-                                                    onChange={e => updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], priorMinutes: e.target.value}})}
-                                                    className="w-20 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" /><span className="text-xs text-slate-400">min</span>
+                                                {(() => { const pm = Math.round(parseFloat(db.fleet[rpa].priorMinutes) || 0), ph = Math.floor(pm / 60), pmm = pm % 60;
+                                                  const setPrior = (h, m) => { const t = Math.max(0, (parseInt(h, 10) || 0) * 60 + (parseInt(m, 10) || 0)); updateDb('fleet', {...db.fleet, [rpa]: {...db.fleet[rpa], priorMinutes: t ? String(t) : ''}}); };
+                                                  return (<>
+                                                    <input type="number" min="0" step="1" value={ph || ''} placeholder="0" data-fleet-prior-h={rpa} aria-label="Prior hours"
+                                                      onChange={e => setPrior(e.target.value, pmm)} className="w-16 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" /><span className="text-xs text-slate-400">h</span>
+                                                    <input type="number" min="0" max="59" step="1" value={pmm || ''} placeholder="0" data-fleet-prior-m={rpa} aria-label="Prior minutes"
+                                                      onChange={e => setPrior(ph, Math.min(59, parseInt(e.target.value, 10) || 0))} className="w-12 text-xs border border-slate-200 rounded px-1.5 py-0.5 bg-white font-mono" /><span className="text-xs text-slate-400">m</span>
+                                                  </>); })()}
                                             </div>
 
-                                            {db.fleet[rpa].batteries && <span className="text-xs text-slate-500 block mb-1 truncate" title={db.fleet[rpa].batteries}>Batts: {db.fleet[rpa].batteries}</span>}
+                                            {(() => { const n = ((db.rpaBatteries || {})[rpa] || []).length; return <button type="button" data-fleet-packs={rpa} onClick={() => jumpToDbSection('dbsec-batteries')} className="text-xs text-violet-700 hover:underline block mb-1 text-left">{n ? n + ' battery pack' + (n === 1 ? '' : 's') : 'No battery packs yet'} · manage</button>; })()}
                                             {db.fleet[rpa].disclaimer && <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-1 rounded border border-amber-100 leading-tight mt-1">{db.fleet[rpa].disclaimer}</span>}
 
                                             {/* Radio log matching (v5.29): battery cell count + EdgeTX model name */}
@@ -16303,31 +16213,7 @@ View in the Database & Settings tab.`);
                                 </div>
                             </div>
                         </>))}
-                        {dbFold('dbsec-batteries', 'Batteries', 'fa-car-battery', <span>{(db.batteries || []).length} packs</span>, (<>
-                            {/* Batteries DB */}
-                            <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white">
-                                <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2 flex-wrap"><i className="fa-solid fa-database text-slate-400"></i> Batteries
-                                  <span className="ml-auto flex items-center gap-2 text-xs font-normal">
-                                    <label data-battery-csv-import="1" className="cursor-pointer font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Import CSV
-                                      <input type="file" accept=".csv,text/csv" className="hidden" data-battery-csv-file="1" onChange={importBatteriesFromFile} /></label>
-                                    <button type="button" data-battery-csv-template="1" onClick={() => wdDownload('Battery template.csv', '\ufeff' + BATTERY_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline">CSV template</button>
-                                  </span></h3>
-                                <ul className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
-                                    {db.batteries && db.batteries.map((c, i) => (
-                                        <li key={i} className="flex justify-between items-center text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded">
-                                            <span className="truncate mr-2">{c}</span>
-                                            <button onClick={() => updateDb('batteries', db.batteries.filter(x => x !== c))} className="text-slate-400 hover:text-red-500 transition-colors p-1"><i className="fa-solid fa-trash-can text-sm"></i></button>
-                                        </li>
-                                    ))}
-                                    {(!db.batteries || db.batteries.length === 0) && <li className="text-sm text-slate-400 italic col-span-2 py-2">No batteries saved.</li>}
-                                </ul>
-                                <div className="flex gap-2 w-full md:w-1/2">
-                                    <input type="text" value={dbInputBattery} onChange={e=>setDbInputBattery(e.target.value)} placeholder="New Battery Type/Name" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                                    <button onClick={() => {if(dbInputBattery) {updateDb('batteries', [...(db.batteries||[]), dbInputBattery]); setDbInputBattery('');}}} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors shadow-sm"><i className="fa-solid fa-plus"></i></button>
-                                </div>
-                            </div>
-                        </>))}
-                        {dbFold('dbsec-battery-register', 'Battery register', 'fa-list-ol', <span>Cycles, limits, voltage sag and retirement per pack</span>, (<>
+                        {dbFold('dbsec-batteries', 'Batteries', 'fa-car-battery', <span>{(() => { const n = new Set([...Object.values(db.rpaBatteries || {}).flat(), ...(db.batteries || [])]).size, a = Object.values(db.rpaBatteries || {}).filter(l => (l || []).length).length; return n + ' pack' + (n === 1 ? '' : 's') + ' on ' + a + ' aircraft · cycles, limits, retire'; })()}</span>, (<>
                             {/* Battery register: cycles, limits, sag, retire (v5.28) */}
                             {(() => {
                               const st = loggedTimeStats(db.completedFlights).bat, info = db.batteryInfo || {};
@@ -16335,7 +16221,26 @@ View in the Database & Settings tab.`);
                               const owner = {}; Object.entries(db.rpaBatteries || {}).forEach(([rpa, list]) => (list || []).forEach(b => { if (!owner[b]) owner[b] = rpa; }));
                               const names = [...new Set([...Object.keys(owner), ...(db.batteries || []), ...Object.keys(st)])].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
                               const setInfo = (b, k, v) => updateDb('batteryInfo', { ...(db.batteryInfo || {}), [b]: { ...((db.batteryInfo || {})[b] || {}), [k]: v } });
-                              const rows = names.map(b => ({ b, rpa: owner[b] || (st[b] && st[b].rpa) || '', x: st[b], s: batteryStatus(b, st[b], info[b], defLimit) }));
+                              const fleetNames = Object.keys(db.fleet || {}).filter(k => db.fleet[k] && !db.fleet[k].sample && !db.fleet[k].suggested);
+                              const ord = (r) => { const i = fleetNames.indexOf(r); return i < 0 ? (r ? fleetNames.length : fleetNames.length + 1) : i; };
+                              const rows = names.map(b => ({ b, rpa: owner[b] || '', x: st[b], s: batteryStatus(b, st[b], info[b], defLimit) }))
+                                .sort((p, q) => (ord(p.rpa) - ord(q.rpa)) || String(p.rpa).localeCompare(String(q.rpa)) || p.b.localeCompare(q.b, undefined, { numeric: true }));
+                              // v7.45: packs are added, moved and removed here (one list: which aircraft each pack belongs to)
+                              const movePack = (b, to) => { const rb = {}; Object.entries(db.rpaBatteries || {}).forEach(([k, l]) => { const f = (l || []).filter(x => x !== b); if (f.length) rb[k] = f; });
+                                if (to) rb[to] = [...(rb[to] || []), b]; updateDb('rpaBatteries', rb); if (!(db.batteries || []).includes(b)) updateDb('batteries', [...(db.batteries || []), b]); };
+                              const removePack = (b) => { if (!window.confirm(`Remove "${b}" from the battery list?`)) return;
+                                const rb = {}; Object.entries(db.rpaBatteries || {}).forEach(([k, l]) => { const f = (l || []).filter(x => x !== b); if (f.length) rb[k] = f; });
+                                updateDb('rpaBatteries', rb); updateDb('batteries', (db.batteries || []).filter(x => x !== b)); };
+                              const expand = (txt) => String(txt || '').split(/[\n,]+/).map(x => x.trim()).filter(Boolean).flatMap(x => { const m = /^(.*?)(\d+)\s*(?:\.\.|–|to)\s*(\d+)$/.exec(x);
+                                if (!m || +m[3] < +m[2] || +m[3] - +m[2] > 200) return [x]; const out = []; for (let n = +m[2]; n <= +m[3]; n++) out.push(m[1] + String(n).padStart(m[2].length, '0')); return out; });
+                              const addPacks = () => { const list = expand(battAdd.names), known = new Set(names.map(x => x.toLowerCase()));
+                                const fresh = list.filter(x => !known.has(x.toLowerCase())), dup = list.length - fresh.length;
+                                if (!fresh.length) { setBattAdd({ ...battAdd, msg: dup ? 'Those packs are already in the list.' : 'Type at least one pack name.' }); return; }
+                                const rb = { ...(db.rpaBatteries || {}) }; if (battAdd.rpa) rb[battAdd.rpa] = [...(rb[battAdd.rpa] || []), ...fresh];
+                                updateDb('rpaBatteries', rb); updateDb('batteries', [...(db.batteries || []), ...fresh]);
+                                if (battAdd.type.trim()) { const bi = { ...(db.batteryInfo || {}) }; fresh.forEach(b => { bi[b] = { ...(bi[b] || {}), type: battAdd.type.trim() }; }); updateDb('batteryInfo', bi); }
+                                setBattAdd({ rpa: battAdd.rpa, names: '', type: battAdd.type, msg: fresh.length + ' pack' + (fresh.length === 1 ? '' : 's') + ' added' + (dup ? ' (' + dup + ' already there)' : '') + '.' }); };
+                              const loose = rows.filter(r => !r.rpa && !r.x);
                               const [flt, setFlt] = [batteryFilter, setBatteryFilter];
                               const shown = rows.filter(r => flt === 'all' ? true : flt === 'attention' ? (r.s.worst === 'red' || r.s.worst === 'amber') : flt === 'retired' ? r.s.worst === 'grey' : r.s.worst !== 'grey');
                               const nAtt = rows.filter(r => r.s.worst === 'red' || r.s.worst === 'amber').length;
@@ -16351,7 +16256,7 @@ View in the Database & Settings tab.`);
                               return (
                                 <div className="border border-slate-200 rounded-lg p-4 shadow-sm bg-white" data-testid="battery-register">
                                   <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
-                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-car-battery text-slate-400"></i> Battery register
+                                    <h3 className="font-semibold text-slate-700 flex items-center gap-2"><i className="fa-solid fa-car-battery text-slate-400"></i> Battery packs
                                       {nAtt > 0 && <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{nAtt} need attention</span>}</h3>
                                     <div className="flex items-center gap-2 text-xs">
                                       <label className="text-slate-500">Default cycle limit</label>
@@ -16362,15 +16267,37 @@ View in the Database & Settings tab.`);
                                       {rows.length > 0 && <button onClick={csv} className="font-semibold px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>CSV</button>}
                                     </div>
                                   </div>
+                                  <div className="flex flex-wrap items-center gap-2 my-2 text-xs">
+                                    <button type="button" data-batt-add="1" onClick={() => setBattAdd(battAdd ? null : { rpa: fleetNames[0] || '', names: '', type: '', msg: '' })} className="font-semibold px-3 py-1.5 rounded-md bg-violet-700 text-white"><i className="fa-solid fa-plus mr-1"></i>Add packs</button>
+                                    <label data-battery-csv-import="1" className="cursor-pointer font-semibold px-2.5 py-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-600"><i className="fa-solid fa-file-csv mr-1"></i>Import CSV
+                                      <input type="file" accept=".csv,text/csv" className="hidden" data-battery-csv-file="1" onChange={importBatteriesFromFile} /></label>
+                                    <button type="button" data-battery-csv-template="1" onClick={() => wdDownload('Battery template.csv', '\ufeff' + BATTERY_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline" title="Columns: Battery, Aircraft, Prior cycles, Cycle limit, Retired">CSV template</button>
+                                  </div>
+                                  {battAdd && <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 mb-3 space-y-2" data-batt-form="1">
+                                    <div className="grid sm:grid-cols-3 gap-2">
+                                      <label className="text-xs font-semibold text-slate-600">Aircraft<select value={battAdd.rpa} onChange={e => setBattAdd({ ...battAdd, rpa: e.target.value })} data-batt-f-rpa="1" className="w-full mt-1 text-sm border border-slate-300 rounded px-2 py-1 bg-white">
+                                        {fleetNames.map(n => <option key={n} value={n}>{n}</option>)}<option value="">Not on an aircraft (spare)</option></select></label>
+                                      <label className="text-xs font-semibold text-slate-600 sm:col-span-2">Pack names<input value={battAdd.names} onChange={e => setBattAdd({ ...battAdd, names: e.target.value, msg: '' })} data-batt-f-names="1" placeholder="e.g. 6S-2200-17..20, or names separated by commas" className="w-full mt-1 text-sm border border-slate-300 rounded px-2 py-1 font-mono" /></label>
+                                    </div>
+                                    <label className="block text-xs font-semibold text-slate-600">Type (optional)<input value={battAdd.type} onChange={e => setBattAdd({ ...battAdd, type: e.target.value })} data-batt-f-type="1" placeholder="e.g. 6S LiPo 2200 mAh" className="w-full sm:w-1/2 mt-1 text-sm border border-slate-300 rounded px-2 py-1" /></label>
+                                    {(() => { const n = expand(battAdd.names); return n.length > 1 ? <p className="text-[11px] text-slate-500" data-batt-preview="1">{n.length} packs: {n.slice(0, 6).join(', ')}{n.length > 6 ? '…' : ''}</p> : null; })()}
+                                    {battAdd.msg && <p className="text-xs text-emerald-800" data-batt-msg="1">{battAdd.msg}</p>}
+                                    <div className="flex gap-2"><button type="button" data-batt-save="1" onClick={addPacks} className="text-xs font-bold px-3 py-2 rounded-md bg-violet-700 text-white">Add</button><button type="button" onClick={() => setBattAdd(null)} className="text-xs underline">Close</button></div>
+                                  </div>}
+                                  {loose.length > 0 && <p className="text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 mb-2" data-batt-loose="1"><b>{loose.length} not on an aircraft:</b> {loose.map(r => r.b).join(', ')}. If these are battery types rather than real packs, remove them (bin at the end of the row); otherwise pick their aircraft.</p>}
                                   <p className="text-xs text-slate-500 mb-3">Cycles = cycles before logging started + each completed flight the pack is listed on. Flags at 90% of the limit, at the limit, and when telemetry shows a sag below 3.30 V/cell. Set a pack's own limit to override the default (e.g. 300 for DJI packs).</p>
-                                  {!rows.length ? <p className="text-sm text-slate-400 italic">No batteries yet. Add them under each aircraft in the fleet below.</p> : (
+                                  {!rows.length ? <p className="text-sm text-slate-400 italic">No batteries yet. Use Add packs above.</p> : (
                                     <div className="overflow-x-auto max-h-96 overflow-y-auto">
                                       <table className="w-full text-xs">
-                                        <thead className="sticky top-0 bg-white"><tr><th className={th}>Battery</th><th className={th}>Aircraft</th><th className={th + ' text-right'}>Cycles</th><th className={th + ' text-right'} title="Cycles before this planner started logging">Prior</th><th className={th + ' text-right'}>Limit</th><th className={th + ' text-right'}>Time</th><th className={th + ' text-right'}>Low V/cell</th><th className={th + ' text-right'}>Last used</th><th className={th}>Status</th><th className={th + ' text-center'}>Retired</th></tr></thead>
-                                        <tbody>{shown.map(r => (
-                                          <tr key={r.b} className={r.s.worst === 'grey' ? 'text-slate-400' : ''}>
-                                            <td className={td + ' font-semibold'}>{r.b}</td>
-                                            <td className={td + ' text-slate-500'}>{r.rpa || '—'}</td>
+                                        <thead className="sticky top-0 bg-white"><tr><th className={th}>Battery</th><th className={th}>Type</th><th className={th}>Aircraft</th><th className={th + ' text-right'}>Cycles</th><th className={th + ' text-right'} title="Cycles before this planner started logging">Prior</th><th className={th + ' text-right'}>Limit</th><th className={th + ' text-right'}>Time</th><th className={th + ' text-right'}>Low V/cell</th><th className={th + ' text-right'}>Last used</th><th className={th}>Status</th><th className={th + ' text-center'}>Retired</th><th className={th}></th></tr></thead>
+                                        <tbody>{shown.map((r, ri) => (<React.Fragment key={r.b}>
+                                          {(ri === 0 || shown[ri - 1].rpa !== r.rpa) && <tr data-batt-group={r.rpa || 'none'}><td colSpan={13} className="px-2 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-600 bg-slate-50 border-b border-slate-200">
+                                            {r.rpa || 'Not on an aircraft'} <span className="font-normal normal-case text-slate-500">· {shown.filter(x => x.rpa === r.rpa).length} pack{shown.filter(x => x.rpa === r.rpa).length === 1 ? '' : 's'}</span></td></tr>}
+                                          <tr data-batt-row={r.b} className={r.s.worst === 'grey' ? 'text-slate-400' : ''}>
+                                            <td className={td + ' font-semibold whitespace-nowrap'}>{r.b}</td>
+                                            <td className={td}><input value={(info[r.b] || {}).type || ''} placeholder="—" onChange={e => setInfo(r.b, 'type', e.target.value)} data-batt-type={r.b} className="w-28 px-1 py-0.5 border border-slate-200 rounded" /></td>
+                                            <td className={td}><select value={r.rpa} onChange={e => movePack(r.b, e.target.value)} data-batt-rpa={r.b} className="max-w-[9rem] px-1 py-0.5 border border-slate-200 rounded bg-white text-slate-600">
+                                              {fleetNames.map(n => <option key={n} value={n}>{n}</option>)}{r.rpa && !fleetNames.includes(r.rpa) && <option value={r.rpa}>{r.rpa}</option>}<option value="">No aircraft</option></select></td>
                                             <td className={tn + ' font-bold'}>
                                               <div className="flex items-center justify-end gap-1.5">
                                                 <div className="w-12 h-1.5 bg-slate-100 rounded overflow-hidden"><div className={`h-full ${r.s.worst === 'red' ? 'bg-red-500' : r.s.cycles >= r.s.limit * 0.9 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: Math.min(100, r.s.cycles / r.s.limit * 100) + '%' }}></div></div>
@@ -16384,8 +16311,9 @@ View in the Database & Settings tab.`);
                                             <td className={tn}>{r.x ? d(r.x.last) : '—'}</td>
                                             <td className={td}>{r.s.flags.length ? r.s.flags.map(f => <span key={f.key} className={`inline-block mr-1 mb-0.5 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap ${f.sev === 'red' ? 'bg-red-100 text-red-700' : f.sev === 'amber' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{f.text}</span>) : <span className="text-emerald-600 font-semibold">OK</span>}</td>
                                             <td className={td + ' text-center'}><input type="checkbox" checked={!!(info[r.b] || {}).retired} onChange={e => setInfo(r.b, 'retired', e.target.checked)} /></td>
+                                            <td className={td}>{!r.x && <button type="button" data-batt-remove={r.b} onClick={() => removePack(r.b)} title="Remove (only packs with no logged flights; otherwise tick Retired)" className="text-slate-400 hover:text-red-500 px-1"><i className="fa-solid fa-trash-can"></i></button>}</td>
                                           </tr>
-                                        ))}</tbody>
+                                        </React.Fragment>))}</tbody>
                                       </table>
                                       {!shown.length && <p className="text-sm text-slate-400 italic py-2">Nothing in this view.</p>}
                                     </div>
@@ -16393,33 +16321,6 @@ View in the Database & Settings tab.`);
                                 </div>
                               );
                             })()}
-                        </>))}
-                        {dbFold('dbsec-battery-csv', 'Import batteries from CSV', 'fa-file-csv', <span>Add many packs at once from a spreadsheet</span>, (<>
-                        {/* Battery CSV Import */}
-                        <div className="border border-emerald-200 rounded-xl overflow-hidden shadow-sm">
-                          <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <i className="fa-solid fa-battery-full text-emerald-600"></i>
-                              <div>
-                                <h3 className="font-semibold text-emerald-900 text-sm">Import Batteries from CSV</h3>
-                                <p className="text-xs text-emerald-700">Columns: <code className="bg-emerald-100 px-1 rounded font-mono">Battery, Aircraft, Prior cycles, Cycle limit, Retired</code> — one pack per row. Blank cells leave what's there.</p>
-                              </div>
-                            </div>
-                            <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 flex-shrink-0">
-                              <i className="fa-solid fa-file-csv"></i> Import CSV
-                              <input type="file" accept=".csv,text/csv" className="hidden" data-battery-csv-file2="1" onChange={importBatteriesFromFile} />
-                            </label>
-                          </div>
-                          <div className="px-4 py-3 text-xs text-slate-500">
-                            <span className="font-medium">Example rows:</span>
-                            <div className="mt-1 font-mono bg-slate-50 border border-slate-200 rounded p-2 space-y-0.5">
-                              <div className="text-slate-400">Battery, Aircraft, Prior cycles, Cycle limit, Retired</div>
-                              <div>Mavic 4 Pro Battery 01, DJI Mavic 4 Pro, 12, 200,</div>
-                              <div>4S 650mAh LiPo 01, Cinelog 35 (FPV), 85, , yes</div>
-                            </div>
-                            <p className="mt-2">Also reads the older two-column layout (RPA Name, Battery Name) and asset-register exports with "Asset Number" and "Associated RPA" columns. <button type="button" onClick={() => wdDownload('Battery template.csv', '\ufeff' + BATTERY_CSV_TEMPLATE, 'text/csv')} className="text-violet-700 underline font-semibold">Download the template</button></p>
-                          </div>
-                        </div>
                         </>))}
                         {dbFold('dbsec-logged', 'Logged time', 'fa-stopwatch', <span>{(() => { const st = loggedTimeStats(db.completedFlights); const sec = Object.values(st.acft).reduce((t, x) => t + x.sec, 0); return fmtHrsMin(sec) + ' flown · ' + Object.keys(st.pil).length + ' pilots · ' + Object.keys(st.bat).length + ' packs'; })()}</span>, (<>
                             {/* Pilot, battery & aircraft time from completed records (v5.26) */}
