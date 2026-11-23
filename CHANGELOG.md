@@ -1,5 +1,12 @@
 # Planner changelog
 
+## v7.46 — 23 Nov 2026 — Flight logs without GPS show current, throttle and tilt
+- **Flight telemetry with no GPS** (indoor flying, quads with no GPS module): the Max alt, Max speed and Max distance boxes, which only showed 0, are replaced by **Max current** (and average), **Throttle** (max and average %) and **Max tilt** (from the drone's pitch and roll; about 180° means it flipped or flew inverted). The chart shows current, throttle and tilt instead of a flat altitude and speed line. The 0 J kinetic-energy and "GPS sats 0–0" lines are replaced by a note that the log has no GPS.
+- **Pick what the chart shows.** Under each flight's chart, tap the readings to show or hide: altitude, speed, current, throttle, tilt, voltage and link. Your choice is remembered separately for logs with GPS (default: altitude and speed, as before) and without GPS (default: current, throttle and tilt).
+- G-force isn't recorded in EdgeTX radio logs (there is no accelerometer channel), so tilt is shown instead.
+- Throttle and tilt are read when a log is imported, so flights imported before this update show current but need the log imported again to show throttle and tilt.
+- Supabase: nothing to do.
+
 ## v7.45 — 19 Nov 2026 — One Crew list, one Batteries section, prior time in hours and minutes
 - **Database & Settings → Crew & users is now one list, one row per person.** Before, the same person could appear as a pilot card, an observer name and a login, plus a separate Assessors list. Now each row shows:
   - what they do: **Pilot**, **Observer**, **Assessor** (click to switch on or off; this decides which pickers they show in on a job);

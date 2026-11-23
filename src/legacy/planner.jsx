@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.45';
+        const APP_VERSION = '7.46';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -2887,6 +2887,16 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
         const fmtHrsMin = (s) => { s = Math.round(s || 0); const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60); return hh ? `${hh}h ${String(mm).padStart(2, '0')}m` : `${mm}m ${String(s % 60).padStart(2, '0')}s`; };
 
         // ── TelemetryPanel ── read-only summary of an imported telemetry flight
+        // v7.46: readings that can be drawn on a flight's chart (trace index, colour, fixed top where it has one)
+        const TLM_SERIES = [
+          { k: 'alt', n: 'Altitude', u: 'm', i: 1, c: '#1d76d2', tc: '#1d76d2' },
+          { k: 'spd', n: 'Speed', u: ' km/h', i: 2, c: '#f59e0b', tc: '#b45309' },
+          { k: 'amps', n: 'Current', u: ' A', i: 6, c: '#dc2626', tc: '#b91c1c', step: 10 },
+          { k: 'thr', n: 'Throttle', u: '%', i: 9, c: '#7c3aed', tc: '#6d28d9', top: 100 },
+          { k: 'tilt', n: 'Tilt', u: '°', i: 10, c: '#0891b2', tc: '#0e7490', top: 180 },
+          { k: 'volts', n: 'Voltage', u: ' V', i: 5, c: '#16a34a', tc: '#15803d', step: 1 },
+          { k: 'rq', n: 'Link', u: '%', i: 7, c: '#64748b', tc: '#475569', top: 100 },
+        ];
         function TelemetryPanel({ t, kg, oonp, onRemove, limitCtx, title, onSmooth, onSmoothAll }) {
           const [detail, setDetail] = useState(false);
           const tr = (t.trace || []).filter(p => p && p[0] != null);
@@ -2898,6 +2908,19 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const altPts = tr.filter(p => p[1] != null).map(p => X(p[0]).toFixed(1) + ',' + YA(p[1]).toFixed(1));
           const spdPts = tr.filter(p => p[2] != null).map(p => X(p[0]).toFixed(1) + ',' + YS(p[2]).toFixed(1));
           const area = altPts.length ? `${L},${YA(0)} ${altPts.join(' ')} ${X(dur).toFixed(1)},${YA(0)}` : '';
+          // v7.46: pick the chart lines. With GPS: altitude and speed; without (indoor / no GPS): current, throttle and tilt.
+          const hasGps = !!(t.home || (t.maxSats || 0) > 0 || (t.maxSpeedKmh || 0) > 0 || (t.maxAltM || 0) > 0);
+          const has = (i) => tr.some(p => p[i] != null && p[i] !== 0);
+          const avail = TLM_SERIES.filter(x => (x.k === 'alt' || x.k === 'spd') ? hasGps && has(x.i) : has(x.i));
+          const [pick, setPick] = useState(() => { try { const v = JSON.parse(localStorage.getItem('wd_tlm_series') || '{}'); return v[hasGps ? 'gps' : 'nogps'] || null; } catch (e) { return null; } });
+          const chosen = (pick || (hasGps ? ['alt', 'spd'] : ['amps', 'thr', 'tilt'])).filter(k => avail.some(x => x.k === k));
+          const togglePick = (k) => { const next = chosen.includes(k) ? chosen.filter(x => x !== k) : TLM_SERIES.map(x => x.k).filter(x => x === k || chosen.includes(x));
+            setPick(next); try { const v = JSON.parse(localStorage.getItem('wd_tlm_series') || '{}'); v[hasGps ? 'gps' : 'nogps'] = next; localStorage.setItem('wd_tlm_series', JSON.stringify(v)); } catch (e) {} };
+          const lines = chosen.map(k => { const d = TLM_SERIES.find(x => x.k === k), vals = tr.map(p => p[d.i]).filter(v => v != null && isFinite(v));
+            const hi = d.top || (k === 'alt' ? topA : k === 'spd' ? topS : Math.max(1, Math.ceil(Math.max(...vals) * 1.1 / d.step) * d.step));
+            const lo = k === 'volts' ? Math.floor(Math.min(...vals) * 0.98) : 0, Y = (v) => T + ch - ((Math.max(lo, v) - lo) / Math.max(0.01, hi - lo)) * ch;
+            return { ...d, hi, lo, pts: tr.filter(p => p[d.i] != null).map(p => X(p[0]).toFixed(1) + ',' + Y(p[d.i]).toFixed(1)) }; });
+          const showAlt = chosen.includes('alt');
           // GPS track (flat-earth projection is fine at this scale)
           const gp = tr.filter(p => p[3] != null);
           let track = null;
@@ -2922,7 +2945,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           );
           const dash = (v, u = '') => (v === null || v === undefined || Number.isNaN(v)) ? '—' : v + u;
           return (
-            <div className="px-3 py-2 bg-cyan-50/60 border-b border-cyan-100">
+            <div className="px-3 py-2 bg-cyan-50/60 border-b border-cyan-100" data-tlm-panel={hasGps ? 'gps' : 'nogps'}>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <div className="text-[11px] font-semibold text-cyan-900 flex items-center gap-1.5 flex-wrap">
                   <i className="fa-solid fa-satellite-dish text-cyan-600"></i>
@@ -2936,9 +2959,15 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 </div>
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
+                {hasGps ? <>
                 {st(t.altSmooth ? 'Max alt · smoothed' : 'Max alt', dash(t.maxAltM, ' m'), t.maxAltM != null ? (t.altSmooth && t.rawStats ? 'raw ' + t.rawStats.maxAltM + ' m · ' : '') + Math.round(t.maxAltM * 3.28084) + (t.altRef === 'landing' ? ' ft above landing point' : t.altRef === 'lowest' ? ' ft above lowest point' : ' ft above take-off') : '', t.maxAltM > 120)}
                 {st(t.spdSmooth ? 'Max speed · smoothed' : 'Max speed', dash(t.maxSpeedKmh, ' km/h'), (t.spdSmooth && t.rawStats ? 'raw ' + t.rawStats.maxSpeedKmh + ' km/h · ' : '') + 'GPS ground speed')}
                 {st('Max distance', dash(t.maxDistM, ' m'), t.pathM ? 'path ' + (t.pathM / 1000).toFixed(2) + ' km' : 'from home')}
+                </> : <>
+                {st('Max current', dash(t.maxCurrA, ' A'), t.avgCurrA != null ? 'avg ' + t.avgCurrA + ' A' : '')}
+                {st('Throttle', t.maxThrPct != null ? 'max ' + t.maxThrPct + '%' : '—', t.avgThrPct != null ? 'avg ' + t.avgThrPct + '%' : 'import the log again to add')}
+                {st('Max tilt', dash(t.maxTiltDeg, '°'), t.maxTiltDeg != null ? (t.maxTiltDeg > 150 ? 'flipped / inverted' : 'from pitch and roll') : 'import the log again to add')}
+                </>}
                 {st('Battery', t.vStart != null ? `${t.vStart}→${t.vEnd} V` : '—', [t.cells ? t.cells + 'S' : '', t.vMin != null ? 'sag ' + t.vMin + ' V' : ''].filter(Boolean).join(' · '))}
                 {st('Used', dash(t.mahUsed, ' mAh'), t.maxCurrA != null ? `max ${t.maxCurrA} A · avg ${t.avgCurrA} A` : '')}
                 {st('Link', t.minRq != null ? `RQ ${t.minRq}%` : '—', [t.minRss != null ? 'min ' + t.minRss + ' dBm' : '', t.maxTpwr != null ? t.maxTpwr + ' mW' : ''].filter(Boolean).join(' · '), t.minRq != null && t.minRq < 50)}
@@ -2949,19 +2978,19 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                     <line x1={L} x2={L + cw} y1={YA(0)} y2={YA(0)} stroke="#94a3b8" strokeWidth="0.6" />
                     <line x1={L} x2={L + cw} y1={YA(topA / 2)} y2={YA(topA / 2)} stroke="#e2e8f0" strokeWidth="0.5" />
                     <line x1={L} x2={L + cw} y1={YA(topA)} y2={YA(topA)} stroke="#e2e8f0" strokeWidth="0.5" />
-                    {topA >= 120 && <line x1={L} x2={L + cw} y1={YA(120)} y2={YA(120)} stroke="#dc2626" strokeWidth="0.6" strokeDasharray="2,1.5" />}
-                    {area && <polygon points={area} fill="#1d76d2" fillOpacity="0.18" />}
-                    {altPts.length > 1 && <polyline points={altPts.join(' ')} fill="none" stroke="#1d76d2" strokeWidth="1.3" strokeLinejoin="round" />}
-                    {spdPts.length > 1 && <polyline points={spdPts.join(' ')} fill="none" stroke="#f59e0b" strokeWidth="0.9" strokeLinejoin="round" opacity="0.9" />}
+                    {showAlt && topA >= 120 && <line x1={L} x2={L + cw} y1={YA(120)} y2={YA(120)} stroke="#dc2626" strokeWidth="0.6" strokeDasharray="2,1.5" />}
+                    {showAlt && area && <polygon points={area} fill="#1d76d2" fillOpacity="0.18" />}
+                    {lines.map(l => l.pts.length > 1 && <polyline key={l.k} data-tlm-line={l.k} points={l.pts.join(' ')} fill="none" stroke={l.c} strokeWidth={l.k === 'alt' ? 1.3 : 0.9} strokeLinejoin="round" opacity="0.95" />)}
+                    {!lines.length && <text x={L + cw / 2} y={T + ch / 2} fontSize="7" textAnchor="middle" fill="#94a3b8">Pick a reading below</text>}
                     {(t.events || []).map((e, i) => <line key={i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke="#dc2626" strokeWidth="0.8" />)}
                     {anom.map((e, i) => <line key={'a' + i} x1={X(e.t)} x2={X(e.t)} y1={T} y2={T + ch} stroke={e.sev === 'warn' ? '#ea580c' : '#a855f7'} strokeWidth="0.7" strokeDasharray="1.5,1.2" />)}
-                    <text x={L - 3} y={YA(topA) + 3} fontSize="7" textAnchor="end" fill="#1d76d2">{topA}m</text>
-                    <text x={L - 3} y={YA(0) + 3} fontSize="7" textAnchor="end" fill="#64748b">0</text>
-                    <text x={L + cw + 3} y={YS(topS) + 3} fontSize="7" fill="#b45309">{topS}</text>
-                    <text x={L + cw + 3} y={YS(0) + 3} fontSize="7" fill="#b45309">km/h</text>
+                    {lines[0] && <><text x={L - 3} y={T + 3} fontSize="7" textAnchor="end" fill={lines[0].tc}>{lines[0].hi}{lines[0].u}</text>
+                      <text x={L - 3} y={T + ch + 3} fontSize="7" textAnchor="end" fill="#64748b">{lines[0].lo}</text></>}
+                    {lines[1] && <><text x={L + cw + 3} y={T + 3} fontSize="7" fill={lines[1].tc}>{lines[1].hi}</text>
+                      <text x={L + cw + 3} y={T + ch + 3} fontSize="7" fill={lines[1].tc}>{lines[1].u.trim()}</text></>}
                     <text x={L} y={H - 4} fontSize="7" fill="#64748b">0:00</text>
                     <text x={L + cw} y={H - 4} fontSize="7" textAnchor="end" fill="#64748b">{fmtMmSs(dur)}</text>
-                    <text x={L + cw / 2} y={H - 4} fontSize="7" textAnchor="middle" fill="#64748b"><tspan fill="#1d76d2">— altitude</tspan>  <tspan fill="#b45309">— speed</tspan></text>
+                    <text x={L + cw / 2} y={H - 4} fontSize="7" textAnchor="middle" fill="#64748b">{lines.map((l, i) => <tspan key={l.k} fill={l.tc}>{i ? '  ' : ''}— {l.n.toLowerCase()}{i > 1 ? ' (to ' + l.hi + l.u.trim() + ')' : ''}</tspan>)}</text>
                   </svg>
                 </div>
                 {track && (
@@ -2976,19 +3005,27 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                   </div>
                 )}
               </div>
+              <div className="flex flex-wrap items-center gap-1 mt-1.5" data-tlm-picker="1">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mr-0.5">Chart</span>
+                {avail.map(x => <button key={x.k} type="button" data-tlm-series={x.k} data-on={chosen.includes(x.k) ? '1' : '0'} onClick={() => togglePick(x.k)}
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full border ${chosen.includes(x.k) ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`}
+                  style={chosen.includes(x.k) ? { background: x.c, borderColor: x.c } : null}>{x.n}</button>)}
+                {!hasGps && <span className="text-[9px] text-slate-400 ml-1">no GPS in this log</span>}
+              </div>
               <div className="mt-1.5 text-[10px] text-slate-600 space-y-0.5">
-                {ke != null && (
+                {!hasGps && <div data-tlm-nogps="1" className="text-slate-500">No GPS in this log, so there are no height, speed, distance or kinetic-energy figures.</div>}
+                {hasGps && ke != null && (
                   <div className={keLim && ke > keLim ? 'text-red-700 font-semibold' : ''}>
                     <i className="fa-solid fa-bolt text-[9px] mr-1"></i>
                     Peak KE (estimate, no drag, {kg} kg): <b>{ke.toFixed(1)} J</b> at {Math.round(t.keAt.v * 3.6)} km/h and {t.keAt.h} m
                     {keLim ? (ke > keLim ? ' — over 34 J: this flight should not be logged as over consenting people' : ' — within 34 J') : ''}
                   </div>
                 )}
-                {ke == null && <div className="text-slate-400">Add this aircraft's weight in Database &amp; Settings to see a kinetic-energy estimate.</div>}
+                {hasGps && ke == null && <div className="text-slate-400">Add this aircraft's weight in Database &amp; Settings to see a kinetic-energy estimate.</div>}
                 {flightLimitIssues(t, { ...(limitCtx || {}), kg, oonp }).map((x, i) => (
                   <div key={'lim' + i} className={x.sev === 'red' ? 'text-red-700 font-semibold' : 'text-amber-700 font-semibold'} data-testid="flight-limit-issue">⚠ {x.text}</div>
                 ))}
-                {t.minSats != null && <div>GPS sats {t.minSats}–{t.maxSats}{t.home ? ` · home ${t.home[0].toFixed(5)}, ${t.home[1].toFixed(5)}` : ''}</div>}
+                {hasGps && t.minSats != null && <div>GPS sats {t.minSats}–{t.maxSats}{t.home ? ` · home ${t.home[0].toFixed(5)}, ${t.home[1].toFixed(5)}` : ''}</div>}
                 {(t.events || []).map((e, i) => <div key={i} className="text-red-700 font-semibold">⚠ {fmtMmSs(e.t)}: {e.text}</div>)}
                 {anom.length > 0 && <div data-anom-list="1" className="pt-0.5"><button type="button" onClick={() => setDetail(true)} className="font-semibold text-violet-800 hover:underline" data-anom-count={anom.length}><i className="fa-solid fa-flag text-[9px] mr-1"></i>{anom.length} telemetry flag{anom.length === 1 ? '' : 's'}</button>
                   {anom.slice(0, 4).map((e, i) => <div key={'an' + i} data-anom={e.kind} className={e.sev === 'warn' ? 'text-orange-700 font-semibold' : 'text-violet-700'}>{e.sev === 'warn' ? '⚑' : '◇'} {fmtMmSs(e.t)}: {e.text}</div>)}

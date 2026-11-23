@@ -13,6 +13,7 @@ export const parseTelemetryCsv = (text, fileName, clock) => {
     spd: col('GSpd(kmh)', 'GSpd(kts)', 'GSpd(mph)', 'GSpd(m/s)'), rxbt: col('RxBt(V)'), curr: col('Curr(A)'),
     capa: col('Capa(mAh)'), batp: col('Bat%(%)'), rq: col('RQly(%)'), r1: col('1RSS(dB)'), r2: col('2RSS(dB)'),
     snr: col('RSNR(dB)'), tpwr: col('TPWR(mW)'), sats: col('Sats'), txbt: col('TxBat(V)'),
+    thr: col('Thr'), ptch: col('Ptch(rad)'), roll: col('Roll(rad)'), // v7.46: throttle stick and attitude
   };
   if (C.date < 0 || C.time < 0) return [];
   const altFt = C.alt >= 0 && /\(ft\)/i.test(hdr[C.alt]);
@@ -33,7 +34,9 @@ export const parseTelemetryCsv = (text, fileName, clock) => {
     const alt = num(r, C.alt);
     rows.push({ ms, fm, alt: altFt ? alt * 0.3048 : alt, spd: num(r, C.spd) * spdK, lat, lng,
       v: num(r, C.rxbt), a: num(r, C.curr), mah: num(r, C.capa), pct: num(r, C.batp), rq: num(r, C.rq),
-      rss: Math.max(num(r, C.r1), isNaN(num(r, C.r2)) ? -999 : num(r, C.r2)), snr: num(r, C.snr), tp: num(r, C.tpwr), sats: num(r, C.sats) });
+      rss: Math.max(num(r, C.r1), isNaN(num(r, C.r2)) ? -999 : num(r, C.r2)), snr: num(r, C.snr), tp: num(r, C.tpwr), sats: num(r, C.sats),
+      thr: isFinite(num(r, C.thr)) ? Math.min(100, Math.max(0, (num(r, C.thr) + 1024) / 20.48)) : NaN, // stick -1024..1024 → 0..100 %
+      tilt: isFinite(num(r, C.ptch)) && isFinite(num(r, C.roll)) ? Math.acos(Math.max(-1, Math.min(1, Math.cos(num(r, C.ptch)) * Math.cos(num(r, C.roll))))) * 180 / Math.PI : NaN });
   }
   if (!rows.length) return [];
   // Armed state from the flight-mode field; with no FM column the whole log is one flight
@@ -100,7 +103,7 @@ export const parseTelemetryCsv = (text, fileName, clock) => {
     let maxDist = 0, path = 0, last = null;
     fixes.forEach(p => { if (home) maxDist = Math.max(maxDist, hav(home[0], home[1], p[0], p[1])); if (last) { const d = hav(last[0], last[1], p[0], p[1]); if (d < 200) path += d; } last = p; });
     const fin = (k) => seg.map(r => r[k]).filter(isFinite);
-    const vS = fin('v'), mahS = fin('mah'), aS = fin('a'), pS = fin('pct'), rqS = fin('rq'), rsS = seg.map(r => r.rss).filter(x => isFinite(x) && x > -999), tpS = fin('tp'), satS = fin('sats'), snrS = fin('snr');
+    const thS = fin('thr'), tiS = fin('tilt'), vS = fin('v'), mahS = fin('mah'), aS = fin('a'), pS = fin('pct'), rqS = fin('rq'), rsS = seg.map(r => r.rss).filter(x => isFinite(x) && x > -999), tpS = fin('tp'), satS = fin('sats'), snrS = fin('snr');
     // Voltage sag: lowest 2 s rolling average, so a single dip doesn't read as the minimum
     let vMin = NaN; if (vS.length) { const w = Math.max(1, Math.round(vS.length / (durS || 1) * 2)); for (let i = 0; i + w <= vS.length; i++) { const m = vS.slice(i, i + w).reduce((x, y) => x + y, 0) / w; vMin = isNaN(vMin) ? m : Math.min(vMin, m); } }
     const cells = vS.length ? Math.max(1, Math.ceil(vS[0] / 4.25)) : null;
@@ -111,14 +114,15 @@ export const parseTelemetryCsv = (text, fileName, clock) => {
       if (/^!FS!$/i.test(r.fm) && !inFs) { events.push({ t, type: 'failsafe', text: 'Failsafe' }); inFs = true; } else if (!/^!FS!$/i.test(r.fm)) inFs = false;
       if (isFinite(r.rq) && r.rq < 50 && !lowLink) { events.push({ t, type: 'link', text: 'Link quality ' + r.rq + '%' }); lowLink = true; } else if (isFinite(r.rq) && r.rq >= 70) lowLink = false;
     });
-    // Downsampled trace for the profile chart and map: [tSec, altM, kmh, lat, lng, volts(min), amps(max), RQ%(min), sats(min)]
+    // Downsampled trace for the profile chart and map: [tSec, altM, kmh, lat, lng, volts(min), amps(max), RQ%(min), sats(min), throttle%(avg), tilt°(max)]
     const N = 240, step = Math.max(1, Math.ceil(seg.length / N)), trace = [];
     for (let i = 0; i < seg.length; i += step) {
       const ch = seg.slice(i, i + step), ri = rel.slice(i, i + step).filter(isFinite), sj = spS.slice(i, i + step).filter(isFinite);
       const g = ch.find(r => isFinite(r.lat));
       const mn = (k) => { const v = ch.map(r => r[k]).filter(isFinite); return v.length ? Math.min(...v) : null; }, mx = (k) => { const v = ch.map(r => r[k]).filter(isFinite); return v.length ? Math.max(...v) : null; };
       trace.push([r1((ch[0].ms - seg[0].ms) / 1000), ri.length ? r1(Math.max(...ri)) : null, sj.length ? r1(Math.max(...sj)) : null, g ? r1(g.lat, 6) : null, g ? r1(g.lng, 6) : null,
-        mn('v') != null ? r1(mn('v'), 2) : null, mx('a') != null ? r1(mx('a')) : null, mn('rq'), mn('sats')]);
+        mn('v') != null ? r1(mn('v'), 2) : null, mx('a') != null ? r1(mx('a')) : null, mn('rq'), mn('sats'),
+        (() => { const v = ch.map(r => r.thr).filter(isFinite); return v.length ? Math.round(v.reduce((x, y) => x + y, 0) / v.length) : null; })(), mx('tilt') != null ? Math.round(mx('tilt')) : null]);
     }
     const phaseMax = (from, to) => { const v = seg.map((r, i) => [(r.ms - seg[0].ms) / 1000, rel[i]]).filter(p => p[0] >= from && p[0] <= to && isFinite(p[1])).map(p => p[1]); return v.length ? Math.max(0, ...v) : 0; };
     // Peak per-sample kinetic energy inputs (speed and height together), used with the fleet weight
@@ -139,6 +143,7 @@ export const parseTelemetryCsv = (text, fileName, clock) => {
       cells, vStart: r1(vS[0], 2), vMin: r1(vMin, 2), vEnd: r1(vS[vS.length - 1], 2),
       mahUsed: mahS.length ? Math.max(0, Math.round(mahS[mahS.length - 1] - mahS[0])) : null, mahEnd: mahS.length ? Math.round(mahS[mahS.length - 1]) : null,
       pctStart: pS.length ? pS[0] : null, pctEnd: pS.length ? pS[pS.length - 1] : null,
+      maxThrPct: thS.length ? Math.round(Math.max(...thS)) : null, avgThrPct: thS.length ? Math.round(thS.reduce((x, y) => x + y, 0) / thS.length) : null, maxTiltDeg: tiS.length ? Math.round(Math.max(...tiS)) : null,
       maxCurrA: aS.length ? r1(Math.max(...aS)) : null, avgCurrA: aS.length ? r1(aS.reduce((x, y) => x + y, 0) / aS.length) : null,
       minRq: rqS.length ? Math.min(...rqS) : null, minRss: rsS.length ? Math.min(...rsS) : null, minSnr: snrS.length ? Math.min(...snrS) : null,
       maxTpwr: tpS.length ? Math.max(...tpS) : null, minSats: satS.length ? Math.min(...satS) : null, maxSats: satS.length ? Math.max(...satS) : null,
