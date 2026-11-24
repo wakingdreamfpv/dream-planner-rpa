@@ -286,12 +286,12 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   if (googleOn) {
     const rp = (doc.terrain && doc.terrain.ref) || terrainRefPoint(doc) || ref;
     const fail = (why) => { if (gState === 'fail' || !alive) return; gState = 'fail'; gMsg = why;
-      if (gTiles) { scene.remove(gTiles.tiles.group); gTiles.onChange = null; } dropGoogle(); if (groundMesh) groundMesh.visible = true;
+      if (gTiles) { scene.remove(gTiles.root || gTiles.tiles.group); gTiles.onChange = null; } dropGoogle(); if (groundMesh) groundMesh.visible = true;
       showNote(); if (loadOsm) loadOsm(); req(); };
     showNote();
     googleTiles(THREE, googleKey, rp, renderer, cam).then((g) => {
       if (!alive || !g) return;
-      gTiles = g; const c = P(rp); g.place(c.x, c.z); scene.add(g.tiles.group);
+      gTiles = g; const c = P(rp); g.place(c.x, c.z); scene.add(g.root || g.tiles.group);
       g.onChange = () => {
         if (g.err && !g.tiles.group.children.length) return fail(g.err);
         if (gState === 'loading' && g.tiles.group.children.length) { gState = 'ok'; if (groundMesh) groundMesh.visible = false; grid.visible = false; }
@@ -312,7 +312,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
-    if (gTiles) { scene.remove(gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }
+    if (gTiles) { scene.remove(gTiles.root || gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }
     alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }
@@ -381,13 +381,16 @@ async function googleTiles(THREE, key, rp, renderer, cam) {
     const g = { id, tiles, ready: false, onChange: null, lift: null, x: 0, z: 0, err: '' };
     // Google's heights are above the ellipsoid; drop the city so the ground at the take-off point is our 0
     const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
-    const level = () => { const gr = tiles.group; ray.set(new THREE.Vector3(g.x, gr.position.y + 9000, g.z), down); ray.far = 20000;
-      const hit = ray.intersectObject(gr, true)[0]; if (hit) { gr.position.y -= hit.point.y; g.lift = true; gr.updateMatrixWorld(true); } };
+    // Google's city comes out with east along -x and north along +z; ours has east +x and north -z, so it sits in a
+    // holder turned half a circle (checked against the library's own maths: 100 m east → x -100, 100 m north → z +100).
+    const root = new THREE.Group(); root.rotation.y = Math.PI; root.add(tiles.group); g.root = root;
+    const level = () => { root.updateMatrixWorld(true); ray.set(new THREE.Vector3(g.x, root.position.y + 9000, g.z), down); ray.far = 20000;
+      const hit = ray.intersectObject(tiles.group, true)[0]; if (hit) { root.position.y -= hit.point.y; g.lift = true; root.updateMatrixWorld(true); } };
     let n = 0;
     tiles.addEventListener('load-model', () => { if (n++ < 40) level(); g.onChange && g.onChange(); });
     tiles.addEventListener('needs-update', () => { g.onChange && g.onChange(); });
     tiles.addEventListener('load-error', (e) => { g.err = googleWhy(String((e && e.error && e.error.message) || 'a tile failed')); g.onChange && g.onChange(); });
-    g.place = (x, z) => { g.x = x; g.z = z; tiles.group.position.x = x; tiles.group.position.z = z; tiles.group.updateMatrixWorld(true); };
+    g.place = (x, z) => { g.x = x; g.z = z; root.position.x = x; root.position.z = z; root.updateMatrixWorld(true); };
     g.note = () => { const at = []; try { tiles.getAttributions(at); } catch (e) {} const txt = at.filter((a) => a.type === 'string').map((a) => a.value).join(' ');
       return 'Google 3D city · ' + (txt || 'Google') + ' · heights from the take-off.'; };
     gCache = g;

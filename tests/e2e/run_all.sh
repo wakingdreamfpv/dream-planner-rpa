@@ -13,4 +13,5 @@ done
 r=$(node tests/unit_setup_merge.mjs 2>&1); echo "UNIT:setup_merge $(echo "$r" | tail -1)"; n=$(echo "$r" | grep -c '^FAIL'); fails=$((fails + n))
 r=$(TZ=Australia/Brisbane node tests/unit_connector.mjs 2>&1); echo "UNIT:connector $(echo "$r" | tail -1)"; n=$(echo "$r" | grep -c '^FAIL'); fails=$((fails + n))
 r=$(node tests/unit_connector_crew.mjs 2>&1); echo "UNIT:connector_crew $(echo "$r" | tail -1)"; n=$(echo "$r" | grep -c '^FAIL'); fails=$((fails + n))
+r=$(node tests/unit_google_orient.mjs 2>&1); echo "UNIT:google_orient $(echo "$r" | tail -1)"; n=$(echo "$r" | grep -c '^FAIL'); fails=$((fails + n))
 echo "ALLDONE fails=$fails"
