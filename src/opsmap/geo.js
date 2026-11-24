@@ -122,6 +122,14 @@ export const zoneLimits = (z) => {
   const v = z.v != null && z.v !== '' ? Number(z.v) : null;
   return { h: isFinite(h) ? h : null, v: isFinite(v) ? v : null };
 };
+// v7.47: an exclusion zone can start above the ground (e.g. from 20 m) and / or stop at a height (e.g. up to 400 ft);
+// heights are metres above the zone's own ground. hi null = all the way up.
+export const exBand = (z) => {
+  const lo = Math.max(0, Number(z && z.exFloor) || 0), t = z && z.exTop;
+  const hi = t != null && t !== '' && isFinite(Number(t)) && Number(t) > lo ? Number(t) : null;
+  return { lo, hi };
+};
+export const fmtHt = (m, unit) => unit === 'ft' ? Math.round(m * 3.28084) + ' ft' : (Math.round(m * 10) / 10) + ' m';
 export const zoneBuffer = (z) => {
   if (z.kind !== 'exclusion') return 0;
   if (z.shielded) return Math.max(0, Number(z.shieldBuffer) || 0);
@@ -131,7 +139,8 @@ export const zoneTag = (z, settings) => {
   const k = kindStyle(z.kind, settings), L = zoneLimits(z), parts = [k.short];
   if (L.h != null) parts.push('≤ ' + L.h + ' m');
   if (L.v != null) parts.push(fmtSpeed(L.v));
-  if (z.kind === 'exclusion') { const b = zoneBuffer(z); parts.push(z.shielded ? 'shielded ' + b + ' m' : b + ' m buffer'); }
+  if (z.kind === 'exclusion') { const B = exBand(z); if (B.lo > 0) parts.push('from ' + fmtHt(B.lo, z.exUnit)); if (B.hi != null) parts.push('up to ' + fmtHt(B.hi, z.exUnit));
+    const b = zoneBuffer(z); parts.push(z.shielded ? 'shielded ' + b + ' m' : b + ' m buffer'); }
   if (z.kind === 'surface') parts.push(z.deck === 'raised' ? 'deck ' + (Number(z.raise) || 0) + ' m above the ground' : 'deck level between its ends' + (Number(z.raise) ? ' +' + Number(z.raise) + ' m' : ''));
   return parts.join(' · ');
 };
@@ -173,8 +182,12 @@ export const checkOps = (m, keFor) => {
         zones.forEach(({ z, l, lim, buf }) => {
           const d = zoneDistance(p, l);
           if (z.kind === 'exclusion') {
-            if (d === 0) { inExcl = true; add('stop', 'ex' + z.id, 'enters exclusion zone "' + (z.name || 'Exclusion') + '"'); }
-            else if (d < buf - 0.05) add('warn', 'buf' + z.id, 'comes ' + Math.floor(d) + ' m from exclusion "' + (z.name || 'Exclusion') + '" (needs ' + buf + ' m' + (z.shielded ? ', shielded' : '') + ')');
+            // v7.47: only the zone's height band is excluded; above its top or below its floor is clear of it
+            const B = exBand(z), agl = alt - (terr != null ? terr : Number(z.ground) || 0);
+            const vOff = agl < B.lo ? B.lo - agl : B.hi != null && agl > B.hi ? agl - B.hi : 0, nm = '"' + (z.name || 'Exclusion') + '"';
+            if (d === 0 && vOff === 0) { inExcl = true; add('stop', 'ex' + z.id, 'enters exclusion zone ' + nm); }
+            else if (d === 0 && vOff < buf - 0.05) add('warn', 'vbuf' + z.id, 'passes ' + vOff.toFixed(1) + ' m ' + (agl < B.lo ? 'below' : 'above') + ' exclusion ' + nm + ' (needs ' + buf + ' m' + (z.shielded ? ', shielded' : '') + ')');
+            else if (d > 0 && d < buf - 0.05 && vOff < buf - 0.05) add('warn', 'buf' + z.id, 'comes ' + Math.floor(d) + ' m from exclusion ' + nm + ' (needs ' + buf + ' m' + (z.shielded ? ', shielded' : '') + ')');
             return;
           }
           if (d > 0) return;
