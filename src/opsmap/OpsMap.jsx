@@ -9,12 +9,14 @@ import {
   densify, surfacesOf, followGround, terrainRefPoint, followKey,
 } from './geo.js';
 import { elevations } from './terrain.js';
+import { PATH_COLOURS, pathColour, PATH_WIDTHS } from './geo.js';
 import { loadPdfJs } from '../cloud/Manual.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const r1 = (x) => Math.round(x * 10) / 10;
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const STATUS = { ok: '#0f172a', warn: '#d97706', stop: '#dc2626' };
+const nextPathColour = (paths) => { const used = paths.map((p) => pathColour(p, paths)); return PATH_COLOURS.find((c) => !used.includes(c)) || PATH_COLOURS[paths.length % PATH_COLOURS.length]; };
 const offsetEast = (mode, ll, m) => mode === 'plan' ? [ll[0], ll[1] + m] : [ll[0], ll[1] + m / (111320 * Math.cos(ll[0] * Math.PI / 180))];
 const llArr = (ll) => [ll.lat, ll.lng];
 
@@ -207,7 +209,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
   const [sel, setSel] = useState(null);
   const [selPt, setSelPt] = useState(null);
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true, google: true });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true, google: true, labels: true, key: false });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -328,11 +330,16 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
       commit({ ...cur, zones: [...cur.zones, z] }); setSel({ t: 'zone', id: z.id });
     } else if (d.type === 'path') {
       if (d.pts.length < 2) return;
-      if (d.extend && cur.paths.some((p) => p.id === d.extend)) { commit({ ...cur, paths: cur.paths.map((p) => (p.id === d.extend ? { ...p, pts: d.pts } : p)) }); setSel({ t: 'path', id: d.extend }); setDraft(null); setTool('select'); return; }
+      // v7.51: after a freehand stroke, stay in Draw: the next stroke carries on the same path (New path starts another)
+      const keep = pathModeRef.current === 'draw';
+      if (d.extend && cur.paths.some((p) => p.id === d.extend)) { commit({ ...cur, paths: cur.paths.map((p) => (p.id === d.extend ? { ...p, pts: d.pts } : p)) }); setSel({ t: 'path', id: d.extend });
+        if (keep) { const nd = { type: 'path', pts: d.pts, extend: d.extend }; draftRef.current = nd; setDraft(nd); return; }
+        setDraft(null); setTool('select'); return; }
       const n = cur.paths.length + 1;
-      const p = { id: uid(), name: 'Path ' + String.fromCharCode(64 + Math.min(26, n)), drone: drones[0] || '', speed: 5, pts: d.pts,
+      const p = { id: uid(), name: 'Path ' + String.fromCharCode(64 + Math.min(26, n)), color: nextPathColour(cur.paths), drone: drones[0] || '', speed: 5, pts: d.pts,
         ...(cur.mode !== 'plan' ? { follow: true, agl: settings.defaultAgl != null ? settings.defaultAgl : 3, aglMin: 1, aglMax: 5 } : {}) }; // v7.27
       commit({ ...cur, paths: [...cur.paths, p] }); setSel({ t: 'path', id: p.id }); setSelPt(null);
+      if (keep) { const nd = { type: 'path', pts: p.pts, extend: p.id }; draftRef.current = nd; setDraft(nd); return; }
     }
     setDraft(null); setTool('select');
   };
@@ -542,7 +549,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
         }
         const lay = z.shape === 'circle' ? L.circle(z.c, { radius: z.r, ...st }) : L.polygon(z.pts, st);
         lay.on('click', pick('zone', z.id)); lay.addTo(g);
-        lay.bindTooltip(esc(z.name) + '<br><b>' + esc(zoneTag(z, settings)) + '</b>', { permanent: true, direction: 'center', className: 'wd-ops-tag' });
+        if (show.labels !== false) lay.bindTooltip(esc(z.name) + '<br><b>' + esc(zoneTag(z, settings)) + '</b>', { permanent: true, direction: 'center', className: 'wd-ops-tag' });
         if (on && !readOnly && tool === 'select') {
           if (z.shape === 'circle') {
             vtx(z.c, (ll) => setZone(z.id, { c: ll }), 'Drag to move');
@@ -575,8 +582,8 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
       const res = checks && checks.paths[path.id], on = path.id === selPath;
       path.pts.slice(0, -1).forEach((a, i) => {
         const b = [path.pts[i + 1][0], path.pts[i + 1][1]], stt = res && res.legs[i] ? res.legs[i].status : 'ok'; a = [a[0], a[1]]; // Leaflet only takes [lat, lng]
-        L.polyline([a, b], { color: '#ffffff', weight: on ? 10 : 8, opacity: 0.9, interactive: false }).addTo(g);
-        const ln = L.polyline([a, b], { color: STATUS[stt], weight: on ? 5 : 4, dashArray: stt === 'warn' ? '10 6' : null });
+        L.polyline([a, b], { color: stt === 'ok' ? '#ffffff' : STATUS[stt], weight: stt === 'ok' ? (on ? 10 : 8) : (on ? 13 : 11), opacity: 0.95, interactive: false }).addTo(g);
+        const ln = L.polyline([a, b], { color: pathColour(path, doc.paths), weight: on ? 5 : 4, dashArray: stt === 'warn' ? '10 6' : null });
         ln.on('click', pick('path', path.id)); ln.addTo(g);
         if (res && res.legs[i] && res.legs[i].msgs.length) ln.bindTooltip(res.legs[i].msgs.map((q) => esc(q.text)).join('<br>'));
       });
@@ -584,7 +591,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
       // name and height, and small handles on the selected path to drag
       if (path.pts.length) {
         const st = path.pts[0], tag = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
-        L.marker([st[0], st[1]], { interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div style="margin:-7px 0 0 -7px;width:14px;height:14px;border-radius:50%;background:#16a34a;border:2.5px solid #fff;box-shadow:0 0 0 1.5px #0f172a"></div><div data-ops-path-tag="1" style="position:absolute;left:10px;top:-22px;font:700 11px Inter,sans-serif;color:#0f172a;background:#ffffffe6;border:1px solid #0f172a;border-radius:5px;padding:1px 5px;white-space:nowrap">${esc(tag)}</div>` }), zIndexOffset: 800 }).addTo(g);
+        L.marker([st[0], st[1]], { interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div style="margin:-7px 0 0 -7px;width:14px;height:14px;border-radius:50%;background:#16a34a;border:2.5px solid #fff;box-shadow:0 0 0 1.5px #0f172a"></div>${show.labels !== false ? `<div data-ops-path-tag="1" style="position:absolute;left:10px;top:-22px;font:700 11px Inter,sans-serif;color:#0f172a;background:#ffffffe6;border:1.5px solid ${pathColour(path, doc.paths)};border-radius:5px;padding:1px 5px;white-space:nowrap">${esc(tag)}</div>` : ''}` }), zIndexOffset: 800 }).addTo(g);
       }
       if (!on && !show.ptNums) return;
       path.pts.forEach((p, i) => {
@@ -752,18 +759,20 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
               : <button type="button" onClick={() => setSel({ t: 'overlay' })} className={`w-full text-left text-xs border rounded-md p-2 ${sel && sel.t === 'overlay' ? 'border-violet-600 bg-violet-50' : 'border-slate-200'}`}><b className="block truncate">{doc.overlay.name}</b><span className="text-slate-500">{doc.overlay.locked ? 'Locked' : 'Not locked'} · {doc.overlay.widthM} m wide</span></button>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Show</div>
-            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : []), ...(view === '3d' && doc.mode !== 'plan' ? [...(googleKey ? [['google', 'Google 3D city']] : []), ...(googleKey && show.google ? [] : [['buildings', '3D buildings']])] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
+            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['labels', 'Labels'], ['key', 'Key (list of zones and paths)'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : []), ...(view === '3d' && doc.mode !== 'plan' ? [...(googleKey ? [['google', 'Google 3D city']] : []), ...(googleKey && show.google ? [] : [['buildings', '3D buildings']])] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
           </div>
           <div className="px-1"><label className={lbl}>Over-people colour</label><div className="flex gap-1">{['green', 'blue'].map((c) => <button key={c} type="button" disabled={readOnly} onClick={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), oonpColour: c } }))} className={`${btn} flex-1 justify-center ${(settings.oonpColour || 'green') === c ? 'border-violet-600 bg-violet-50' : 'border-slate-300'}`}><span className="w-3 h-3 rounded-sm" style={{ background: c === 'blue' ? '#2563eb' : '#16a34a' }}></span>{c === 'blue' ? 'Blue' : 'Green'}</button>)}</div></div>
         </aside>
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} labels={show.labels !== false} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
-              <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? 'Press and drag from the end of the path to carry on drawing' : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
-              {(draft.type === 'zone' && draft.shape === 'poly' && draft.pts.length >= 3) || (draft.type === 'path' && draft.pts.length >= 2) ? <button type="button" data-ops-finish="1" onClick={finishDraft} className="bg-violet-400 text-violet-950 font-bold rounded px-2 py-1">Finish</button> : null}
+              <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? <>Drawing <b>{((doc.paths.find((p) => p.id === draft.extend) || {}).name) || 'the path'}</b>: press and drag again to add to it</> : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
+              {draft.type === 'path' && pathMode === 'draw' && draft.extend ? <><button type="button" data-ops-newpath="1" onClick={() => setDraft(null)} className="bg-white/15 font-bold rounded px-2 py-1">New path</button>
+                <button type="button" data-ops-donedraw="1" onClick={() => { setDraft(null); setTool('select'); }} className="bg-violet-400 text-violet-950 font-bold rounded px-2 py-1">Done</button></> : null}
+              {(draft.type === 'zone' && draft.shape === 'poly' && draft.pts.length >= 3) || (draft.type === 'path' && draft.pts.length >= 2 && !(pathMode === 'draw' && draft.extend)) ? <button type="button" data-ops-finish="1" onClick={finishDraft} className="bg-violet-400 text-violet-950 font-bold rounded px-2 py-1">Finish</button> : null}
               <button type="button" onClick={() => setDraft(null)} className="underline">Cancel</button></div>}
             {!draft && tool !== 'select' && view === '2d' && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/85 text-white text-xs rounded-lg px-3 py-2" data-ops-noprint="1">{tool === 'zone' ? (zoneShape === 'circle' ? 'Click the centre of the ' : 'Click the first corner of the ') + KINDS[zoneKind].label.toLowerCase() + ' zone' : tool === 'path' ? (pathMode === 'draw' ? 'Press and drag to draw the path (start at the TLZ). It\'s smoothed when you let go' : 'Click where the path starts (usually the TLZ)') : tool === 'measure' ? 'Click two points to measure' : tool === 'scale' ? 'Click both ends of a distance you know on the plan' : 'Click to place it'}</div>}
             {scaleAsk && <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[650] bg-white border border-slate-300 rounded-xl shadow-xl p-3 w-[300px] space-y-2" data-ops-scale="1">
@@ -775,6 +784,11 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
               <button type="button" className="text-xs underline text-slate-500" onClick={() => setScaleAsk(null)}>Cancel</button></div>}
             {toast && <div className="absolute top-14 right-3 z-[680] max-w-[340px] bg-amber-50 border border-amber-300 text-amber-900 text-xs rounded-xl shadow-lg px-3 py-2 flex gap-2" role="status" data-ops-toast="1" data-ops-noprint="1"><i className="fa-solid fa-circle-info mt-0.5"></i><span className="flex-1">{toast}</span><button type="button" aria-label="Close" onClick={() => setToast('')}><i className="fa-solid fa-xmark"></i></button></div>}
             {busy && <div className="absolute inset-0 z-[700] bg-white/60 flex items-center justify-center text-sm font-semibold">{busy}</div>}
+            {show.key && (doc.zones.length || doc.paths.length) ? <div className="absolute bottom-2 left-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 text-[11px] max-w-[280px] max-h-[45%] overflow-y-auto space-y-0.5" data-ops-key="1">
+              <div className="font-bold text-slate-700 mb-0.5">Key</div>
+              {doc.zones.map((z) => { const k = kindStyle(z.kind, settings); return <div key={z.id} className="flex items-start gap-1.5" data-ops-key-zone={z.id}><span className="mt-0.5 w-3 h-3 rounded-sm shrink-0" style={{ background: k.color, border: '1.5px solid ' + k.stroke }}></span><span><b>{z.name}</b> · {zoneTag(z, settings)}</span></div>; })}
+              {doc.paths.map((p) => <div key={p.id} className="flex items-start gap-1.5" data-ops-key-path={p.id}><span className="mt-1.5 w-4 h-1 rounded shrink-0" style={{ background: pathColour(p, doc.paths) }}></span><span><b>{p.name}</b>{p.follow ? ' · ' + (Number(p.agl) || 0) + ' m above ground' : ''}{view === '3d' ? ' · ' + (Number(p.w3d) || 1) + ' m wide' : ''}</span></div>)}
+            </div> : null}
             {view === '2d' && <div className="absolute bottom-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-lg p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] pointer-events-none" data-ops-legend="1">
               {[...((airspace || []).length && show.airspace && doc.mode !== 'plan' ? [['Controlled airspace', { border: '2px dashed #1d4ed8' }], ['Restricted / danger', { border: '2px dashed #be185d' }]] : []), ['Exclusion', { background: '#dc2626' }], ['Over people', { background: kindStyle('oonp', settings).color }], ['Near people', { border: '2px dashed #b45309', background: '#fff7e6' }], ['Clear of people', { background: '#b9a6f2' }], ['Buffer', { border: '2px dashed #d97706' }], ['Emergency LZ', { background: '#ea580c', borderRadius: '50%' }]].map(([l, s]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm inline-block" style={s}></span>{l}</span>)}
             </div>}
@@ -839,6 +853,10 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
           {selPathO && <div className="space-y-3" data-ops-path={selPathO.id}>
             <div className="flex items-center gap-2"><i className="fa-solid fa-route text-slate-600"></i><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">Flight path</span>{!readOnly && <button type="button" onClick={delSel} className="text-xs text-red-600"><i className="fa-solid fa-trash-can mr-1"></i>Delete</button>}</div>
             <div><label className={lbl} htmlFor="op-name">Name</label><input id="op-name" className={inp} disabled={readOnly} value={selPathO.name || ''} onChange={(e) => setPath(selPathO.id, { name: e.target.value })} /></div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <div className="flex items-center gap-1" data-ops-path-colours="1"><span className={lbl + ' mb-0 mr-1'}>Colour</span>{PATH_COLOURS.map((c) => <button key={c} type="button" disabled={readOnly} aria-label={'Colour ' + c} data-ops-path-colour={c} onClick={() => setPath(selPathO.id, { color: c })} className="w-5 h-5 rounded-full" style={{ background: c, boxShadow: pathColour(selPathO, doc.paths) === c ? '0 0 0 2px #fff, 0 0 0 4px ' + c : 'none' }}></button>)}</div>
+              {doc.mode !== 'plan' && <div className="flex items-center gap-1" data-ops-path-width="1" title="In the 3D view the path is drawn as a tube of airspace this wide, to allow some room either side"><span className={lbl + ' mb-0 mr-1'}>3D width</span>{PATH_WIDTHS.map((w) => <button key={w} type="button" disabled={readOnly} data-ops-path-w={w} onClick={() => setPath(selPathO.id, { w3d: w })} className={`${btn} px-2 py-0.5 ${(Number(selPathO.w3d) || 1) === w ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 text-slate-600'}`}>{w}×{w} m</button>)}</div>}
+            </div>
             <div className="grid grid-cols-[1fr_120px] gap-2">
               <div><label className={lbl} htmlFor="op-drone">Drone</label><select id="op-drone" className={inp} disabled={readOnly} value={selPathO.drone || ''} onChange={(e) => setPath(selPathO.id, { drone: e.target.value })}>{drones.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
               <SpeedField id="op-speed" label="Speed" ms={selPathO.speed == null ? '' : selPathO.speed} disabled={readOnly} onMs={(v) => setPath(selPathO.id, { speed: v || 0 })} />

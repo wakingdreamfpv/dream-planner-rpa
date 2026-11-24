@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour } from './geo.js';
 import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
 // with the site plan overlay blended on top; paths are clean lines with a start flag instead of a label on every point.
@@ -12,15 +12,15 @@ let threeP = null;
 const loadThree = () => threeP || (threeP = import('three').catch((e) => { threeP = null; throw new Error('The 3D view couldn\'t load: ' + (e.message || e)); }));
 const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
-export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '' }) {
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '', labels = true }) {
   const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
   const host = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings, googleKey); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings, googleKey, labels); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
-  }, [doc, checks, buildings, googleKey]);
+  }, [doc, checks, buildings, googleKey, labels]);
   return (
     <div className="absolute inset-0 bg-slate-200" data-ops-3d="1">
       <div ref={host} className="absolute inset-0"></div>
@@ -47,7 +47,7 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   return sp;
 }
 
-function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey) {
+function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey, showLabels = true) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -58,6 +58,11 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   scene.add(new THREE.AmbientLight(0xffffff, 0.75 * Math.PI)); const sun = new THREE.DirectionalLight(0xffffff, 0.6 * Math.PI); sun.position.set(60, 120, 40); scene.add(sun);
   const disposables = [];
   const keep = (o) => { disposables.push(o); return o; };
+  // v7.51: labels are smaller, can be switched off (Show › Labels), and one that would cover a more important one is
+  // hidden while they overlap on screen (exclusions first, then other zones, paths, points)
+  const tags = [];
+  const tag = (sp, pri) => { sp.userData.pri = pri; sp.visible = showLabels; tags.push(sp); return sp; };
+  const LBL = 0.66; // label size compared with before v7.51
 
   // extent
   const pts = [];
@@ -142,7 +147,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
       groundAt = gAt; placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
     }
     baseNote = (sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).');
-    showNote(); req();
+    showNote(); req(); if (gState === 'ok') scheduleLevel();
     // v7.47: 3D buildings (OpenStreetMap footprints and heights), standing on the terrain. With Google's city on they
     // only load if Google fails.
     loadOsm = async () => {
@@ -208,7 +213,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
       }
       // label at the zone's top
       const B = exBand(z), t = z.name + (z.kind === 'exclusion' ? (B.lo > 0 || B.hi != null ? '\n' + (B.lo > 0 ? fmtHt(B.lo, z.exUnit) : 'ground') + ' to ' + (B.hi != null ? fmtHt(B.hi, z.exUnit) : 'no limit') : '') : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
-      const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); add(sp);
+      const sp = tag(label(THREE, t, { border: k.stroke }), z.kind === 'exclusion' ? 4 : 3); { const hh = (0.03 * t.split('\n').length + 0.012) * LBL; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); add(sp);
     });
     // markers
     doc.points.forEach((p) => {
@@ -220,7 +225,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
       else { mesh = new THREE.Mesh(new THREE.SphereGeometry(rad * 2, 12, 8), new THREE.MeshLambertMaterial({ color: 0xffffff })); mesh.position.set(c.x, g0 + rad * 2, c.z); }
       add(mesh); mesh.userData.marker = p.kind;
       if (p.text) txt += '\n' + String(p.text).split('\n').slice(0, 3).join('\n');
-      const sp = label(THREE, txt, { size: 24, border: p.kind === 'poi' ? '#a16207' : '#0f172a' }); { const hh = 0.026 * txt.split('\n').length + 0.01; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(c.x, g0 + top + lblScale * 0.4, c.z); add(sp);
+      const sp = tag(label(THREE, txt, { size: 24, border: p.kind === 'poi' ? '#a16207' : '#0f172a' }), 1); { const hh = (0.026 * txt.split('\n').length + 0.01) * LBL; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(c.x, g0 + top + lblScale * 0.4, c.z); add(sp);
     });
   };
   const shapeOf = (z) => {
@@ -232,23 +237,29 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   placeOnGround(null);
   if (typeof window !== 'undefined') window.__WD_3D = { group: onGround, scene, buildings: bGroup };
 
-  // paths
+  // paths. v7.51: each path is a see-through tube of airspace (1, 2 or 3 m across, set per path) in its own colour, with
+  // a thin solid core; a leg the checks flag is amber or red instead.
   doc.paths.forEach((path) => {
-    const res = checks && checks.paths[path.id];
+    const res = checks && checks.paths[path.id], col = new THREE.Color(pathColour(path, doc.paths));
+    const R = Math.max(rad, (Number(path.w3d) || 1) / 2);
     const V = path.pts.map((q) => { const p = P(q); return new THREE.Vector3(p.x, Number(q[2]) || 0, p.z); });
+    const legCol = (i) => { const st = res && res.legs[i] ? res.legs[i].status : 'ok'; return st === 'ok' ? col : new THREE.Color(STATUS[st]); };
     for (let i = 0; i < V.length - 1; i++) {
-      const st = res && res.legs[i] ? res.legs[i].status : 'ok';
-      const tube = keep(new THREE.TubeGeometry(new THREE.LineCurve3(V[i], V[i + 1]), 1, rad, 8, false));
-      scene.add(new THREE.Mesh(tube, keep(new THREE.MeshLambertMaterial({ color: STATUS[st] }))));
+      if (V[i].distanceTo(V[i + 1]) < 0.01) continue;
+      const c = legCol(i), curve = new THREE.LineCurve3(V[i], V[i + 1]);
+      const core = new THREE.Mesh(keep(new THREE.TubeGeometry(curve, 1, rad * 0.7, 8, false)), keep(new THREE.MeshLambertMaterial({ color: c })));
+      const air = new THREE.Mesh(keep(new THREE.TubeGeometry(curve, 1, R, 20, false)), keep(new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: 0.35, depthWrite: false })));
+      core.userData.pathCore = path.id; air.userData.pathTube = path.id; air.userData.radius = R; air.renderOrder = 2; scene.add(core); scene.add(air);
+      if (i > 0) { const j = new THREE.Mesh(keep(new THREE.SphereGeometry(R, 20, 12)), keep(new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: 0.35, depthWrite: false }))); j.position.copy(V[i]); j.renderOrder = 2; scene.add(j); }
     }
     if (V.length) {
       [0, V.length - 1].filter((i, k, a) => a.indexOf(i) === k).forEach((i) => {
         const v = V[i], gy = path.pts[i][3] != null ? Number(path.pts[i][3]) : 0;
-        const s = new THREE.Mesh(keep(new THREE.SphereGeometry(rad * 2.6, 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); scene.add(s);
+        const s = new THREE.Mesh(keep(new THREE.SphereGeometry(Math.max(rad * 2.6, R * 0.6), 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); scene.add(s);
         const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, gy, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); scene.add(drop);
       });
       const t = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
-      const sp = label(THREE, t, { size: 24 }); sp.scale.set(0.032 * sp.userData.aspect, 0.032, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
+      const sp = tag(label(THREE, t, { size: 24, border: '#' + col.getHexString() }), 2); sp.scale.set(0.032 * LBL * sp.userData.aspect, 0.032 * LBL, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
     }
   });
 
@@ -260,7 +271,18 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   if (saved && isFinite(saved.dist)) { theta = saved.theta; phi = saved.phi; dist = saved.dist; target.set(saved.tx, saved.ty, saved.tz); }
   const place = () => { cam.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta)); cam.lookAt(target); if (camRef) camRef.current = { theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }; };
   place();
-  let raf = 0; const draw = () => { raf = 0; if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
+  const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)), sv = new THREE.Vector3();
+  const declutter = () => { // hide a label that overlaps a more important one already shown
+    if (!showLabels) return; const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
+    [...tags].filter((sp) => sp.parent).sort((a, b) => b.userData.pri - a.userData.pri).forEach((sp) => {
+      sp.getWorldPosition(sv); sv.project(cam); if (sv.z > 1) { sp.visible = false; return; }
+      const h = sp.scale.y * k2 * Hp, w = sp.scale.x * k2 * Hp, x = (sv.x + 1) / 2 * Wp - w / 2, y = (1 - sv.y) / 2 * Hp - h / 2;
+      const hit = boxes.some((b) => x < b.x + b.w + 4 && b.x < x + w + 4 && y < b.y + b.h + 4 && b.y < y + h + 4);
+      sp.visible = !hit; if (!hit) boxes.push({ x, y, w, h });
+    });
+    if (window.__WD_3D) window.__WD_3D.labelsShown = tags.filter((t) => t.visible && t.parent).length;
+  };
+  let raf = 0; const draw = () => { raf = 0; if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } cam.updateMatrixWorld(); declutter(); renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
   const cv = renderer.domElement; cv.style.touchAction = 'none';
   let drag = null; const ptrs = new Map(); let pinch = 0;
   const down = (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); } };
@@ -283,6 +305,25 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   // v7.48: Google's photo-realistic 3D city (Map Tiles API, the CRP's own key) instead of our satellite ground and
   // OpenStreetMap buildings. One Google tile set is kept for the whole session and moved between rebuilds, because
   // Google bills each time a tile set is started.
+  // v7.51: Google's heights are above the ellipsoid, ours above the take-off. Line them up by comparing Google's surface
+  // with our terrain at a grid of points over the whole area (the lower quarter, so rooftops and trees don't count),
+  // again as finer tiles arrive, so zones and paths at "10 m above ground" sit 10 m above Google's ground.
+  let lvT = 0; const lvRay = new THREE.Raycaster(), lvDown = new THREE.Vector3(0, -1, 0);
+  const levelGoogle = () => {
+    if (!alive || !gTiles || gState !== 'ok') return; const root = gTiles.root || gTiles.tiles.group; root.updateMatrixWorld(true);
+    const diffs = [], N = 9;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const x = cx + (i / (N - 1) - 0.5) * span, zz = cz + (j / (N - 1) - 0.5) * span;
+      const ours = groundAt ? groundAt(x, zz) : 0; if (ours == null) continue;
+      lvRay.set(new THREE.Vector3(x, 30000, zz), lvDown); lvRay.far = 60000;
+      const hit = lvRay.intersectObject(gTiles.tiles.group, true)[0]; if (hit) diffs.push(hit.point.y - ours);
+    }
+    if (diffs.length < 3) return;
+    diffs.sort((a, b) => a - b); const off = diffs[Math.floor(diffs.length * 0.25)];
+    if (Math.abs(off) > 0.05) { root.position.y -= off; root.updateMatrixWorld(true); req(); }
+    if (window.__WD_3D) window.__WD_3D.googleLevel = { n: diffs.length, y: root.position.y };
+  };
+  const scheduleLevel = () => { if (!lvT) lvT = setTimeout(() => { lvT = 0; levelGoogle(); }, 700); };
   if (googleOn) {
     const rp = (doc.terrain && doc.terrain.ref) || terrainRefPoint(doc) || ref;
     const fail = (why) => { if (gState === 'fail' || !alive) return; gState = 'fail'; gMsg = why;
@@ -295,7 +336,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
       g.onChange = () => {
         if (g.err && !g.tiles.group.children.length) return fail(g.err);
         if (gState === 'loading' && g.tiles.group.children.length) { gState = 'ok'; if (groundMesh) groundMesh.visible = false; grid.visible = false; }
-        if (gState === 'ok') showNote(); req(); };
+        if (gState === 'ok') { showNote(); scheduleLevel(); } req(); };
       g.onChange();
       setTimeout(() => { if (alive && gState === 'loading') fail(g.err || 'no reply from Google after 30 seconds.'); }, 30000);
     }).catch((e) => fail(String((e && e.message) || e)));
@@ -313,6 +354,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
     if (gTiles) { scene.remove(gTiles.root || gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }
+    if (lvT) clearTimeout(lvT);
     alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }
@@ -380,14 +422,10 @@ async function googleTiles(THREE, key, rp, renderer, cam) {
     tiles.errorTarget = 6; // a little sharper than the default for drone-height views
     const g = { id, tiles, ready: false, onChange: null, lift: null, x: 0, z: 0, err: '' };
     // Google's heights are above the ellipsoid; drop the city so the ground at the take-off point is our 0
-    const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
     // Google's city comes out with east along -x and north along +z; ours has east +x and north -z, so it sits in a
     // holder turned half a circle (checked against the library's own maths: 100 m east → x -100, 100 m north → z +100).
     const root = new THREE.Group(); root.rotation.y = Math.PI; root.add(tiles.group); g.root = root;
-    const level = () => { root.updateMatrixWorld(true); ray.set(new THREE.Vector3(g.x, root.position.y + 9000, g.z), down); ray.far = 20000;
-      const hit = ray.intersectObject(tiles.group, true)[0]; if (hit) { root.position.y -= hit.point.y; g.lift = true; root.updateMatrixWorld(true); } };
-    let n = 0;
-    tiles.addEventListener('load-model', () => { if (n++ < 40) level(); g.onChange && g.onChange(); });
+    tiles.addEventListener('load-model', () => { g.onChange && g.onChange(); });
     tiles.addEventListener('needs-update', () => { g.onChange && g.onChange(); });
     tiles.addEventListener('load-error', (e) => { g.err = googleWhy(String((e && e.error && e.error.message) || 'a tile failed')); g.onChange && g.onChange(); });
     g.place = (x, z) => { g.x = x; g.z = z; root.position.x = x; root.position.z = z; root.updateMatrixWorld(true); };

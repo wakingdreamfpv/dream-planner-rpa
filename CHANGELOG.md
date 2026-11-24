@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.51 — 24 Nov 2026 — Easier path drawing, coloured paths, 3D airspace tubes, tidier labels
+- **Drawing a flight path no longer moves the map.** After each stroke you stay in Draw, and the next stroke carries on the same path, so you can draw it in pieces. **New path** starts another one; **Done** goes back to Select. (Before, the second stroke dragged the map instead.)
+- **Each path has its own colour** (picked automatically, change it under the path's name). A leg the checks flag still shows an amber or red outline.
+- **3D: paths are tubes of airspace**, 1×1 m by default, or 2×2 / 3×3 m per path (**3D width**), to show the room either side of the line.
+- **3D with Google's city: zones and paths sit at the right height again.** Google's ground is now lined up with our terrain over the whole area (not one point), so a zone "up to 10 m" and a path "3 m above ground" show above Google's beach and streets instead of under them.
+- **Labels:** smaller in 3D, and when two overlap the less important one hides until you turn the view (exclusions first, then other zones, paths, points). **Show › Labels** switches them all off for a clear picture (2D and 3D); **Show › Key** lists every zone and path with its colour and limits instead.
+- Supabase: nothing to do.
+
 ## v7.50 — 24 Nov 2026 — Google 3D city lined up with your zones
 - **Fixed:** Google's 3D city was turned half a circle (east and west swapped, and north and south), so zones and paths looked like they sat over the wrong place, e.g. a sea exclusion appeared over the buildings. The city now faces the same way as the plan, with the take-off point in the same spot.
 - Supabase: nothing to do.
