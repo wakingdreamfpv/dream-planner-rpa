@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.49 — 24 Nov 2026 — Google 3D city: clear status, and buildings if Google fails
+- The grey line under the 3D view now always says what Google's 3D city is doing: loading, showing, or why it didn't load in plain words (for example "Google refused the key (403)…" with what to check). Before, the satellite note wrote over it.
+- If Google's city doesn't load, the free OpenStreetMap 3D buildings load instead, so you never end up with no buildings.
+- After fixing the key in Google Cloud, just reopen the 3D view: it tries Google again.
+- Supabase: nothing to do.
+
 ## v7.48 — 24 Nov 2026 — Google's photo-realistic 3D city in the 3D view
 - **Google 3D city** (outdoor maps): real 3D buildings, trees and terrain from Google, instead of the flat satellite picture and the OpenStreetMap blocks. It needs your own Google Maps Platform key: paste it in **Database & Settings › API integrations › Google 3D city key**. With a key set, the 3D view's Show list has **Google 3D city** (on by default); untick it to go back to the satellite ground and 3D buildings. The credit line Google requires shows under the view.
   - Cost: Google gives 1,000 free 3D-view openings a month (across everyone using your key), then about US$6 per 1,000. Moving the camera around does not count; opening the 3D view does. The planner reuses one opening while you stay on the same job in a session.
