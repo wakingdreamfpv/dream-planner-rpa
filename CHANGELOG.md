@@ -1,5 +1,9 @@
 # Planner changelog
 
+## v7.50 — 24 Nov 2026 — Google 3D city lined up with your zones
+- **Fixed:** Google's 3D city was turned half a circle (east and west swapped, and north and south), so zones and paths looked like they sat over the wrong place, e.g. a sea exclusion appeared over the buildings. The city now faces the same way as the plan, with the take-off point in the same spot.
+- Supabase: nothing to do.
+
 ## v7.49 — 24 Nov 2026 — Google 3D city: clear status, and buildings if Google fails
 - The grey line under the 3D view now always says what Google's 3D city is doing: loading, showing, or why it didn't load in plain words (for example "Google refused the key (403)…" with what to check). Before, the satellite note wrote over it.
 - If Google's city doesn't load, the free OpenStreetMap 3D buildings load instead, so you never end up with no buildings.
