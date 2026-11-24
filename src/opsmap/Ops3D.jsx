@@ -7,25 +7,20 @@ import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
 // with the site plan overlay blended on top; paths are clean lines with a start flag instead of a label on every point.
 
+// v7.48: three.js is bundled (loaded with this view) so Google's 3D tiles can share it; it used to come from a CDN.
 let threeP = null;
-const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
-  if (window.THREE) return res(window.THREE);
-  const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-  s.onload = () => (window.THREE ? res(window.THREE) : rej(new Error('three.js did not load')));
-  s.onerror = () => { threeP = null; rej(new Error('The 3D view needs an internet connection the first time.')); };
-  document.head.appendChild(s);
-}));
+const loadThree = () => threeP || (threeP = import('three').catch((e) => { threeP = null; throw new Error('The 3D view couldn\'t load: ' + (e.message || e)); }));
 const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
-export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true }) {
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '' }) {
   const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
   const host = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings, googleKey); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
-  }, [doc, checks, buildings]);
+  }, [doc, checks, buildings, googleKey]);
   return (
     <div className="absolute inset-0 bg-slate-200" data-ops-3d="1">
       <div ref={host} className="absolute inset-0"></div>
@@ -46,13 +41,13 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(1.5, 1.5, c.width - 3, c.height - 3, 10); else ctx.rect(1.5, 1.5, c.width - 3, c.height - 3); ctx.fill(); ctx.stroke();
   ctx.fillStyle = fg; ctx.textBaseline = 'top';
   lines.forEach((l, i) => ctx.fillText(l, 14, 9 + i * size * 1.3));
-  const tex = new THREE.CanvasTexture(c); tex.minFilter = THREE.LinearFilter;
+  const tex = new THREE.CanvasTexture(c); tex.minFilter = THREE.LinearFilter; tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
   sp.userData.aspect = c.width / c.height; sp.renderOrder = 10;
   return sp;
 }
 
-function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
+function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -60,7 +55,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, H); renderer.setClearColor(0xe2e8f0);
   el.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0xffffff, 0.75)); const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(60, 120, 40); scene.add(sun);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75 * Math.PI)); const sun = new THREE.DirectionalLight(0xffffff, 0.6 * Math.PI); sun.position.set(60, 120, 40); scene.add(sun);
   const disposables = [];
   const keep = (o) => { disposables.push(o); return o; };
 
@@ -79,7 +74,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   let flatOverlay = null;
   if (doc.overlay && doc.overlay.src) {
     const o = doc.overlay, c = P(o.center);
-    const tex = keep(new THREE.TextureLoader().load(o.src)); tex.minFilter = THREE.LinearFilter;
+    const tex = keep(new THREE.TextureLoader().load(o.src)); tex.minFilter = THREE.LinearFilter; tex.colorSpace = THREE.SRGBColorSpace;
     const g = keep(new THREE.PlaneGeometry(o.widthM, o.widthM * (o.aspect || 1)));
     const m = keep(new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: Math.max(0.5, (o.opacity == null ? 60 : o.opacity) / 100) }));
     const mesh = new THREE.Mesh(g, m); mesh.rotation.x = -Math.PI / 2; mesh.rotation.z = -((o.rot || 0) * Math.PI) / 180; mesh.position.set(c.x, -0.02, c.z); scene.add(mesh); flatOverlay = mesh;
@@ -87,7 +82,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   const grid = new THREE.GridHelper(span * 1.6, 32, 0x94a3b8, 0xcbd5e1); grid.position.set(cx, -0.05, cz); scene.add(grid);
   let alive = true;
   const groundNote = (t) => { const n = el.parentNode && el.parentNode.querySelector('[data-ops-3d-ground]'); if (n) n.textContent = t; };
-  let groundAt = null;
+  let groundAt = null, groundMesh = null, gTiles = null;
   const bGroup = new THREE.Group(); scene.add(bGroup);
   const addBuildings = (list, gAt) => buildingMesh(THREE, bGroup, list, P, gAt, cx, cz, span * 0.8);
   if (doc.mode !== 'plan') (async () => {
@@ -121,7 +116,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
       [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion')).forEach((zz) => { if (zz.shape !== 'circle' && (zz.pts || []).length < 3) return; const k = kindStyle(zz.kind, doc.settings);
         if (zz.kind === 'exclusion' && zz.shape === 'circle') { const b = zoneBuffer(zz); if (b > 0) { outline(zz, b); g.fillStyle = 'rgba(245,158,11,0.28)'; g.fill(); } }
         outline(zz, 0); g.fillStyle = hexA(toHex(k.color), zz.kind === 'exclusion' ? 0.38 : 0.3); g.fill(); g.lineWidth = Math.max(2, canvas.width / 600); g.strokeStyle = toHex(k.stroke); g.stroke(); }); }
-    const tex = keep(new THREE.CanvasTexture(canvas)); tex.minFilter = THREE.LinearFilter;
+    const tex = keep(new THREE.CanvasTexture(canvas)); tex.minFilter = THREE.LinearFilter; tex.colorSpace = THREE.SRGBColorSpace;
     const pos = [], uv = [], idx = [];
     for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
       const dx = -half + (2 * half * i) / N, dz = -half + (2 * half * j) / N, ll = corner(dx, dz), q = toPx(ll);
@@ -130,7 +125,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const a = j * (N + 1) + i, b = a + 1, c = a + N + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
     const geo = keep(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, keep(new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })));
-    scene.add(mesh); grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
+    scene.add(mesh); groundMesh = mesh; if (gTiles && gTiles.ready) mesh.visible = false; grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
     if (terr) { // walls, tops and markers follow the ground (bilinear on the same grid as the terrain mesh)
       const H = terr.h, gAt = (x, zz) => { const fi = ((x - cx + half) / (2 * half)) * N, fj = ((zz - cz + half) / (2 * half)) * N; if (!(fi >= 0 && fj >= 0 && fi <= N && fj <= N)) return null;
         const i0 = Math.min(N - 1, Math.floor(fi)), j0 = Math.min(N - 1, Math.floor(fj)), ti = fi - i0, tj = fj - j0, v = (i, j) => H[j * (N + 1) + i];
@@ -138,7 +133,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
       groundAt = gAt; placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
     }
     const gNote = (sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).');
-    groundNote(gNote);
+    if (gTiles && gTiles.ready) groundNote(gTiles.note()); else groundNote(gNote);
     req();
     // v7.47: 3D buildings (OpenStreetMap footprints and heights), standing on the terrain
     if (showBuildings) {
@@ -254,7 +249,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   if (saved && isFinite(saved.dist)) { theta = saved.theta; phi = saved.phi; dist = saved.dist; target.set(saved.tx, saved.ty, saved.tz); }
   const place = () => { cam.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta)); cam.lookAt(target); if (camRef) camRef.current = { theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }; };
   place();
-  let raf = 0; const draw = () => { raf = 0; renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
+  let raf = 0; const draw = () => { raf = 0; if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
   const cv = renderer.domElement; cv.style.touchAction = 'none';
   let drag = null; const ptrs = new Map(); let pinch = 0;
   const down = (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); } };
@@ -274,6 +269,19 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   ro.observe(el);
   // textures load asynchronously: redraw a few times
   req(); const t1 = setTimeout(req, 300), t2 = setTimeout(req, 1200);
+  // v7.48: Google's photo-realistic 3D city (Map Tiles API, the CRP's own key) instead of our satellite ground and
+  // OpenStreetMap buildings. One Google tile set is kept for the whole session and moved between rebuilds, because
+  // Google bills each time a tile set is started.
+  if (googleKey && doc.mode !== 'plan') {
+    const rp = (doc.terrain && doc.terrain.ref) || terrainRefPoint(doc) || ref;
+    groundNote('Loading Google 3D city…');
+    googleTiles(THREE, googleKey, rp, renderer, cam).then((g) => {
+      if (!alive || !g) return;
+      gTiles = g; const c = P(rp); g.place(c.x, c.z); scene.add(g.tiles.group);
+      g.onChange = () => { if (!g.ready && g.tiles.group.children.length) { g.ready = true; if (groundMesh) groundMesh.visible = false; grid.visible = false; } groundNote(g.note()); req(); };
+      g.onChange();
+    }).catch((e) => { groundNote('Google 3D city didn\'t load: ' + (e.message || e) + ' Showing the satellite ground.'); });
+  }
   // v7.12: the planner takes a picture of this view for the plan and the PDF
   if (apiRef) apiRef.current = {
     capture: (maxW = 1800) => { renderer.render(scene, cam); const src = renderer.domElement; const k = Math.min(1, maxW / src.width);
@@ -286,6 +294,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
+    if (gTiles) { scene.remove(gTiles.tiles.group); gTiles.tiles.deleteCamera(cam); gTiles.onChange = null; }
     alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }
@@ -333,4 +342,39 @@ function buildingMesh(THREE, group, list, P, gAt, cx, cz, half) {
   const mesh = new THREE.Mesh(flat, new THREE.MeshLambertMaterial({ color: 0xe7e5e4, side: THREE.DoubleSide }));
   mesh.userData.buildings = count; group.add(mesh);
   return count;
+}
+
+// ── v7.48: Google Photorealistic 3D Tiles. Kept per key + place for the session (each new tile set is billed).
+let gCache = null;
+async function googleTiles(THREE, key, rp, renderer, cam) {
+  if (typeof window !== 'undefined' && window.__WD_GOOGLE3D) return window.__WD_GOOGLE3D(THREE, key, rp, renderer, cam); // tests
+  const id = key + '|' + rp[0].toFixed(4) + ',' + rp[1].toFixed(4);
+  if (!gCache || gCache.id !== id) {
+    if (gCache) { try { gCache.tiles.dispose(); } catch (e) {} }
+    const [{ TilesRenderer }, { GoogleCloudAuthPlugin }, { GLTFExtensionsPlugin, TileCompressionPlugin, ReorientationPlugin }, { DRACOLoader }] = await Promise.all([
+      import('3d-tiles-renderer/three'), import('3d-tiles-renderer/core/plugins'), import('3d-tiles-renderer/three/plugins'), import('three/examples/jsm/loaders/DRACOLoader.js')]);
+    const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+    const tiles = new TilesRenderer();
+    tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: key, autoRefreshToken: true }));
+    tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader: draco }));
+    tiles.registerPlugin(new TileCompressionPlugin());
+    tiles.registerPlugin(new ReorientationPlugin({ lat: rp[0] * Math.PI / 180, lon: rp[1] * Math.PI / 180, height: 0, recenter: true }));
+    tiles.errorTarget = 6; // a little sharper than the default for drone-height views
+    const g = { id, tiles, ready: false, onChange: null, lift: null, x: 0, z: 0, err: '' };
+    // Google's heights are above the ellipsoid; drop the city so the ground at the take-off point is our 0
+    const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
+    const level = () => { const gr = tiles.group; ray.set(new THREE.Vector3(g.x, gr.position.y + 9000, g.z), down); ray.far = 20000;
+      const hit = ray.intersectObject(gr, true)[0]; if (hit) { gr.position.y -= hit.point.y; g.lift = true; gr.updateMatrixWorld(true); } };
+    let n = 0;
+    tiles.addEventListener('load-model', () => { if (n++ < 40) level(); g.onChange && g.onChange(); });
+    tiles.addEventListener('needs-update', () => { g.onChange && g.onChange(); });
+    tiles.addEventListener('load-error', (e) => { g.err = String((e && e.error && e.error.message) || 'a tile failed'); g.onChange && g.onChange(); });
+    g.place = (x, z) => { g.x = x; g.z = z; tiles.group.position.x = x; tiles.group.position.z = z; tiles.group.updateMatrixWorld(true); };
+    g.note = () => { const at = []; try { tiles.getAttributions(at); } catch (e) {} const txt = at.filter((a) => a.type === 'string').map((a) => a.value).join(' ');
+      return g.err && !tiles.group.children.length ? 'Google 3D city: ' + g.err + ' (check the key and that the Map Tiles API is on).' : 'Google 3D city · ' + (txt || 'Google') + ' · heights from the take-off.'; };
+    gCache = g;
+  }
+  const g = gCache;
+  g.tiles.setCamera(cam); g.tiles.setResolutionFromRenderer(cam, renderer);
+  return g;
 }

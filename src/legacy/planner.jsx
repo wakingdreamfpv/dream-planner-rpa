@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.47';
+        const APP_VERSION = '7.48';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -11289,7 +11289,7 @@ View in the Database & Settings tab.`);
               })()}
               {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
                 center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
-                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} googleKey={db.googleTilesKey || ''} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
@@ -16614,6 +16614,15 @@ View in the Database & Settings tab.`);
                                         {aipKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
                                     </div>
                                     <p className="text-xs text-slate-400 mt-1">Get your free key at <a href="https://www.openaip.net" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">openaip.net</a> (account › API). When you're signed in as CRP it's shared with your crew and your other devices, so you only enter it once.{!openAipKey && cloudAipKey ? ' This device is using the company key.' : ''}</p>
+                                </div>
+                                <div data-google-key-row="1">
+                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Google 3D city key <span className="text-slate-400 font-normal normal-case">(photo-realistic 3D buildings and terrain in the ops map's 3D view)</span></label>
+                                    <div className="flex gap-2 items-center">
+                                        <input type="password" data-google-key="1" value={db.googleTilesKey || ''} onChange={e => updateDb('googleTilesKey', e.target.value.trim())}
+                                            placeholder="Paste your Google Maps Platform API key (Map Tiles API)…" className="w-full text-sm border rounded px-3 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono" />
+                                        {db.googleTilesKey && <i className="fa-solid fa-circle-check text-green-600 flex-shrink-0" title="Key saved"></i>}
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-1">Google Cloud › Maps Platform: turn on the <b>Map Tiles API</b>, create an API key and restrict it to this website and that API. Google charges per 3D view opened: the first 1,000 a month are free, then about US$6 per 1,000. Saved with your company setup, so it works on all your devices.</p>
                                 </div>
                             </div>
                         </div>

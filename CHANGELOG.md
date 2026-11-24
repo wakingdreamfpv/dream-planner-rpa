@@ -1,5 +1,12 @@
 # Planner changelog
 
+## v7.48 — 24 Nov 2026 — Google's photo-realistic 3D city in the 3D view
+- **Google 3D city** (outdoor maps): real 3D buildings, trees and terrain from Google, instead of the flat satellite picture and the OpenStreetMap blocks. It needs your own Google Maps Platform key: paste it in **Database & Settings › API integrations › Google 3D city key**. With a key set, the 3D view's Show list has **Google 3D city** (on by default); untick it to go back to the satellite ground and 3D buildings. The credit line Google requires shows under the view.
+  - Cost: Google gives 1,000 free 3D-view openings a month (across everyone using your key), then about US$6 per 1,000. Moving the camera around does not count; opening the 3D view does. The planner reuses one opening while you stay on the same job in a session.
+  - If the key is wrong or the Map Tiles API isn't turned on, the view says so and shows the satellite ground.
+- The 3D engine is now part of the planner (it used to load from an outside server), so the 3D view also opens offline in the single-file version.
+- Supabase: nothing to do.
+
 ## v7.47 — 24 Nov 2026 — 3D buildings, and exclusion zones with a height band
 - **Exclusion zones can start above the ground and stop at a height.** Select an exclusion zone on the ops map and fill in **Starts at** (e.g. 20 m) and **Goes up to** (e.g. 400 ft). Pick m or ft for each zone. Leave both empty for the usual "ground all the way up".
   - The path checks follow it: a path above the top or below the start is clear of the zone. Its buffer still applies above and below, so a path that passes just over the top gets a warning.

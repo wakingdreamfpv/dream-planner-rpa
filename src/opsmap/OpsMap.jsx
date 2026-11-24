@@ -190,7 +190,7 @@ function Profile({ path, res, readOnly, onAlt, onPick, onStart, selPt }) {
   );
 }
 
-export default function OpsMap({ value, onChange, onClose, center, fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace, viewImages = {}, onViewImage, plannedHeightM = 0, reviewer = '' }) {
+export default function OpsMap({ value, onChange, onClose, center, googleKey = '', fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace, viewImages = {}, onViewImage, plannedHeightM = 0, reviewer = '' }) {
   const [toast, setToast] = useState('');
   const [ackOpen, setAckOpen] = useState(null); // { key, note }
   const api3d = useRef(null), cam3d = useRef(null);
@@ -207,7 +207,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const [sel, setSel] = useState(null);
   const [selPt, setSelPt] = useState(null);
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true, google: true });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -752,14 +752,14 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               : <button type="button" onClick={() => setSel({ t: 'overlay' })} className={`w-full text-left text-xs border rounded-md p-2 ${sel && sel.t === 'overlay' ? 'border-violet-600 bg-violet-50' : 'border-slate-200'}`}><b className="block truncate">{doc.overlay.name}</b><span className="text-slate-500">{doc.overlay.locked ? 'Locked' : 'Not locked'} · {doc.overlay.widthM} m wide</span></button>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Show</div>
-            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : []), ...(view === '3d' && doc.mode !== 'plan' ? [['buildings', '3D buildings']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
+            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : []), ...(view === '3d' && doc.mode !== 'plan' ? [...(googleKey ? [['google', 'Google 3D city']] : []), ...(googleKey && show.google ? [] : [['buildings', '3D buildings']])] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
           </div>
           <div className="px-1"><label className={lbl}>Over-people colour</label><div className="flex gap-1">{['green', 'blue'].map((c) => <button key={c} type="button" disabled={readOnly} onClick={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), oonpColour: c } }))} className={`${btn} flex-1 justify-center ${(settings.oonpColour || 'green') === c ? 'border-violet-600 bg-violet-50' : 'border-slate-300'}`}><span className="w-3 h-3 rounded-sm" style={{ background: c === 'blue' ? '#2563eb' : '#16a34a' }}></span>{c === 'blue' ? 'Blue' : 'Green'}</button>)}</div></div>
         </aside>
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false && !(googleKey && show.google)} googleKey={show.google ? googleKey : ''} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
               <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? 'Press and drag from the end of the path to carry on drawing' : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
