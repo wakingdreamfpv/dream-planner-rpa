@@ -57,6 +57,10 @@ export default defineConfig(({ mode }) => {
               globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
               maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
               navigateFallback: 'index.html',
+              // v7.52: the Dream Flight tools (/tools/, /hud/, /log/) are their own pages: never answered with the
+              // planner, and not precached (HUD Studio is 1.4 MB)
+              navigateFallbackDenylist: [/^\/(tools|hud|log)(\/|$)/],
+              globIgnores: ['tools/**', 'hud/**', 'log/**'],
               // Map tiles and APIs are live data: never served from the offline cache
               runtimeCaching: [],
             },

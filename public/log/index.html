@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dream Flight Log v2.9 | Waking Dream FPV</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121821; --panel2:#18202b; --line:#253041; --text:#e6edf5; --dim:#8a99ad; --faint:#5b6b80;
+    --accent:#22b8cf; --alt:#3b9cff; --spd:#ffb020; --batt:#4ade80; --curr:#f472b6; --link:#a78bfa; --bad:#ef4444; --warn:#f59e0b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  button,select,input{font:inherit;color:inherit}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  #app{display:grid;grid-template-rows:auto 1fr auto;height:100%}
+  header{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header .brand{font-weight:800;letter-spacing:.02em}
+  header .brand span{color:var(--accent)}
+  .toolnav{display:flex;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px}
+  .toolnav a{color:var(--dim);text-decoration:none;font-size:12px;font-weight:600;padding:4px 9px;border-radius:6px;cursor:pointer}
+  .toolnav a:hover{color:var(--text);background:#202a37}
+  .toolnav a.here{color:#04161a;background:var(--accent)}
+  .btn{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#04161a;font-weight:700}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{background:var(--panel2);border:0;padding:4px 9px;cursor:pointer;color:var(--dim)}
+  .seg button.on{background:var(--accent);color:#04161a;font-weight:700}
+  .lbl{color:var(--dim);font-size:11px}
+  #fileName{color:var(--faint);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .spacer{flex:1}
+  #main{display:grid;grid-template-columns:250px 1fr;min-height:0}
+  #side{background:var(--panel);border-right:1px solid var(--line);overflow:auto;min-height:0}
+  #side h3{margin:0;padding:10px 12px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  .fl{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+  .fl:hover{background:var(--panel2)}
+  .fl.on{background:#0f2a33;box-shadow:inset 3px 0 0 var(--accent)}
+  .fl .t{font-weight:700}
+  .fl .s{color:var(--dim);font-size:11px}
+  #sum{padding:8px 12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .kv{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+  .kv .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+  .kv .v{font-weight:700}
+  .notes{padding:0 12px 12px;font-size:11px;color:var(--warn)}
+  .notes div{margin-top:4px}
+  #mapWrap{position:relative;min-height:0}
+  #map{position:absolute;inset:0;background:#1a2230}
+  .hud{position:absolute;z-index:500;background:rgba(10,14,20,.78);border:1px solid rgba(255,255,255,.08);border-radius:10px;backdrop-filter:blur(4px)}
+  #hudL{top:10px;left:52px;padding:8px 10px;display:grid;grid-template-columns:repeat(4,auto);gap:4px 14px}
+  #hudL .k{color:var(--dim);font-size:10px;letter-spacing:.06em}
+  #hudL .v{font-size:17px;font-weight:700}
+  #hudL .u{font-size:11px;color:var(--dim);font-weight:400;margin-left:2px}
+  #hudR{top:10px;right:10px;padding:8px;display:flex;gap:8px;align-items:center}
+  #mapCtl{bottom:10px;right:10px;padding:5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 20px);z-index:560}
+  /* v2.2: moments of interest + summary sheet */
+  .moiDot{position:absolute;left:-5px;top:-5px;width:10px;height:10px;border-radius:50%;background:var(--c);border:1.5px solid #fff;box-sizing:border-box;cursor:pointer}
+  .moiPin{position:absolute;left:0;bottom:var(--b,9px);transform:translateX(-50%);white-space:nowrap;background:rgba(10,14,20,.9);border:1.5px solid var(--c);color:#fff;border-radius:6px;padding:1px 6px;font:700 11px/16px system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.45)}
+  .moiPin b{color:var(--c)}
+  .moiPin:after{content:'';position:absolute;left:50%;top:100%;margin-left:-.75px;width:1.5px;height:calc(var(--b,9px) - 4px);background:var(--c)}
+  .moiPin.flash{animation:moiFlash .5s ease-in-out 6 alternate}
+  @keyframes moiFlash{to{box-shadow:0 0 0 5px var(--c)}}
+  #moiPop{left:50%;top:106px;transform:translateX(-50%);padding:7px 12px;display:none;border-left:4px solid var(--c);max-width:min(440px,84%);pointer-events:none}
+  #moiPop .t{font-weight:800;font-size:14px}
+  #moiPop .s{color:var(--dim);font-size:11px;margin-top:1px}
+  #moiMenu{right:10px;bottom:56px;padding:9px 12px;display:none;z-index:570;gap:5px;min-width:220px}
+  #moiMenu.on{display:grid}
+  #moiMenu label{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px}
+  #moiMenu label b{width:14px;text-align:center}
+  #moiMenu hr{border:0;border-top:1px solid var(--line);margin:3px 0;width:100%}
+  #moiList{padding:0 12px 10px;display:grid;gap:4px}
+  .mrow{display:flex;gap:8px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--c);border-radius:7px;padding:5px 8px;cursor:pointer}
+  .mrow:hover{border-color:var(--c)}
+  .mrow .mi{color:var(--c);font-weight:800;width:14px;text-align:center;flex:none}
+  .mrow .s{color:var(--dim);font-size:11px}
+  .mrow.flat{cursor:default;opacity:.7}
+  #sheet{position:absolute;inset:0;z-index:550;background:rgba(11,15,20,.95);overflow:auto;display:none;padding:10px 12px 70px}
+  #sheet.on{display:block}
+  #mapWrap.sheetOn .leaflet-control-container,#mapWrap.sheetOn .maponly,#mapWrap.sheetOn #legend{display:none!important}
+  .sheetBar{display:flex;align-items:center;gap:6px;max-width:860px;margin:0 auto 8px}
+  .paper{background:#fff;color:#111;max-width:860px;margin:0 auto;padding:18px 22px;border-radius:6px;font:10pt/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+  .paper .rp{page-break-after:auto}
+  @media (max-width:640px){.paper{padding:12px}.paper .rp .grid,.paper .rp .grid.g5{grid-template-columns:repeat(2,1fr)}.rp-head{flex-direction:column;align-items:flex-start;gap:4px}}
+  #legend{bottom:10px;left:10px;padding:6px 9px;font-size:11px}
+  #legend .bar{height:6px;width:150px;border-radius:3px;margin:4px 0 2px;background:linear-gradient(90deg,#2b6cff,#22d3ee,#4ade80,#facc15,#ef4444)}
+  #legend .ends{display:flex;justify-content:space-between;color:var(--dim)}
+  #empty{position:absolute;inset:0;z-index:600;display:flex;align-items:center;justify-content:center;background:rgba(11,15,20,.92)}
+  #empty .box{border:2px dashed var(--line);border-radius:16px;padding:32px 36px;text-align:center;max-width:460px}
+  #empty .box h2{margin:0 0 6px}
+  #empty .box p{color:var(--dim);margin:6px 0 16px}
+  body.drag #empty{display:flex!important}
+  body.drag #empty .box{border-color:var(--accent)}
+  #bottom{background:var(--panel);border-top:1px solid var(--line);display:grid;grid-template-columns:auto 1fr;gap:10px;padding:8px 10px}
+  #sticks{display:flex;gap:10px;align-items:flex-start}
+  .gimbal{text-align:center}
+  .gimbal canvas{background:#0d131b;border:1px solid var(--line);border-radius:10px;display:block}
+  .gimbal .cap{color:var(--dim);font-size:10px;margin-top:3px}
+  #swRow{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;max-width:250px}
+  .sw{font-size:10px;padding:1px 5px;border-radius:4px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .sw.hi{background:#0f2a33;border-color:var(--accent);color:var(--accent)}
+  .sw.mid{background:#2a2410;border-color:var(--warn);color:var(--warn)}
+  #right{display:flex;flex-direction:column;gap:6px;min-width:0}
+  #transport{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  #play{width:34px;height:30px;border-radius:8px;background:var(--accent);border:0;color:#04161a;font-weight:900;cursor:pointer}
+  #clock{font-size:15px;font-weight:700}
+  #clockSub{color:var(--dim);font-size:11px}
+  #charts{position:relative;cursor:crosshair;touch-action:none}
+  #charts canvas{display:block;width:100%}
+  #readout{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--dim)}
+  #readout b{color:var(--text);font-weight:700}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .acft{width:30px;height:30px;margin-left:-15px;margin-top:-15px}
+  .home{width:18px;height:18px;margin-left:-9px;margin-top:-9px;border-radius:50%;background:#16a34a;border:2px solid #fff;color:#fff;font:800 10px/14px system-ui;text-align:center;box-shadow:0 0 0 2px rgba(0,0,0,.35)}
+  .leaflet-container{background:#1a2230}
+  .key{color:var(--faint);font-size:10px}
+  /* v2.0: flight details, register, report */
+  .btn.sm{padding:3px 8px;font-size:12px}
+  .btn:disabled,select:disabled,input:disabled,textarea:disabled{opacity:.45;cursor:not-allowed}
+  .ver{color:var(--faint);font-size:11px;font-weight:600;margin-left:4px}
+  #det{padding:4px 12px 10px;display:grid;gap:6px}
+  #det label,#det .lab{display:grid;gap:2px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+  #det input,#det select,#det textarea,.reg input,.reg select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--text);width:100%}
+  #det textarea{resize:vertical;min-height:44px;font-family:inherit}
+  .chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{display:inline-flex;align-items:center;gap:4px;background:#0f2a33;border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:1px 4px 1px 8px;font-size:11px;font-weight:700}
+  .chip button{background:none;border:0;color:var(--accent);cursor:pointer;padding:0 3px;font-size:13px;line-height:1}
+  .chip.sug{background:var(--panel2);border-color:var(--line);color:var(--dim);cursor:pointer;padding:1px 8px;font-weight:400}
+  .chip.sug:hover{border-color:var(--accent);color:var(--accent)}
+  .packrow{display:flex;gap:4px}
+  .packrow input{flex:1}
+  .tag{display:inline-block;font-size:10px;padding:0 5px;border-radius:4px;margin-right:3px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .tag.ok{border-color:#1f5f3a;color:var(--batt)}
+  .tag.miss{border-color:#5c4a14;color:var(--warn)}
+  .packinfo{font-size:11px;color:var(--dim);line-height:1.5}
+  .packinfo b{color:var(--text)}
+  #modal{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:30px 12px;overflow:auto}
+  #modal.on{display:flex}
+  #modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(980px,100%);padding:14px 16px}
+  #modal h2{margin:0 0 4px;font-size:16px}
+  .tabs{display:flex;gap:4px;margin:10px 0}
+  .tabs button{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 12px;cursor:pointer;color:var(--dim)}
+  .tabs button.on{background:var(--accent);border-color:var(--accent);color:#04161a;font-weight:700}
+  .reg{width:100%;border-collapse:collapse;font-size:12px}
+  .reg th{text-align:left;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:4px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .reg td{padding:3px 4px;border-bottom:1px solid #1a2330;vertical-align:middle}
+  .reg td.num{text-align:right;font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  .reg .x{background:none;border:0;color:var(--faint);cursor:pointer;font-size:15px}
+  .reg .x:hover{color:var(--bad)}
+  .regwrap{overflow-x:auto}
+  .warnTxt{color:var(--warn)}
+  #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#0f2a33;border:1px solid var(--accent);color:var(--text);padding:8px 14px;border-radius:9px;z-index:3000;display:none;max-width:90vw}
+  #report{display:none}
+  /* report layout: PDF pages and the on-screen summary */
+  .rp-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #222;padding-bottom:5px;margin-bottom:8px}
+  .rp-head h1{font-size:15pt;margin:0}
+  .rp-head .sub{color:#555;font-size:9pt}
+  .rp-sec{font-size:8.5pt;font-weight:800;letter-spacing:.08em;text-transform:uppercase;background:#3a3f46;color:#fff;padding:3px 6px;margin:10px 0 5px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .rp table{width:100%;border-collapse:collapse;font-size:8.5pt}
+  .rp th{background:#e9ecef;text-align:left;padding:3px 4px;border:1px solid #c9ced4;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .rp td{padding:3px 4px;border:1px solid #d5d9de;vertical-align:top}
+  .rp td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .rp tr.tot td{font-weight:800;background:#f3f4f6;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .rp .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+  .rp .grid.g5{grid-template-columns:repeat(5,1fr)}
+  .rp table.tight td,.rp table.tight th{padding:2px 4px}
+  .rp .kv{border:1px solid #d5d9de;border-radius:4px;padding:3px 6px;background:#fff}
+  .rp .kv .k{font-size:7pt;color:#666;text-transform:uppercase;letter-spacing:.05em}
+  .rp .kv .v{font-weight:800;font-size:10pt}
+  .rp img{width:100%;display:block;border:1px solid #d5d9de;border-radius:4px}
+  .rp .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .rp .ev{color:#b45309}.rp .ev.bad{color:#b91c1c}
+  .rp .flag{color:#b91c1c;font-weight:800}
+  .rp .sig{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:18px}
+  .rp .sig div{border-top:1px solid #333;padding-top:3px;font-size:8pt;color:#444}
+  .rp .foot{margin-top:10px;font-size:7.5pt;color:#777;border-top:1px solid #ddd;padding-top:4px}
+  @media print{
+    @page{size:A4 portrait;margin:12mm}
+    html,body{height:auto!important;overflow:visible!important;background:#fff!important;color:#111!important}
+    #app,#modal,#toast{display:none!important}
+    #report{display:block!important;font:10pt/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#111}
+    .rp{page-break-after:always;break-after:page}
+    .rp:last-child{page-break-after:auto;break-after:auto}
+  }
+  @media (max-width:980px){
+    html,body{height:auto;overflow:visible}
+    #app{display:flex;flex-direction:column;height:auto}
+    #main{display:contents}
+    header{order:1} #mapWrap{order:2;height:52vh;min-height:300px} #mapWrap.sheetOn{height:78vh} #bottom{order:3} #side{order:4;border-right:0;border-top:1px solid var(--line)}
+    #flights{display:flex;overflow-x:auto}
+    .fl{min-width:180px;border-right:1px solid var(--line)}
+    #bottom{grid-template-columns:1fr}
+    #sticks{justify-content:center}
+    #swRow{justify-content:center;max-width:none}
+    #hudL{grid-template-columns:repeat(4,auto);gap:2px 10px;padding:5px 8px;left:48px;right:8px}
+    #hudL .v{font-size:13px} #hudL .u{font-size:9px}
+    #hudL > div:nth-child(n+5){display:none}
+    #hudR{top:auto;bottom:52px;right:8px;padding:4px}
+    #att{width:64px;height:64px}
+    #legend{display:none}
+    #readout{font-size:10px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">Waking Dream FPV · <span>Dream Flight Log</span><span class="ver">v2.9</span></div>
+    <nav class="toolnav" id="toolnav"><a data-k="hud">HUD Studio</a><a data-k="log" class="here">Flight Log</a><a data-k="planner">RPA Planner</a></nav>
+    <button class="btn primary" id="openBtn">Open log (.csv)</button>
+    <input type="file" id="fileIn" accept=".csv,text/csv,.json,.wdflight" multiple hidden>
+    <button class="btn" id="sessOpenBtn" title="Open a saved .wdflight.json session">Open session</button>
+    <input type="file" id="sessIn" accept=".json,.wdflight,application/json" hidden>
+    <button class="btn" id="sessSaveBtn" title="Save the logs and everything you've entered to one file">Save session</button>
+    <button class="btn" id="regBtn" title="Battery packs, pilots and aircraft">Batteries &amp; crew</button>
+    <button class="btn" id="pdfBtn" title="Report for printing or saving as PDF">PDF report</button>
+    <button class="btn" id="expBtn" title="JSON file for the planner (flight, pilot and battery time)">Export to planner</button>
+    <span id="fileName"></span>
+    <div class="spacer"></div>
+    <span class="lbl">Radio clock</span>
+    <div class="seg" id="clockSeg"><button data-v="utc" class="on">UTC</button><button data-v="local">Local</button></div>
+    <span class="lbl">Sticks</span>
+    <div class="seg" id="modeSeg"><button data-v="2" class="on">Mode 2</button><button data-v="1">Mode 1</button></div>
+  </header>
+
+  <div id="main">
+    <aside id="side">
+      <h3>Flights</h3>
+      <div id="flights"><div class="fl" style="cursor:default;color:var(--faint)">No log loaded</div></div>
+      <h3>Flight details</h3>
+      <div id="det">
+        <label>Pilot (RPIC)<select id="dPilot"></select></label>
+        <label>Aircraft<select id="dAcft"></select></label>
+        <div class="lab">Battery pack(s) used
+          <div class="chips" id="dPacks"></div>
+          <div class="packrow"><input id="dPackIn" list="packList" placeholder="Type pack ID, e.g. 6S-07" autocomplete="off"><button class="btn sm" id="dPackAdd" type="button">Add</button></div>
+          <datalist id="packList"></datalist>
+          <div class="chips" id="dPackSug"></div>
+        </div>
+        <div class="packinfo" id="dPackInfo"></div>
+        <label>Job / client<input id="dJob" placeholder="e.g. Aria Cruises whale watching"></label>
+        <label>Notes<textarea id="dNotes" placeholder="Anything worth recording for this flight"></textarea></label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px"><input type="checkbox" id="dOonp" style="width:auto"> Flown over people (OONP) — check 34 J</label>
+        <button class="btn" id="dCopyAll" type="button">Copy pilot, aircraft, job &amp; OONP to all flights</button>
+      </div>
+      <h3>Summary</h3>
+      <div id="sum"></div>
+      <div class="notes" id="notes"></div>
+      <h3 id="moiH">Moments of interest</h3>
+      <div id="moiList"></div>
+    </aside>
+    <section id="mapWrap">
+      <div id="map"></div>
+      <div class="hud" id="hudL">
+        <div><div class="k">H</div><div class="v mono" id="hH">—</div></div>
+        <div><div class="k">D</div><div class="v mono" id="hD">—</div></div>
+        <div><div class="k">H.S.</div><div class="v mono" id="hHS">—</div></div>
+        <div><div class="k">V.S.</div><div class="v mono" id="hVS">—</div></div>
+        <div><div class="k">BATTERY</div><div class="v mono" id="hB">—</div></div>
+        <div><div class="k">USED</div><div class="v mono" id="hU">—</div></div>
+        <div><div class="k">LINK</div><div class="v mono" id="hL">—</div></div>
+        <div><div class="k">MODE</div><div class="v mono" id="hM">—</div></div>
+      </div>
+      <div class="hud" id="hudR">
+        <canvas id="att" width="92" height="92" title="Attitude (pitch / roll) and heading"></canvas>
+      </div>
+      <div class="hud" id="legend"><div>Track colour: <b id="legName">speed</b></div><div class="bar"></div><div class="ends mono"><span id="legMin">0</span><span id="legMax">—</span></div></div>
+      <div class="hud" id="mapCtl">
+        <div class="seg maponly" id="colSeg"><button data-v="spd" class="on">Speed</button><button data-v="alt">Height</button></div>
+        <div class="seg maponly" id="baseSeg"><button data-v="sat" class="on">Satellite</button><button data-v="road">Map</button></div>
+        <button class="btn maponly" id="followBtn" title="Keep the aircraft centred">Follow</button>
+        <button class="btn maponly" id="fitBtn">Fit</button>
+        <span class="seg"><button id="moiBtn" title="Moments of interest on the map and charts (M)">Moments</button><button id="moiOpt" title="Choose which moments to show" style="padding:4px 7px">▾</button></span>
+        <button class="btn" id="sheetBtn" title="Flight summary, laid out like the PDF report (S)">Summary</button>
+      </div>
+      <div class="hud" id="moiMenu"></div>
+      <div class="hud" id="moiPop"></div>
+      <div id="sheet"><div class="sheetBar"><button class="btn sm" id="sheetPrev" title="Previous flight">‹</button><b id="sheetTitle" style="flex:1">Flight summary</b><button class="btn sm" id="sheetNext" title="Next flight">›</button><button class="btn sm" id="sheetPdf">PDF this flight</button><button class="btn sm" id="sheetClose" title="Close (S)">✕</button></div><div class="paper" id="sheetBody"></div></div>
+      <div id="empty">
+        <div class="box">
+          <h2>Open a telemetry log</h2>
+          <p>Drop an EdgeTX log (.csv) from your radio's LOGS folder here, or use <b>Open log</b>. Each armed period becomes its own flight.</p>
+          <button class="btn primary" id="openBtn2">Open log (.csv)</button>
+          <p class="key" style="margin-top:14px">Space play/pause · ← → step 1 s · Shift+← → step 10 s · [ ] speed · M moments · S summary</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="bottom">
+    <div>
+      <div id="sticks">
+        <div class="gimbal"><canvas id="gL" width="120" height="120"></canvas><div class="cap" id="capL">Throttle / Yaw</div></div>
+        <div class="gimbal"><canvas id="gR" width="120" height="120"></canvas><div class="cap" id="capR">Pitch / Roll</div></div>
+      </div>
+      <div id="swRow"></div>
+    </div>
+    <div id="right">
+      <div id="transport">
+        <button id="play" title="Play / pause (space)">▶</button>
+        <div><div id="clock" class="mono">0:00.0</div><div id="clockSub" class="mono">—</div></div>
+        <div class="seg" id="spdSeg"><button data-v="0.5">½×</button><button data-v="1" class="on">1×</button><button data-v="2">2×</button><button data-v="4">4×</button><button data-v="8">8×</button></div>
+        <div class="spacer"></div>
+        <div id="readout"></div>
+      </div>
+      <div id="charts"><canvas id="cv" height="200"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<div id="modal"><div class="box">
+  <div style="display:flex;align-items:center;gap:8px"><h2 style="flex:1">Batteries &amp; crew</h2><button class="btn" id="mClose">Close</button></div>
+  <div class="lbl">Saved in this browser and inside every session file. Battery time and cycles count each flight a pack is assigned to (opening the same log twice doesn't count it twice).</div>
+  <div class="tabs" id="mTabs"><button data-t="packs" class="on">Battery packs</button><button data-t="pilots">Pilots</button><button data-t="acft">Aircraft</button><button data-t="settings">Settings</button></div>
+  <div id="mBody" class="regwrap"></div>
+</div></div>
+<div id="toast"></div>
+<div id="report"></div>
+
+<script>
+(() => {
+  'use strict';
+  // ───────────────────────── State ─────────────────────────
+  const S = { files: [], flights: [], cur: null, i: 0, t: 0, playing: false, speed: 1, clock: 'utc', mode: 2,
+              colorBy: 'spd', follow: false, base: 'sat', lastFrame: 0 };
+  try { S.clock = localStorage.getItem('wd_tlm_clock') || 'utc'; S.mode = +(localStorage.getItem('wd_stick_mode') || 2); } catch (e) {}
+
+  const $ = (id) => document.getElementById(id);
+
+  // ───────────────────────── Moments of interest (v2.2) ─────────────────────────
+  const MOI_DEF = [
+    { k: 'rq',   label: 'Lowest link quality', icon: '▼', col: '#a78bfa', pcol: '#7c3aed', lane: [2, 0], on: true },
+    { k: 'a',    label: 'Max current',         icon: 'ϟ', col: '#f472b6', pcol: '#be185d', lane: [1, 1], on: true },
+    { k: 'spd',  label: 'Top speed',           icon: '»', col: '#ffb020', pcol: '#d97706', lane: [0, 1], on: true },
+    { k: 'alt',  label: 'Highest point',       icon: '▲', col: '#3b9cff', pcol: '#1d6fd8', lane: [0, 0], on: true },
+    { k: 'dist', label: 'Furthest from home',  icon: '◎', col: '#22b8cf', pcol: '#0e7490', lane: [0, null], on: false },
+    { k: 'v',    label: 'Lowest voltage',      icon: '↓', col: '#4ade80', pcol: '#15803d', lane: [1, 0], on: false },
+  ];
+  S.moi = { on: true, pop: true, k: Object.fromEntries(MOI_DEF.map(d => [d.k, d.on])) };
+  S.sheet = false;
+  try { const x = JSON.parse(localStorage.getItem('wd_flightlog_moi') || 'null'); if (x) { S.moi.on = x.on !== false; S.moi.pop = x.pop !== false; Object.assign(S.moi.k, x.k || {}); } S.sheet = localStorage.getItem('wd_flightlog_sheet') === '1'; } catch (e) {}
+  const saveMoi = () => { try { localStorage.setItem('wd_flightlog_moi', JSON.stringify(S.moi)); localStorage.setItem('wd_flightlog_sheet', S.sheet ? '1' : '0'); } catch (e) {} };
+
+  // Finds each moment over the armed period. Ties go to the first time it happened.
+  function momentsOf(f) {
+    if (f.moi) return f.moi;
+    const A = f.armA, B = f.armB, list = [];
+    const pick = (arr, lower) => { let bi = -1, bv = NaN; for (let i = A; i <= B; i++) { const x = arr[i]; if (isNaN(x)) continue; if (bi < 0 || (lower ? x < bv : x > bv)) { bi = i; bv = x; } } return bi; };
+    const at = (i, parts) => parts.map(p => {
+      const v = f[p === 'thr' ? 'thr' : p][i]; if (v === undefined || isNaN(v)) return null;
+      return p === 'alt' ? Math.round(v) + ' m high' : p === 'dist' ? Math.round(v) + ' m from home' : p === 'spd' ? Math.round(v) + ' km/h' : p === 'a' ? v.toFixed(1) + ' A'
+        : p === 'v' ? v.toFixed(1) + ' V' : p === 'thr' ? 'throttle ' + Math.round((v + 1) * 50) + '%' : p === 'rss' ? v + ' dBm' : p === 'tp' ? 'TX ' + v + ' mW' : p === 'rq' ? 'link ' + v + '%' : null;
+    }).filter(Boolean).join(' · ');
+    const add = (k, i, value, short, ctx, raw) => { const def = MOI_DEF.find(d => d.k === k); list.push({ k, def, i, value, short, ctx, raw, rel: i >= 0 ? f.t[i] - f.t[A] : null }); };
+    // Lowest link quality
+    let i = pick(f.rq, true);
+    if (i >= 0) { if (f.rq[i] >= 100) add('rq', -1, '100% throughout', '100%', 'Link quality never dropped', NaN);
+      else add('rq', i, f.rq[i] + '%' + (isNaN(f.rss[i]) ? '' : ' · ' + f.rss[i] + ' dBm'), f.rq[i] + '%', at(i, ['dist', 'alt', 'tp']), f.rq[i]); }
+    // Max current
+    i = pick(f.a, false); if (i >= 0) add('a', i, f.a[i].toFixed(1) + ' A', f.a[i].toFixed(1) + ' A', at(i, ['v', 'thr', 'spd']), f.a[i]);
+    // Top speed (3-sample median, same as the summary, so one GPS spike isn't the answer)
+    const med = new Float64Array(f.n).fill(NaN);
+    for (let j = A; j <= B; j++) { const w = [f.spd[j - 1], f.spd[j], f.spd[j + 1]].filter(x => x !== undefined && !isNaN(x)).sort((p, q) => p - q); if (w.length) med[j] = w[Math.floor(w.length / 2)]; }
+    i = pick(med, false); if (i >= 0) add('spd', i, med[i].toFixed(1) + ' km/h', Math.round(med[i]) + ' km/h', at(i, ['alt', 'dist', 'a']), f.spd[i]);
+    // Highest point
+    i = pick(f.alt, false); if (i >= 0) add('alt', i, f.alt[i].toFixed(1) + ' m', Math.round(f.alt[i]) + ' m', at(i, ['dist', 'spd']), f.alt[i]);
+    // Furthest from home
+    i = pick(f.dist, false); if (i >= 0) add('dist', i, Math.round(f.dist[i]) + ' m', Math.round(f.dist[i]) + ' m', at(i, ['alt', 'rq']), NaN);
+    // Lowest voltage: 2 s rolling average, same window as the summary's sag figure
+    { const w = 20; let best = -1, bv = NaN; for (let j = A; j + w <= B; j++) { let s = 0, c = 0; for (let q = j; q < j + w; q++) if (!isNaN(f.v[q])) { s += f.v[q]; c++; } if (c) { const m = s / c; if (best < 0 || m < bv) { best = j; bv = m; } } }
+      if (best >= 0) { const ci = best + 10, cells = f.sum.cells; add('v', ci, cells ? (bv / cells).toFixed(2) + ' V/cell (' + bv.toFixed(1) + ' V)' : bv.toFixed(1) + ' V', cells ? (bv / cells).toFixed(2) + ' V/c' : bv.toFixed(1) + ' V', at(ci, ['a', 'thr']), f.v[ci]); } }
+    list.sort((p, q) => MOI_DEF.findIndex(d => d.k === p.k) - MOI_DEF.findIndex(d => d.k === q.k));
+    return (f.moi = { list });
+  }
+  // Moves a canvas label up or down until it no longer overlaps the ones already drawn
+  const placeLabel = (placed, x, y, w, hgt, lo, hi) => { for (const d of [0, -14, 14, -28, 28, -42, 42]) { const yy = Math.max(lo, Math.min(hi, y + d)), r = { x0: x - 3, x1: x + w + 3, y0: yy - hgt, y1: yy + 2 }; if (!placed.some(q => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) { placed.push(r); return yy; } } return y; };
+  const shownMoments = (f) => (f && S.moi.on) ? momentsOf(f).list.filter(m => S.moi.k[m.k]) : [];
+  const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60); return m + ':' + (s - m * 60).toFixed(1).padStart(4, '0'); };
+  const fmtMS = (s) => { s = Math.round(Math.max(0, s)); return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's'; };
+  const fmtClock = (ms) => new Date(ms).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const fmtDate = (ms) => new Date(ms).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+  const hav = (a, b, c, d) => { const R = 6371000, r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+
+  // ───────────────────────── CSV parsing ─────────────────────────
+  const splitCsv = (line) => { const out = []; let cur = '', q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; };
+
+  function parseLog(text, name) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 3) return null;
+    const hdr = splitCsv(lines[0]).map(h => h.trim());
+    const find = (...names) => { for (const n of names) { const i = hdr.findIndex(h => h.toLowerCase() === n.toLowerCase()); if (i >= 0) return i; } for (const n of names) { const base = n.toLowerCase().replace(/\(.*$/, ''); const i = hdr.findIndex(h => h.toLowerCase().replace(/\(.*$/, '') === base); if (i >= 0) return i; } return -1; };
+    const C = { date: find('Date'), time: find('Time'), fm: find('FM'), alt: find('Alt(m)', 'Alt(ft)'), gps: find('GPS'), spd: find('GSpd(kmh)', 'GSpd(kts)', 'GSpd(mph)', 'GSpd(m/s)'),
+      hdg: find('Hdg(°)', 'Hdg(@)', 'Hdg'), yaw: find('Yaw(rad)'), pit: find('Ptch(rad)'), rol: find('Roll(rad)'),
+      v: find('RxBt(V)'), a: find('Curr(A)'), mah: find('Capa(mAh)'), pct: find('Bat%(%)'), rq: find('RQly(%)'), r1: find('1RSS(dB)'), r2: find('2RSS(dB)'),
+      snr: find('RSNR(dB)'), tp: find('TPWR(mW)'), sats: find('Sats'), rud: find('Rud'), ele: find('Ele'), thr: find('Thr'), ail: find('Ail'), txb: find('TxBat(V)') };
+    if (C.date < 0 || C.time < 0) return null;
+    const chIdx = []; for (let k = 1; k <= 16; k++) chIdx.push(find('CH' + k + '(us)'));
+    const swIdx = []; hdr.forEach((h, i) => { if (/^S[A-H]$/.test(h)) swIdx.push([h, i]); });
+    const altFt = C.alt >= 0 && /\(ft\)/i.test(hdr[C.alt]);
+    const sh = C.spd >= 0 ? hdr[C.spd].toLowerCase() : '';
+    const spdK = sh.includes('kts') ? 1.852 : sh.includes('mph') ? 1.609344 : sh.includes('m/s') ? 3.6 : 1;
+    const N = lines.length - 1;
+    const F = (n) => new Float64Array(n).fill(NaN);
+    const D = { ms: F(N), alt: F(N), spd: F(N), lat: F(N), lng: F(N), hdg: F(N), yaw: F(N), pit: F(N), rol: F(N), v: F(N), a: F(N), mah: F(N), pct: F(N), rq: F(N),
+      rss: F(N), snr: F(N), tp: F(N), sats: F(N), rud: F(N), ele: F(N), thr: F(N), ail: F(N), txb: F(N), fm: new Array(N).fill(''), sw: [], ch: [] };
+    const num = (r, i) => { if (i < 0) return NaN; const x = parseFloat(r[i]); return isFinite(x) ? x : NaN; };
+    let n = 0;
+    for (let k = 1; k < lines.length; k++) {
+      const r = splitCsv(lines[k]);
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((r[C.date] || '').trim()), tt = /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?$/.exec((r[C.time] || '').trim());
+      if (!m || !tt) continue;
+      const parts = [+m[1], +m[2] - 1, +m[3], +tt[1], +tt[2], +tt[3], Math.round(parseFloat('0.' + (tt[4] || '0')) * 1000)];
+      D.ms[n] = S.clock === 'local' ? new Date(...parts).getTime() : Date.UTC(...parts);
+      if (C.gps >= 0) { const g = (r[C.gps] || '').trim().split(/\s+/), la = parseFloat(g[0]), lo = parseFloat(g[1]); if (isFinite(la) && isFinite(lo) && (Math.abs(la) > 1e-4 || Math.abs(lo) > 1e-4)) { D.lat[n] = la; D.lng[n] = lo; } }
+      const al = num(r, C.alt); D.alt[n] = altFt ? al * 0.3048 : al;
+      D.spd[n] = num(r, C.spd) * spdK; D.hdg[n] = num(r, C.hdg); D.yaw[n] = num(r, C.yaw); D.pit[n] = num(r, C.pit); D.rol[n] = num(r, C.rol);
+      D.v[n] = num(r, C.v); D.a[n] = num(r, C.a); D.mah[n] = num(r, C.mah); D.pct[n] = num(r, C.pct); D.rq[n] = num(r, C.rq);
+      const a1 = num(r, C.r1), a2 = num(r, C.r2), ok1 = !isNaN(a1) && a1 < 0, ok2 = !isNaN(a2) && a2 < 0; D.rss[n] = ok1 && ok2 ? Math.max(a1, a2) : ok1 ? a1 : ok2 ? a2 : NaN;
+      D.snr[n] = num(r, C.snr); D.tp[n] = num(r, C.tp); D.sats[n] = num(r, C.sats); D.txb[n] = num(r, C.txb);
+      D.fm[n] = C.fm >= 0 ? (r[C.fm] || '').trim() : '';
+      // Sticks: EdgeTX -1024..1024 inputs; fall back to AETR channels in µs
+      const st = (idx, chN) => { const v = num(r, idx); if (!isNaN(v)) return v / 1024; const c = num(r, chIdx[chN]); return isNaN(c) ? NaN : (c - 1500) / 512; };
+      D.ail[n] = st(C.ail, 0); D.ele[n] = st(C.ele, 1); D.thr[n] = st(C.thr, 2); D.rud[n] = st(C.rud, 3);
+      D.sw[n] = swIdx.map(([, i]) => num(r, i));
+      D.ch[n] = chIdx.map(i => num(r, i));
+      n++;
+    }
+    if (!n) return null;
+    for (const k in D) if (D[k] && D[k].subarray) D[k] = D[k].subarray(0, n);
+    D.fm.length = n; D.sw.length = n; D.ch.length = n;
+    D.n = n; D.swNames = swIdx.map(s => s[0]); D.name = name; D.hasFm = C.fm >= 0 && D.fm.some(x => x);
+    D.hasSticks = !isNaN(D.thr.find(x => !isNaN(x)) ?? NaN);
+    return D;
+  }
+
+  const DIS = /^(OK|WAIT|!ERR)$/i;
+  const armedAt = (D, i) => !D.hasFm ? true : (!!D.fm[i] && !/\*$/.test(D.fm[i]) && !(/!$/.test(D.fm[i]) && !/^!FS!$/i.test(D.fm[i])) && !DIS.test(D.fm[i]));
+
+  function splitFlights(D) {
+    const runs = []; let s = -1;
+    for (let i = 0; i < D.n; i++) { const a = armedAt(D, i); if (a && s < 0) s = i; if (!a && s >= 0) { runs.push([s, i - 1]); s = -1; } }
+    if (s >= 0) runs.push([s, D.n - 1]);
+    const merged = [];
+    runs.forEach(r => { const p = merged[merged.length - 1]; if (p && D.ms[r[0]] - D.ms[p[1]] < 3000) p[1] = r[1]; else merged.push([...r]); });
+    const out = [];
+    merged.forEach(([a, b]) => {
+      const dur = (D.ms[b] - D.ms[a]) / 1000;
+      let base = NaN, prev = NaN, fresh = -1;
+      for (let i = a - 1; i >= 0 && i >= a - 5000; i--) if (!isNaN(D.alt[i])) { prev = D.alt[i]; break; }
+      for (let i = a; i <= b && D.ms[i] - D.ms[a] <= 15000; i++) { const v = D.alt[i]; if (isNaN(v)) continue; if (isNaN(prev) || v !== prev) { base = Math.abs(v) <= 1.5 ? 0 : v; fresh = i; break; } }
+      if (isNaN(base)) { for (let i = a; i <= b; i++) if (!isNaN(D.alt[i])) { base = D.alt[i]; break; } }
+      else { for (let i = Math.max(0, a - 3000); i < fresh; i++) if (!isNaN(D.alt[i]) && D.alt[i] === prev) D.alt[i] = base; }   // stale samples before the first fresh one read as ground
+      let maxAlt = 0; for (let i = a; i <= b; i++) if (!isNaN(D.alt[i])) maxAlt = Math.max(maxAlt, D.alt[i] - (isNaN(base) ? 0 : base));
+      if (dur < 5 && maxAlt < 1) return;
+      // Show 3 s either side of the armed period
+      let i0 = a, i1 = b;
+      while (i0 > 0 && D.ms[a] - D.ms[i0 - 1] <= 3000) i0--;
+      while (i1 < D.n - 1 && D.ms[i1 + 1] - D.ms[b] <= 3000) i1++;
+      out.push(buildFlight(D, i0, i1, a, b, isNaN(base) ? 0 : base));
+    });
+    return out;
+  }
+
+  function buildFlight(D, i0, i1, a, b, altBase) {
+    const n = i1 - i0 + 1, t0 = D.ms[i0];
+    const sl = (k) => D[k].slice(i0, i1 + 1);
+    const f = { D, i0, i1, armA: a - i0, armB: b - i0, n, file: D.name, t0, startMs: D.ms[a], endMs: D.ms[b], id: D.name + '#' + a,
+      t: new Float64Array(n), alt: sl('alt').map(x => isNaN(x) ? NaN : x - altBase), spd: sl('spd'), lat: sl('lat'), lng: sl('lng'),
+      hdg: sl('hdg'), yaw: sl('yaw'), pit: sl('pit'), rol: sl('rol'), v: sl('v'), a: sl('a'), mah: sl('mah'), pct: sl('pct'), rq: sl('rq'),
+      rss: sl('rss'), snr: sl('snr'), tp: sl('tp'), sats: sl('sats'), thr: sl('thr'), rud: sl('rud'), ele: sl('ele'), ail: sl('ail'),
+      fm: D.fm.slice(i0, i1 + 1), sw: D.sw.slice(i0, i1 + 1), swNames: D.swNames };
+    for (let i = 0; i < n; i++) f.t[i] = (D.ms[i0 + i] - t0) / 1000;
+    f.dur = f.t[n - 1];
+    // Fill GPS gaps forward so the aircraft marker always has a position
+    f.latF = new Float64Array(n).fill(NaN); f.lngF = new Float64Array(n).fill(NaN);
+    let la = NaN, lo = NaN; for (let i = 0; i < n; i++) { if (!isNaN(f.lat[i])) { la = f.lat[i]; lo = f.lng[i]; } f.latF[i] = la; f.lngF[i] = lo; }
+    let firstFix = -1; for (let i = 0; i < n; i++) if (!isNaN(f.lat[i])) { firstFix = i; break; }
+    if (firstFix > 0) for (let i = 0; i < firstFix; i++) { f.latF[i] = f.lat[firstFix]; f.lngF[i] = f.lng[firstFix]; }
+    // Home: last fix at or before arming, else first fix
+    f.home = null;
+    for (let i = f.armA; i >= 0; i--) if (!isNaN(f.lat[i])) { f.home = [f.lat[i], f.lng[i]]; break; }
+    if (!f.home) for (let i = i0 - 1; i >= Math.max(0, i0 - 600); i--) if (!isNaN(D.lat[i])) { f.home = [D.lat[i], D.lng[i]]; break; }
+    if (!f.home && firstFix >= 0) f.home = [f.lat[firstFix], f.lng[firstFix]];
+    // Distance from home and vertical speed (1 s window)
+    f.dist = new Float64Array(n).fill(NaN); f.vs = new Float64Array(n).fill(NaN);
+    for (let i = 0; i < n; i++) if (f.home && !isNaN(f.latF[i])) f.dist[i] = hav(f.home[0], f.home[1], f.latF[i], f.lngF[i]);
+    let j = 0;
+    for (let i = 0; i < n; i++) { while (j < i && f.t[i] - f.t[j] > 1) j++; const dt = f.t[i] - f.t[j]; if (dt > 0.3 && !isNaN(f.alt[i]) && !isNaN(f.alt[j])) f.vs[i] = (f.alt[i] - f.alt[j]) / dt; }
+    // Summary over the armed period
+    const A = f.armA, B = f.armB, rng = (arr) => { let mn = Infinity, mx = -Infinity; for (let i = A; i <= B; i++) { const x = arr[i]; if (!isNaN(x)) { if (x < mn) mn = x; if (x > mx) mx = x; } } return [mn === Infinity ? NaN : mn, mx === -Infinity ? NaN : mx]; };
+    const first = (arr) => { for (let i = A; i <= B; i++) if (!isNaN(arr[i])) return arr[i]; return NaN; };
+    const last = (arr) => { for (let i = B; i >= A; i--) if (!isNaN(arr[i])) return arr[i]; return NaN; };
+    let path = 0, pl = null; for (let i = A; i <= B; i++) if (!isNaN(f.lat[i])) { if (pl) { const d = hav(pl[0], pl[1], f.lat[i], f.lng[i]); if (d < 200) path += d; } pl = [f.lat[i], f.lng[i]]; }
+    const vS = f.v; let vMin = NaN; { const w = 20; for (let i = A; i + w <= B; i++) { let s = 0, c = 0; for (let k = i; k < i + w; k++) if (!isNaN(vS[k])) { s += vS[k]; c++; } if (c) { const m = s / c; vMin = isNaN(vMin) ? m : Math.min(vMin, m); } } }
+    // Speed max with 3-sample median
+    let sMax = 0; for (let i = A; i <= B; i++) { const w = [f.spd[i - 1], f.spd[i], f.spd[i + 1]].filter(x => x !== undefined && !isNaN(x)).sort((p, q) => p - q); if (w.length) sMax = Math.max(sMax, w[Math.floor(w.length / 2)]); }
+    f.sum = { armed: (f.t[B] - f.t[A]), maxAlt: rng(f.alt)[1], maxSpd: sMax, maxDist: rng(f.dist)[1], path,
+      v0: first(f.v), v1: last(f.v), vMin, mah: last(f.mah) - first(f.mah), maxA: rng(f.a)[1], minRq: rng(f.rq)[0], minRss: rng(f.rss)[0], maxTp: rng(f.tp)[1], sats: rng(f.sats) };
+    f.sum.cells = isNaN(f.sum.v0) ? null : Math.max(1, Math.ceil(f.sum.v0 / 4.45));
+    // Events
+    f.events = []; let fs = false, low = false;
+    for (let i = A; i <= B; i++) {
+      if (/^!FS!$/i.test(f.fm[i])) { if (!fs) f.events.push({ t: f.t[i], text: 'Failsafe', c: 'var(--bad)' }); fs = true; } else fs = false;
+      if (!isNaN(f.rq[i]) && f.rq[i] < 50) { if (!low) f.events.push({ t: f.t[i], text: 'Link ' + f.rq[i] + '%', c: 'var(--warn)' }); low = true; } else if (f.rq[i] >= 70) low = false;
+    }
+    f.notes = [];
+    if (D.hasFm && a === 0) f.notes.push('Log started with the aircraft already armed — take-off may be missing.');
+    if (D.hasFm && b === D.n - 1) f.notes.push('Log ended while the aircraft was still armed — landing may be missing.');
+    if (!D.hasFm) f.notes.push('No flight-mode (FM) field — the whole file is shown as one flight.');
+    if (firstFix < 0) f.notes.push('No GPS fixes in this flight — no map track.');
+    return f;
+  }
+
+  // ───────────────────────── Map ─────────────────────────
+  const map = L.map('map', { zoomControl: true, attributionControl: true, preferCanvas: true }).setView([-27.94, 153.42], 13);
+  const bases = {
+    sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 21, maxNativeZoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics' }),
+    road: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 21, maxNativeZoom: 20, attribution: '© OpenStreetMap contributors © CARTO' }),
+  };
+  bases.sat.addTo(map);
+  let trackLayer = L.layerGroup().addTo(map), flownLayer = null, acft = null, homeM = null;
+  const momLayer = L.layerGroup().addTo(map); let moiMarks = {};
+  const acftIcon = () => L.divIcon({ className: '', html: '<svg class="acft" viewBox="0 0 30 30" id="acftSvg"><g id="acftRot" transform="rotate(0 15 15)"><path d="M15 2 L24 26 L15 21 L6 26 Z" fill="#22b8cf" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></g></svg>', iconSize: [30, 30], iconAnchor: [15, 15] });
+
+  const ramp = ['#2b6cff', '#22d3ee', '#4ade80', '#facc15', '#ef4444'];
+  const lerpC = (a, b, t) => { const p = (h) => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)); const A = p(a), B = p(b); return '#' + A.map((x, i) => Math.round(x + (B[i] - x) * t).toString(16).padStart(2, '0')).join(''); };
+  const colorAt = (x) => { x = Math.max(0, Math.min(1, x)) * (ramp.length - 1); const i = Math.min(ramp.length - 2, Math.floor(x)); return lerpC(ramp[i], ramp[i + 1], x - i); };
+
+  function drawTrack() {
+    const f = S.cur; trackLayer.clearLayers(); if (!f) return;
+    const key = S.colorBy === 'alt' ? f.alt : f.spd;
+    const max = Math.max(1, S.colorBy === 'alt' ? f.sum.maxAlt : f.sum.maxSpd);
+    $('legName').textContent = S.colorBy === 'alt' ? 'height above take-off' : 'ground speed';
+    $('legMin').textContent = '0'; $('legMax').textContent = S.colorBy === 'alt' ? Math.round(max) + ' m' : Math.round(max) + ' km/h';
+    // Group consecutive GPS points into short coloured polylines
+    let prev = null, pts = [], colKey = null;
+    const flush = () => { if (pts.length > 1) L.polyline(pts, { color: colKey, weight: 4, opacity: 0.95, lineCap: 'round', interactive: false }).addTo(trackLayer); };
+    for (let i = 0; i < f.n; i++) {
+      if (isNaN(f.lat[i])) continue;
+      const p = [f.lat[i], f.lng[i]];
+      if (prev && prev[0] === p[0] && prev[1] === p[1]) continue;
+      const c = colorAt((isNaN(key[i]) ? 0 : key[i]) / max);
+      if (c !== colKey) { if (pts.length) { flush(); pts = [pts[pts.length - 1]]; } colKey = c; }
+      pts.push(p); prev = p;
+    }
+    flush();
+    // Event markers on the map
+    f.events.forEach(e => { const i = idxAt(e.t); if (!isNaN(f.latF[i])) L.circleMarker([f.latF[i], f.lngF[i]], { radius: 6, color: '#fff', weight: 2, fillColor: e.c.includes('bad') ? '#ef4444' : '#f59e0b', fillOpacity: 1 }).bindTooltip(fmtT(e.t) + ' ' + e.text).addTo(trackLayer); });
+    drawMoments();
+    if (homeM) homeM.remove();
+    if (f.home) homeM = L.marker(f.home, { icon: L.divIcon({ className: '', html: '<div class="home">H</div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false, zIndexOffset: 500 }).addTo(map);
+    if (!acft) acft = L.marker([0, 0], { icon: acftIcon(), interactive: false, zIndexOffset: 1000 });
+    if (!map.hasLayer(acft)) acft.addTo(map);
+  }
+  function drawMoments() {
+    momLayer.clearLayers(); moiMarks = {};
+    const f = S.cur; if (!f) return;
+    shownMoments(f).forEach(m => {
+      if (m.i < 0 || isNaN(f.latF[m.i])) return;
+      const mk = L.marker([f.latF[m.i], f.lngF[m.i]], { icon: L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: '<div class="moiDot" style="--c:' + m.def.col + '"></div><div class="moiPin" style="--c:' + m.def.col + '"><b>' + m.def.icon + '</b> ' + m.short + '</div>' }), zIndexOffset: 800, keyboard: false });
+      mk.bindTooltip('<b>' + m.def.label + '</b> ' + m.value + '<br>T+' + fmtT(m.rel) + (m.ctx ? ' · ' + m.ctx : ''), { direction: 'top', offset: [0, -30] });
+      mk.on('click', () => jumpTo(m));
+      mk.addTo(momLayer); moiMarks[m.k] = mk;
+    });
+    layoutPins();
+  }
+  // Raise a label when it would cover another one (pins close together on the track)
+  function layoutPins() {
+    const placed = [];
+    Object.values(moiMarks).map(mk => ({ mk, pt: map.latLngToContainerPoint(mk.getLatLng()), el: mk.getElement() && mk.getElement().querySelector('.moiPin') }))
+      .filter(o => o.el).sort((a, b) => b.pt.y - a.pt.y || a.pt.x - b.pt.x)
+      .forEach(o => {
+        const w = o.el.offsetWidth || 70, hgt = 20; let lvl = 0, r;
+        for (; lvl < 6; lvl++) { const bot = o.pt.y - 9 - lvl * 22; r = { x0: o.pt.x - w / 2 - 3, x1: o.pt.x + w / 2 + 3, y0: bot - hgt, y1: bot };
+          if (!placed.some(q => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) break; }
+        placed.push(r); o.el.style.setProperty('--b', (9 + lvl * 22) + 'px');
+      });
+  }
+  map.on('zoomend', layoutPins);
+  function jumpTo(m) {
+    if (!S.cur || m.i < 0) return;
+    S.playing = false; $('play').textContent = '▶'; seek(S.cur.t[m.i]); showPop(m);
+  }
+  let popT = null;
+  function showPop(m) {
+    const el = $('moiPop');
+    el.style.setProperty('--c', m.def.col);
+    el.innerHTML = '<div class="t"><span style="color:' + m.def.col + '">' + m.def.icon + '</span> ' + m.def.label + ' · <span class="mono">' + m.value + '</span></div><div class="s">T+' + fmtT(m.rel) + (m.ctx ? ' · ' + m.ctx : '') + '</div>';
+    el.style.display = 'block'; clearTimeout(popT); popT = setTimeout(() => { el.style.display = 'none'; }, 3800);
+    const mk = moiMarks[m.k], pin = mk && mk.getElement() && mk.getElement().querySelector('.moiPin');
+    if (pin) { pin.classList.remove('flash'); void pin.offsetWidth; pin.classList.add('flash'); }
+  }
+  function checkPops(prev, now) {
+    if (!S.moi.pop || !S.cur || now <= prev) return;
+    shownMoments(S.cur).forEach(m => { if (m.i >= 0) { const t = S.cur.t[m.i]; if (t > prev && t <= now) showPop(m); } });
+  }
+  function fitTrack() {
+    const f = S.cur; if (!f) return; map.invalidateSize();
+    const pts = []; for (let i = 0; i < f.n; i++) if (!isNaN(f.lat[i])) pts.push([f.lat[i], f.lng[i]]);
+    if (f.home) pts.push(f.home);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 19 });
+  }
+
+  // ───────────────────────── Sticks & attitude ─────────────────────────
+  function drawGimbal(cv, x, y, trail, label) {
+    const c = cv.getContext('2d'), W = cv.width, H = cv.height, pad = 10, r = (W - pad * 2) / 2, cx = W / 2, cy = H / 2;
+    c.clearRect(0, 0, W, H);
+    c.strokeStyle = '#253041'; c.lineWidth = 1;
+    c.strokeRect(pad, pad, W - pad * 2, H - pad * 2);
+    c.beginPath(); c.moveTo(cx, pad); c.lineTo(cx, H - pad); c.moveTo(pad, cy); c.lineTo(W - pad, cy); c.stroke();
+    if (trail.length > 1) {
+      c.lineWidth = 1.5;
+      for (let k = 1; k < trail.length; k++) {
+        c.strokeStyle = 'rgba(34,184,207,' + (k / trail.length * 0.7).toFixed(2) + ')';
+        c.beginPath(); c.moveTo(cx + trail[k - 1][0] * r, cy - trail[k - 1][1] * r); c.lineTo(cx + trail[k][0] * r, cy - trail[k][1] * r); c.stroke();
+      }
+    }
+    if (!isNaN(x) && !isNaN(y)) {
+      c.fillStyle = '#22b8cf'; c.strokeStyle = '#fff'; c.lineWidth = 2;
+      c.beginPath(); c.arc(cx + x * r, cy - y * r, 7, 0, Math.PI * 2); c.fill(); c.stroke();
+    }
+    c.fillStyle = '#5b6b80'; c.font = '9px system-ui'; c.textAlign = 'left';
+    if (label) { c.fillText(label[0], pad + 2, H - 2); c.textAlign = 'right'; c.fillText(label[1], W - pad - 2, H - 2); }
+  }
+  function drawAttitude(pit, rol, yawDeg) {
+    const cv = $('att'), c = cv.getContext('2d'), W = cv.width, R = W / 2 - 4, cx = W / 2, cy = W / 2;
+    c.clearRect(0, 0, W, W);
+    c.save(); c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.clip();
+    const p = isNaN(pit) ? 0 : pit, r = isNaN(rol) ? 0 : rol;
+    c.translate(cx, cy); c.rotate(-r);
+    const off = Math.max(-R, Math.min(R, p * (180 / Math.PI) * (R / 45)));
+    c.fillStyle = '#2b6cb0'; c.fillRect(-R * 2, -R * 2 + off, R * 4, R * 2);
+    c.fillStyle = '#7c5a35'; c.fillRect(-R * 2, off, R * 4, R * 2);
+    c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = 1; c.beginPath(); c.moveTo(-R * 2, off); c.lineTo(R * 2, off); c.stroke();
+    for (const d of [-20, -10, 10, 20]) { const y = off - d * (R / 45); c.beginPath(); c.moveTo(-10, y); c.lineTo(10, y); c.strokeStyle = 'rgba(255,255,255,.45)'; c.stroke(); }
+    c.restore();
+    c.strokeStyle = '#facc15'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(cx - 22, cy); c.lineTo(cx - 8, cy); c.moveTo(cx + 8, cy); c.lineTo(cx + 22, cy); c.stroke();
+    c.beginPath(); c.arc(cx, cy, 2.5, 0, Math.PI * 2); c.fillStyle = '#facc15'; c.fill();
+    c.strokeStyle = '#253041'; c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.stroke();
+    if (!isNaN(yawDeg)) { c.fillStyle = '#e6edf5'; c.font = 'bold 10px ui-monospace,monospace'; c.textAlign = 'center'; c.fillText(String(Math.round((yawDeg + 360) % 360)).padStart(3, '0') + '°', cx, W - 7); }
+  }
+
+  // ───────────────────────── Charts ─────────────────────────
+  const lanes = [
+    { name: 'Height / speed', series: [{ k: 'alt', c: getVar('--alt'), u: 'm', lab: 'Height' }, { k: 'spd', c: getVar('--spd'), u: 'km/h', lab: 'Speed', right: true }] },
+    { name: 'Battery', series: [{ k: 'v', c: getVar('--batt'), u: 'V', lab: 'Voltage' }, { k: 'a', c: getVar('--curr'), u: 'A', lab: 'Current', right: true }] },
+    { name: 'Link / sticks', series: [{ k: 'rq', c: getVar('--link'), u: '%', lab: 'RQly', fixed: [0, 100] }, { k: 'thr', c: '#94a3b8', u: '', lab: 'Throttle', fixed: [-1, 1], right: true }] },
+  ];
+  function getVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  const cv = $('cv'), cx = cv.getContext('2d');
+  let chartGeom = null, chartCache = null;
+  const PADL = 50, PADR = 56;
+  function sizeChart() {
+    const dpr = window.devicePixelRatio || 1, w = $('charts').clientWidth, h = window.innerWidth < 980 ? 180 : 200;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.height = h + 'px';
+    chartCache = null; drawCharts();
+  }
+  function renderStatic() {
+    const f = S.cur, dpr = window.devicePixelRatio || 1, W = cv.width / dpr, H = cv.height / dpr;
+    const off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height;
+    const c = off.getContext('2d'); c.scale(dpr, dpr);
+    const top = 4, axisH = 14, laneGap = 6, lh = (H - top - axisH - laneGap * (lanes.length - 1)) / lanes.length;
+    const X = (t) => PADL + (t / Math.max(1e-6, f.dur)) * (W - PADL - PADR);
+    chartGeom = { W, H, X, top, lh, laneGap };
+    // Armed region shading
+    lanes.forEach((ln, li) => {
+      const y0 = top + li * (lh + laneGap);
+      c.fillStyle = '#0d131b'; c.fillRect(PADL, y0, W - PADL - PADR, lh);
+      c.fillStyle = 'rgba(34,184,207,.05)'; c.fillRect(X(f.t[f.armA]), y0, X(f.t[f.armB]) - X(f.t[f.armA]), lh);
+      c.strokeStyle = '#1c2633'; c.lineWidth = 1; c.strokeRect(PADL + .5, y0 + .5, W - PADL - PADR - 1, lh - 1);
+      ln.series.forEach((s) => {
+        const arr = f[s.k]; let mn = Infinity, mx = -Infinity;
+        if (s.fixed) { [mn, mx] = s.fixed; } else { for (let i = 0; i < f.n; i++) { const x = arr[i]; if (!isNaN(x)) { if (x < mn) mn = x; if (x > mx) mx = x; } } if (mn === Infinity) return; if (s.k === 'alt' || s.k === 'spd' || s.k === 'a') mn = Math.min(0, mn); const pad = (mx - mn) * 0.08 || 1; mx += pad; if (s.k !== 'alt' && s.k !== 'spd' && s.k !== 'a') mn -= pad; }
+        s._mn = mn; s._mx = mx;
+        const Y = (v) => y0 + lh - 3 - ((v - mn) / (mx - mn || 1)) * (lh - 6);
+        // Min/max per pixel column keeps spikes visible on long logs
+        const cols = Math.max(1, Math.floor(W - PADL - PADR));
+        c.strokeStyle = s.c; c.lineWidth = 1.3; c.globalAlpha = s.k === 'thr' ? 0.55 : 1; c.beginPath();
+        let started = false, col = -1, lo = 0, hi = 0;
+        const emit = () => { const x = PADL + col; if (!started) { c.moveTo(x, Y(lo)); started = true; } else c.lineTo(x, Y(lo)); if (hi !== lo) c.lineTo(x, Y(hi)); };
+        for (let i = 0; i < f.n; i++) { const v = arr[i]; if (isNaN(v)) continue; const cc = Math.round((X(f.t[i]) - PADL)); if (cc !== col) { if (col >= 0) emit(); col = cc; lo = hi = v; } else { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+        if (col >= 0) emit();
+        c.stroke(); c.globalAlpha = 1;
+        c.fillStyle = s.c; c.font = '9px ui-monospace,monospace'; c.textAlign = s.right ? 'left' : 'right';
+        const ax = s.right ? W - PADR + 4 : PADL - 4;
+        if (!s.fixed || s.k === 'rq') { c.fillText(fmtAxis(mx, s.u), ax, y0 + 9); c.fillText(fmtAxis(mn, s.u), ax, y0 + lh - 2); }
+      });
+      c.fillStyle = '#5b6b80'; c.font = '9px system-ui'; c.textAlign = 'left'; c.fillText(ln.name.toUpperCase(), PADL + 5, y0 + 10);
+    });
+    // Events and time axis
+    f.events.forEach(e => { c.strokeStyle = e.c.includes('bad') ? '#ef4444' : '#f59e0b'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(X(e.t), top); c.lineTo(X(e.t), H - axisH); c.stroke(); });
+    c.fillStyle = '#5b6b80'; c.font = '9px ui-monospace,monospace'; c.textAlign = 'center';
+    const step = niceStep(f.dur / 8);
+    for (let s = 0; s <= f.dur + 1e-6; s += step) c.fillText(fmtT(s).replace(/\.0$/, ''), X(s), H - 3);
+    // Moments of interest on their own lane
+    chartGeom.moi = []; const placedL = [];
+    shownMoments(f).forEach(m => {
+      if (m.i < 0) return;
+      const x = X(f.t[m.i]), li = m.def.lane[0], y0 = top + li * (lh + laneGap), s = m.def.lane[1] === null ? null : lanes[li].series[m.def.lane[1]];
+      let y = (s && s._mn !== undefined && !isNaN(m.raw)) ? y0 + lh - 3 - ((m.raw - s._mn) / (s._mx - s._mn || 1)) * (lh - 6) : y0 + 9;
+      y = Math.max(y0 + 5, Math.min(y0 + lh - 5, y));
+      c.strokeStyle = m.def.col; c.globalAlpha = 0.55; c.lineWidth = 1; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, y0); c.lineTo(x, y0 + lh); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+      c.fillStyle = m.def.col; c.strokeStyle = '#0b0f14'; c.lineWidth = 2; c.beginPath(); c.arc(x, y, 4.5, 0, 7); c.fill(); c.stroke();
+      c.font = 'bold 10px system-ui'; c.textAlign = 'left'; const lbl = m.def.icon + ' ' + m.short, tw = c.measureText(lbl).width;
+      let lx = x + 7; if (lx + tw > W - PADR - 2) lx = x - 9 - tw; let ly = y - 5; if (ly < y0 + 11) ly = y + 14; if (ly > y0 + lh - 2) ly = y0 + lh - 3;
+      ly = placeLabel(placedL, lx, ly, tw, 10, y0 + 11, y0 + lh - 3);
+      c.fillStyle = 'rgba(11,15,20,.8)'; c.fillRect(lx - 3, ly - 10, tw + 6, 13); c.fillStyle = m.def.col; c.fillText(lbl, lx, ly);
+      chartGeom.moi.push({ x, t: f.t[m.i], m });
+    });
+    chartCache = off;
+  }
+  const fmtAxis = (v, u) => (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + (u ? ' ' + u : '');
+  const niceStep = (x) => { const c = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800]; return c.find(s => s >= x) || 3600; };
+  function drawCharts() {
+    const dpr = window.devicePixelRatio || 1;
+    cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, cv.width, cv.height);
+    if (!S.cur) return;
+    if (!chartCache) renderStatic();
+    cx.drawImage(chartCache, 0, 0);
+    cx.scale(dpr, dpr);
+    const { X, H, top, lh, laneGap } = chartGeom, x = X(S.t);
+    cx.strokeStyle = '#fff'; cx.lineWidth = 1; cx.beginPath(); cx.moveTo(x, top); cx.lineTo(x, H - 14); cx.stroke();
+    const f = S.cur, i = S.i;
+    lanes.forEach((ln, li) => { const y0 = top + li * (lh + laneGap); ln.series.forEach(s => { const v = f[s.k][i]; if (isNaN(v) || s._mn === undefined) return; const y = y0 + lh - 3 - ((v - s._mn) / (s._mx - s._mn || 1)) * (lh - 6); cx.fillStyle = s.c; cx.beginPath(); cx.arc(x, y, 3, 0, Math.PI * 2); cx.fill(); }); });
+    cx.fillStyle = '#22b8cf'; cx.beginPath(); cx.moveTo(x - 5, H - 14); cx.lineTo(x + 5, H - 14); cx.lineTo(x, H - 8); cx.fill();
+  }
+
+  // ───────────────────────── Playback ─────────────────────────
+  function idxAt(t) { const f = S.cur; let lo = 0, hi = f.n - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (f.t[m] <= t) lo = m; else hi = m - 1; } return lo; }
+  function seek(t) { if (!S.cur) return; S.t = Math.max(0, Math.min(S.cur.dur, t)); S.i = idxAt(S.t); update(); }
+  const v1 = (x, d = 1, u = '') => isNaN(x) ? '—' : x.toFixed(d) + (u ? '<span class="u">' + u + '</span>' : '');
+  function update() {
+    const f = S.cur; if (!f) return; const i = S.i;
+    $('clock').textContent = fmtT(S.t - f.t[f.armA]).replace(/^0:/, '0:') ;
+    const armedT = S.t - f.t[f.armA];
+    $('clock').textContent = (armedT < 0 ? '-' : '') + fmtT(Math.abs(armedT));
+    $('clockSub').textContent = fmtClock(f.D.ms[f.i0 + i]) + ' · ' + (armedAt(f.D, f.i0 + i) ? 'ARMED' : 'disarmed');
+    $('hH').innerHTML = v1(f.alt[i], 1, 'm');
+    $('hD').innerHTML = v1(f.dist[i], 0, 'm');
+    $('hHS').innerHTML = v1(f.spd[i], 1, 'km/h');
+    $('hVS').innerHTML = v1(f.vs[i], 1, 'm/s');
+    $('hB').innerHTML = isNaN(f.v[i]) ? '—' : f.v[i].toFixed(1) + '<span class="u">V' + (f.sum.cells ? ' · ' + (f.v[i] / f.sum.cells).toFixed(2) + '/c' : '') + '</span>';
+    $('hU').innerHTML = isNaN(f.mah[i]) ? '—' : Math.round(f.mah[i]) + '<span class="u">mAh' + (isNaN(f.pct[i]) ? '' : ' · ' + f.pct[i] + '%') + '</span>';
+    $('hL').innerHTML = isNaN(f.rq[i]) ? '—' : f.rq[i] + '<span class="u">%' + (isNaN(f.rss[i]) ? '' : ' ' + f.rss[i] + 'dBm') + '</span>';
+    $('hM').innerHTML = f.fm[i] || '—';
+    $('hM').style.color = /^!FS!$/i.test(f.fm[i]) ? 'var(--bad)' : '';
+    $('readout').innerHTML =
+      '<span><span class="dot" style="background:var(--curr)"></span>Current <b>' + v1(f.a[i], 1) + ' A</b></span>' +
+      '<span>TX power <b>' + (isNaN(f.tp[i]) ? '—' : f.tp[i] + ' mW') + '</b></span>' +
+      '<span>SNR <b>' + (isNaN(f.snr[i]) ? '—' : f.snr[i] + ' dB') + '</b></span>' +
+      '<span>Sats <b>' + (isNaN(f.sats[i]) ? '—' : f.sats[i]) + '</b></span>' +
+      '<span>Heading <b>' + (isNaN(f.hdg[i]) ? '—' : Math.round(f.hdg[i]) + '°') + '</b></span>' +
+      '<span>Throttle <b>' + (isNaN(f.thr[i]) ? '—' : Math.round((f.thr[i] + 1) * 50) + '%') + '</b></span>';
+    // Aircraft marker
+    if (acft && !isNaN(f.latF[i])) {
+      acft.setLatLng([f.latF[i], f.lngF[i]]);
+      const yawDeg = !isNaN(f.yaw[i]) ? f.yaw[i] * 180 / Math.PI : f.hdg[i];
+      const g = document.getElementById('acftRot'); if (g && !isNaN(yawDeg)) g.setAttribute('transform', 'rotate(' + yawDeg.toFixed(1) + ' 15 15)');
+      if (S.follow) map.panTo([f.latF[i], f.lngF[i]], { animate: false });
+    }
+    drawAttitude(f.pit[i], f.rol[i], !isNaN(f.yaw[i]) ? f.yaw[i] * 180 / Math.PI : f.hdg[i]);
+    // Sticks with a 1 s trail. Mode 2: left = throttle/yaw, right = pitch/roll. Mode 1 swaps throttle and pitch.
+    const trailL = [], trailR = [];
+    for (let k = Math.max(0, i - 25); k <= i; k++) {
+      if (f.t[i] - f.t[k] > 1) continue;
+      const st = sticksAt(k); trailL.push(st.L); trailR.push(st.R);
+    }
+    const s = sticksAt(i);
+    drawGimbal($('gL'), s.L[0], s.L[1], trailL, S.mode === 2 ? ['Yaw', 'Thr'] : ['Yaw', 'Pitch']);
+    drawGimbal($('gR'), s.R[0], s.R[1], trailR, S.mode === 2 ? ['Roll', 'Pitch'] : ['Roll', 'Thr']);
+    $('capL').textContent = S.mode === 2 ? 'Throttle / Yaw' : 'Pitch / Yaw';
+    $('capR').textContent = S.mode === 2 ? 'Pitch / Roll' : 'Throttle / Roll';
+    // Switch positions
+    $('swRow').innerHTML = (f.swNames || []).map((n, k) => { const v = (f.sw[i] || [])[k]; const cls = v > 0 ? 'hi' : v === 0 ? 'mid' : ''; return '<span class="sw ' + cls + '">' + n + (v > 0 ? '↑' : v === 0 ? '–' : '↓') + '</span>'; }).join('');
+    drawCharts();
+  }
+  function sticksAt(k) {
+    const f = S.cur, thr = f.thr[k], yaw = f.rud[k], pit = f.ele[k], rol = f.ail[k];
+    return S.mode === 2 ? { L: [yaw, thr], R: [rol, pit] } : { L: [yaw, pit], R: [rol, thr] };
+  }
+  function tick(ts) {
+    if (S.playing && S.cur) {
+      const dt = S.lastFrame ? (ts - S.lastFrame) / 1000 : 0;
+      const prevT = S.t;
+      S.t += dt * S.speed;
+      if (S.t >= S.cur.dur) { S.t = S.cur.dur; S.playing = false; $('play').textContent = '▶'; }
+      S.i = idxAt(S.t); update(); checkPops(prevT, S.t);
+    }
+    S.lastFrame = ts; requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  const togglePlay = () => { if (!S.cur) return; if (!S.playing && S.t >= S.cur.dur - 0.05) S.t = 0; S.playing = !S.playing; $('play').textContent = S.playing ? '❚❚' : '▶'; };
+
+  // ───────────────────────── UI wiring ─────────────────────────
+  function selectFlight(k) {
+    S.cur = S.flights[k]; if (!S.cur) return;
+    document.querySelectorAll('.fl').forEach((el, j) => el.classList.toggle('on', j === k));
+    S.playing = false; $('play').textContent = '▶';
+    chartCache = null; drawTrack(); fitTrack();
+    const f = S.cur, sm = f.sum;
+    const kv = (k2, v) => '<div class="kv"><div class="k">' + k2 + '</div><div class="v mono">' + v + '</div></div>';
+    $('sum').innerHTML =
+      kv('Armed time', fmtMS(sm.armed)) + kv('Max height', isNaN(sm.maxAlt) ? '—' : sm.maxAlt.toFixed(0) + ' m') +
+      kv('Max speed', sm.maxSpd.toFixed(1) + ' km/h') + kv('Max distance', isNaN(sm.maxDist) ? '—' : Math.round(sm.maxDist) + ' m') +
+      kv('Path', (sm.path / 1000).toFixed(2) + ' km') + kv('Battery', isNaN(sm.v0) ? '—' : (sm.cells ? sm.cells + 'S ' : '') + sm.v0.toFixed(1) + '→' + sm.v1.toFixed(1) + ' V') +
+      kv('Sag (2 s)', isNaN(sm.vMin) ? '—' : sm.vMin.toFixed(1) + ' V') + kv('Used', isNaN(sm.mah) ? '—' : Math.round(sm.mah) + ' mAh') +
+      kv('Max current', isNaN(sm.maxA) ? '—' : sm.maxA.toFixed(1) + ' A') + kv('Min link', isNaN(sm.minRq) ? '—' : sm.minRq + '% · ' + sm.minRss + ' dBm') +
+      kv('Max TX power', isNaN(sm.maxTp) ? '—' : sm.maxTp + ' mW') + kv('GPS sats', isNaN(sm.sats[0]) ? '—' : sm.sats[0] + '–' + sm.sats[1]);
+    $('notes').innerHTML = f.events.map(e => '<div style="color:' + e.c + '">⚠ ' + fmtT(e.t - f.t[f.armA]) + ' ' + e.text + '</div>').join('') + f.notes.map(n => '<div>ⓘ ' + n + '</div>').join('');
+    S.k = k; renderDetails();
+    seek(f.t[f.armA]);
+  }
+  function listFlights() {
+    $('flights').innerHTML = S.flights.length ? S.flights.map((f, k) =>
+      '<div class="fl' + (k === S.k ? ' on' : '') + '" data-k="' + k + '"><div class="t">' + (k + 1) + '. ' + fmtDate(f.startMs) + ' · ' + fmtClock(f.startMs).slice(0, 5) + '</div>' +
+      '<div class="s">' + flightTags(f) + '</div>' +
+      '<div class="s mono">' + fmtMS(f.sum.armed) + ' · ' + (isNaN(f.sum.maxAlt) ? '—' : Math.round(f.sum.maxAlt) + ' m') + ' · ' + (isNaN(f.sum.maxDist) ? '—' : Math.round(f.sum.maxDist) + ' m') + '</div>' +
+      '<div class="s" style="color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + f.file + '</div></div>').join('')
+      : '<div class="fl" style="cursor:default;color:var(--faint)">No armed flights found</div>';
+    document.querySelectorAll('.fl[data-k]').forEach(el => el.onclick = () => selectFlight(+el.dataset.k));
+  }
+  function loadFiles(list) {
+    const all = [...list];
+    const sess = all.find(f => /\.(json|wdflight)$/i.test(f.name));
+    if (sess) { openSession(sess); return; }
+    const files = all.filter(f => /\.csv$/i.test(f.name) || f.type === 'text/csv');
+    if (!files.length) return;
+    Promise.all(files.map(f => f.text().then(tx => ({ name: f.name, text: tx })))).then(res => {
+      // Adding logs keeps the ones already open (same file name replaces)
+      res.forEach(r => { const i = S.files.findIndex(x => x.name === r.name); if (i >= 0) S.files[i] = r; else S.files.push(r); });
+      reparse();
+    });
+  }
+  function reparse() {
+    const keep = S.cur ? S.cur.id : null;
+    S.flights = [];
+    S.files.forEach(fl => { const D = parseLog(fl.text, fl.name); if (D) S.flights.push(...splitFlights(D)); });
+    S.flights.sort((a, b) => a.startMs - b.startMs);
+    S.flights.forEach(syncRecord);
+    S.k = Math.max(0, S.flights.findIndex(f => f.id === keep));
+    $('fileName').textContent = S.files.map(f => f.name).join(', ');
+    $('empty').style.display = S.flights.length ? 'none' : 'flex';
+    listFlights();
+    if (S.flights.length) selectFlight(S.k); else renderDetails();
+  }
+  $('openBtn').onclick = $('openBtn2').onclick = () => $('fileIn').click();
+  $('fileIn').onchange = (e) => { loadFiles(e.target.files); e.target.value = ''; };
+  let dragN = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); dragN++; document.body.classList.add('drag'); });
+  window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; document.body.classList.remove('drag'); } });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; document.body.classList.remove('drag'); if (e.dataTransfer && e.dataTransfer.files) loadFiles(e.dataTransfer.files); });
+
+  const segBind = (id, cur, fn) => { const el = $(id); el.querySelectorAll('button').forEach(b => { b.classList.toggle('on', b.dataset.v === String(cur)); b.onclick = () => { el.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); }; }); };
+  segBind('clockSeg', S.clock, (v) => { S.clock = v; try { localStorage.setItem('wd_tlm_clock', v); } catch (e) {} if (S.files.length) reparse(); });
+  segBind('modeSeg', S.mode, (v) => { S.mode = +v; try { localStorage.setItem('wd_stick_mode', v); } catch (e) {} update(); });
+  segBind('spdSeg', 1, (v) => { S.speed = +v; });
+  segBind('colSeg', 'spd', (v) => { S.colorBy = v; drawTrack(); });
+  segBind('baseSeg', 'sat', (v) => { map.removeLayer(bases[S.base]); S.base = v; bases[v].addTo(map); });
+  $('followBtn').onclick = () => { S.follow = !S.follow; $('followBtn').classList.toggle('primary', S.follow); update(); };
+  $('fitBtn').onclick = fitTrack;
+  $('play').onclick = togglePlay;
+
+  // Scrub on the charts
+  const scrubFromEvent = (e, snap) => { if (!S.cur || !chartGeom) return; const r = cv.getBoundingClientRect(); const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    if (snap && chartGeom.moi) { const hit = chartGeom.moi.find(q => Math.abs(q.x - x) < 7); if (hit) { seek(hit.t); showPop(hit.m); return; } }
+    const t = (x - PADL) / (chartGeom.W - PADL - PADR) * S.cur.dur; seek(t); };
+  let scrubbing = false;
+  cv.addEventListener('pointerdown', (e) => { scrubbing = true; cv.setPointerCapture(e.pointerId); scrubFromEvent(e, true); });
+  cv.addEventListener('pointermove', (e) => { if (scrubbing) scrubFromEvent(e); });
+  cv.addEventListener('pointerup', () => { scrubbing = false; });
+  // Click the track on the map to jump to the nearest point
+  map.on('click', (e) => {
+    const f = S.cur; if (!f) return; let best = -1, bd = Infinity;
+    for (let i = 0; i < f.n; i++) { if (isNaN(f.lat[i])) continue; const d = (f.lat[i] - e.latlng.lat) ** 2 + ((f.lng[i] - e.latlng.lng) * Math.cos(f.lat[i] * Math.PI / 180)) ** 2; if (d < bd) { bd = d; best = i; } }
+    if (best >= 0 && Math.sqrt(bd) * 111000 < 60) seek(f.t[best]);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!S.cur || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || $('modal').classList.contains('on')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); setMoi({ on: !S.moi.on }); }
+    else if (e.key === 's' || e.key === 'S') { e.preventDefault(); setSheet(!S.sheet); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); seek(S.t + (e.shiftKey ? 10 : 1)); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); seek(S.t - (e.shiftKey ? 10 : 1)); }
+    else if (e.key === ']' || e.key === '[') { const v = [0.5, 1, 2, 4, 8]; let k = v.indexOf(S.speed) + (e.key === ']' ? 1 : -1); k = Math.max(0, Math.min(v.length - 1, k)); S.speed = v[k]; document.querySelectorAll('#spdSeg button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.speed)); }
+  });
+  window.addEventListener('resize', () => { sizeChart(); map.invalidateSize(); });
+  sizeChart();
+  drawGimbal($('gL'), NaN, NaN, [], ['Yaw', 'Thr']); drawGimbal($('gR'), NaN, NaN, [], ['Roll', 'Pitch']); drawAttitude(0, 0, NaN);
+
+  // ───────── Planner v5.25 telemetry parser (copied verbatim so exports match the planner's own import) ─────────
+  const plannerParse = (() => {
+        const TLM_DISARMED = /^(OK|WAIT|!ERR)$/i;
+        const parseTelemetryCsv = (text, fileName, clock) => {
+          const lines = String(text || '').split(/\r?\n/).filter(l => l.trim());
+          if (lines.length < 3) return [];
+          const split = (line) => { const out = []; let cur = '', q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; };
+          const hdr = split(lines[0]).map(h => h.trim());
+          const col = (...names) => { for (const n of names) { const i = hdr.findIndex(h => h.toLowerCase() === n.toLowerCase()); if (i >= 0) return i; } for (const n of names) { const i = hdr.findIndex(h => h.toLowerCase().startsWith(n.toLowerCase().replace(/\(.*$/, '') + '(')); if (i >= 0) return i; } return -1; };
+          const C = {
+            date: col('Date'), time: col('Time'), fm: col('FM'), alt: col('Alt(m)', 'Alt(ft)'), gps: col('GPS'),
+            spd: col('GSpd(kmh)', 'GSpd(kts)', 'GSpd(mph)', 'GSpd(m/s)'), rxbt: col('RxBt(V)'), curr: col('Curr(A)'),
+            capa: col('Capa(mAh)'), batp: col('Bat%(%)'), rq: col('RQly(%)'), r1: col('1RSS(dB)'), r2: col('2RSS(dB)'),
+            snr: col('RSNR(dB)'), tpwr: col('TPWR(mW)'), sats: col('Sats'), txbt: col('TxBat(V)'),
+          };
+          if (C.date < 0 || C.time < 0) return [];
+          const altFt = C.alt >= 0 && /\(ft\)/i.test(hdr[C.alt]);
+          const spdH = C.spd >= 0 ? hdr[C.spd].toLowerCase() : '';
+          const spdK = spdH.includes('kts') ? 1.852 : spdH.includes('mph') ? 1.609344 : spdH.includes('m/s') ? 3.6 : 1;
+          const num = (r, i) => { if (i < 0) return NaN; const v = parseFloat(r[i]); return isFinite(v) ? v : NaN; };
+          const rows = [];
+          for (let k = 1; k < lines.length; k++) {
+            const r = split(lines[k]); if (r.length < 3) continue;
+            const d = (r[C.date] || '').trim(), t = (r[C.time] || '').trim();
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d), n = /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?$/.exec(t);
+            if (!m || !n) continue;
+            const parts = [+m[1], +m[2] - 1, +m[3], +n[1], +n[2], +n[3], Math.round(parseFloat('0.' + (n[4] || '0')) * 1000)];
+            const ms = clock === 'local' ? new Date(...parts).getTime() : Date.UTC(...parts);
+            let lat = NaN, lng = NaN;
+            if (C.gps >= 0) { const g = (r[C.gps] || '').trim().split(/\s+/); lat = parseFloat(g[0]); lng = parseFloat(g[1]); if (!isFinite(lat) || !isFinite(lng) || (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001)) { lat = NaN; lng = NaN; } }
+            const fm = C.fm >= 0 ? (r[C.fm] || '').trim() : '';
+            const alt = num(r, C.alt);
+            rows.push({ ms, fm, alt: altFt ? alt * 0.3048 : alt, spd: num(r, C.spd) * spdK, lat, lng,
+              v: num(r, C.rxbt), a: num(r, C.curr), mah: num(r, C.capa), pct: num(r, C.batp), rq: num(r, C.rq),
+              rss: (() => { const x = num(r, C.r1), y = num(r, C.r2), ok = (v) => !isNaN(v) && v < 0; return ok(x) && ok(y) ? Math.max(x, y) : ok(x) ? x : ok(y) ? y : -999; })(), snr: num(r, C.snr), tp: num(r, C.tpwr), sats: num(r, C.sats) });
+          }
+          if (!rows.length) return [];
+          // Armed state from the flight-mode field; with no FM column the whole log is one flight
+          const hasFm = C.fm >= 0 && rows.some(r => r.fm);
+          const armed = (r) => !hasFm ? true : (!!r.fm && !/\*$/.test(r.fm) && !(/!$/.test(r.fm) && !/^!FS!$/i.test(r.fm)) && !TLM_DISARMED.test(r.fm));
+          const runs = []; let s = -1;
+          rows.forEach((r, i) => { const a = armed(r); if (a && s < 0) s = i; if (!a && s >= 0) { runs.push([s, i - 1]); s = -1; } });
+          if (s >= 0) runs.push([s, rows.length - 1]);
+          // Merge runs split by short drop-outs (< 3 s), then drop bench arms (< 5 s that never left the ground)
+          const merged = [];
+          runs.forEach(rn => { const p = merged[merged.length - 1]; if (p && rows[rn[0]].ms - rows[p[1]].ms < 3000) p[1] = rn[1]; else merged.push([...rn]); });
+          const hav = (a, b, c, d) => { const R = 6371000, toR = Math.PI / 180, dLa = (c - a) * toR, dLo = (d - b) * toR; const x = Math.sin(dLa / 2) ** 2 + Math.cos(a * toR) * Math.cos(c * toR) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+          const r1 = (x, p = 1) => isFinite(x) ? Math.round(x * 10 ** p) / 10 ** p : null;
+          const flights = [];
+          merged.forEach(([a, b]) => {
+            const seg = rows.slice(a, b + 1);
+            const durS = (seg[seg.length - 1].ms - seg[0].ms) / 1000;
+            let prevAlt = NaN; for (let i = a - 1; i >= 0 && i >= a - 5000; i--) if (isFinite(rows[i].alt)) { prevAlt = rows[i].alt; break; }
+            let altBase = NaN, freshK = -1; for (let k = 0; k < seg.length && seg[k].ms - seg[0].ms <= 15000; k++) { const v = seg[k].alt; if (!isFinite(v)) continue; if (!isFinite(prevAlt) || v !== prevAlt) { altBase = Math.abs(v) <= 1.5 ? 0 : v; freshK = k; break; } }
+            if (!isFinite(altBase)) altBase = (seg.find(r => isFinite(r.alt)) || {}).alt || 0;
+            const rel = seg.map((r, k) => !isFinite(r.alt) ? NaN : (k < freshK && r.alt === prevAlt) ? 0 : r.alt - altBase);
+            const maxAlt = Math.max(0, ...rel.filter(isFinite));
+            if (durS < 5 && maxAlt < 1) return;
+            // Smooth ground speed with a 3-sample median so a single GPS spike isn't reported as the max
+            const sp = seg.map(r => r.spd);
+            const spS = sp.map((v, i) => { const w = [sp[i - 1], v, sp[i + 1]].filter(isFinite).sort((x, y) => x - y); return w.length ? w[Math.floor(w.length / 2)] : NaN; });
+            // Home: last GPS fix before arming in this file, else first fix in the flight
+            let home = null;
+            for (let i = a; i >= Math.max(0, a - 600); i--) if (isFinite(rows[i].lat)) { home = [rows[i].lat, rows[i].lng]; break; }
+            const fixes = seg.map((r, i) => [r.lat, r.lng, i]).filter(p => isFinite(p[0]));
+            if (!home && fixes.length) home = [fixes[0][0], fixes[0][1]];
+            let maxDist = 0, path = 0, last = null;
+            fixes.forEach(p => { if (home) maxDist = Math.max(maxDist, hav(home[0], home[1], p[0], p[1])); if (last) { const d = hav(last[0], last[1], p[0], p[1]); if (d < 200) path += d; } last = p; });
+            const fin = (k) => seg.map(r => r[k]).filter(isFinite);
+            const vS = fin('v'), mahS = fin('mah'), aS = fin('a'), pS = fin('pct'), rqS = fin('rq'), rsS = seg.map(r => r.rss).filter(x => isFinite(x) && x > -999), tpS = fin('tp'), satS = fin('sats'), snrS = fin('snr');
+            // Voltage sag: lowest 2 s rolling average, so a single dip doesn't read as the minimum
+            let vMin = NaN; if (vS.length) { const w = Math.max(1, Math.round(vS.length / (durS || 1) * 2)); for (let i = 0; i + w <= vS.length; i++) { const m = vS.slice(i, i + w).reduce((x, y) => x + y, 0) / w; vMin = isNaN(vMin) ? m : Math.min(vMin, m); } }
+            const cells = vS.length ? Math.max(1, Math.ceil(vS[0] / 4.45)) : null;
+            // Failsafe and link events
+            const events = []; let inFs = false, lowLink = false;
+            seg.forEach(r => {
+              const t = Math.round((r.ms - seg[0].ms) / 1000);
+              if (/^!FS!$/i.test(r.fm) && !inFs) { events.push({ t, type: 'failsafe', text: 'Failsafe' }); inFs = true; } else if (!/^!FS!$/i.test(r.fm)) inFs = false;
+              if (isFinite(r.rq) && r.rq < 50 && !lowLink) { events.push({ t, type: 'link', text: 'Link quality ' + r.rq + '%' }); lowLink = true; } else if (isFinite(r.rq) && r.rq >= 70) lowLink = false;
+            });
+            // Downsampled trace for the profile chart and map: [tSec, altM, kmh, lat, lng]
+            const N = 160, step = Math.max(1, Math.ceil(seg.length / N)), trace = [];
+            for (let i = 0; i < seg.length; i += step) {
+              const ch = seg.slice(i, i + step), ri = rel.slice(i, i + step).filter(isFinite), sj = spS.slice(i, i + step).filter(isFinite);
+              const g = ch.find(r => isFinite(r.lat));
+              trace.push([r1((ch[0].ms - seg[0].ms) / 1000), ri.length ? r1(Math.max(...ri)) : null, sj.length ? r1(Math.max(...sj)) : null, g ? r1(g.lat, 6) : null, g ? r1(g.lng, 6) : null]);
+            }
+            const phaseMax = (from, to) => { const v = seg.map((r, i) => [(r.ms - seg[0].ms) / 1000, rel[i]]).filter(p => p[0] >= from && p[0] <= to && isFinite(p[1])).map(p => p[1]); return v.length ? Math.max(0, ...v) : 0; };
+            // Peak per-sample kinetic energy inputs (speed and height together), used with the fleet weight
+            const keInputs = seg.map((r, i) => [isFinite(spS[i]) ? spS[i] / 3.6 : 0, Math.max(0, isFinite(rel[i]) ? rel[i] : 0)]);
+            let keV = 0, keH = 0, keScore = -1; keInputs.forEach(([v, h]) => { const sc = v * v + 2 * 9.81 * h; if (sc > keScore) { keScore = sc; keV = v; keH = h; } });
+            const notes = [];
+            if (hasFm && a === 0) notes.push('Log started with the aircraft already armed — the take-off may be missing from this log.');
+            if (hasFm && b === rows.length - 1) notes.push('Log ended while the aircraft was still armed — the landing may be missing from this log.');
+            if (!hasFm) notes.push('No flight-mode field in this log, so the whole file was treated as one flight.');
+            flights.push({ notes,
+              source: 'EdgeTX telemetry (CRSF/ELRS)', file: fileName || '', clock: clock === 'local' ? 'local' : 'utc',
+              startMs: seg[0].ms, endMs: seg[seg.length - 1].ms, durationSec: Math.round(durS), samples: seg.length,
+              maxAltM: r1(maxAlt), maxSpeedKmh: r1(Math.max(0, ...spS.filter(isFinite))), maxDistM: Math.round(maxDist), pathM: Math.round(path),
+              home: home ? [r1(home[0], 6), r1(home[1], 6)] : null,
+              cells, vStart: r1(vS[0], 2), vMin: r1(vMin, 2), vEnd: r1(vS[vS.length - 1], 2),
+              mahUsed: mahS.length ? Math.max(0, Math.round(mahS[mahS.length - 1] - mahS[0])) : null, mahEnd: mahS.length ? Math.round(mahS[mahS.length - 1]) : null,
+              pctStart: pS.length ? pS[0] : null, pctEnd: pS.length ? pS[pS.length - 1] : null,
+              maxCurrA: aS.length ? r1(Math.max(...aS)) : null, avgCurrA: aS.length ? r1(aS.reduce((x, y) => x + y, 0) / aS.length) : null,
+              minRq: rqS.length ? Math.min(...rqS) : null, minRss: rsS.length ? Math.min(...rsS) : null, minSnr: snrS.length ? Math.min(...snrS) : null,
+              maxTpwr: tpS.length ? Math.max(...tpS) : null, minSats: satS.length ? Math.min(...satS) : null, maxSats: satS.length ? Math.max(...satS) : null,
+              takeoffMaxM: r1(phaseMax(0, 15)), landingMaxM: r1(phaseMax(durS - 15, durS)),
+              keAt: { v: r1(keV, 2), h: r1(keH, 1) },
+              events, trace,
+            });
+          });
+          return flights;
+        };
+        return parseTelemetryCsv;
+  })();
+  // ═════════════════════════ v2.0: records, batteries & crew ═════════════════════════
+  const APP_VERSION = 'FlightLog v2.2';
+  const DBKEY = 'wd_flightlog_db';
+  const blankDB = () => ({ v: 1, operator: 'Waking Dream FPV', packs: [], pilots: [], aircraft: [], flights: {} });
+  let DB = blankDB();
+  try { const x = JSON.parse(localStorage.getItem(DBKEY) || 'null'); if (x && x.v) DB = Object.assign(blankDB(), x); } catch (e) {}
+  let saveT = null;
+  function saveDB() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(DBKEY, JSON.stringify(DB)); } catch (e) { toast('Could not save in this browser — use Save session so nothing is lost.'); } }, 200); }
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let toastT = null;
+  function toast(msg, ms) { const el = $('toast'); el.textContent = msg; el.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => el.style.display = 'none', ms || 3500); }
+  const normPack = (s) => { const v = String(s || '').trim().replace(/\s+/g, ' '); const hit = DB.packs.find(p => p.id.toLowerCase() === v.toLowerCase()); return hit ? hit.id : v; };
+  const rnd = (x, d) => (x === null || x === undefined || isNaN(x)) ? null : Math.round(x * 10 ** d) / 10 ** d;
+  const fmtHM = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm ' + String(s % 60).padStart(2, '0') + 's'; };
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const localDate = (ms) => { const d = new Date(ms); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+  const isoLocal = (ms) => { const d = new Date(ms), o = -d.getTimezoneOffset(), sg = o >= 0 ? '+' : '-', oa = Math.abs(o); return localDate(ms) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + sg + pad2(Math.floor(oa / 60)) + ':' + pad2(oa % 60); };
+  const stampNow = () => { const d = new Date(); return localDate(d.getTime()) + '_' + pad2(d.getHours()) + pad2(d.getMinutes()); };
+
+  // Each flight's details are stored by a stable id (file name + first armed row), so the
+  // same log opened again picks up its pilot, aircraft and packs and is never counted twice.
+  const sumSnap = (f) => { const s = f.sum; return { file: f.file, startMs: f.startMs, endMs: f.endMs, armedS: Math.round(s.armed), mah: isNaN(s.mah) ? null : Math.round(s.mah), v0: rnd(s.v0, 2), v1: rnd(s.v1, 2), vMin: rnd(s.vMin, 2), cells: s.cells, maxAlt: rnd(s.maxAlt, 1), maxSpd: rnd(s.maxSpd, 1), maxDist: rnd(s.maxDist, 0) }; };
+  function syncRecord(f) { const r = DB.flights[f.id]; if (r) { r.sum = sumSnap(f); saveDB(); } }
+  function recOf(f) { let r = DB.flights[f.id]; if (!r) r = DB.flights[f.id] = { pilot: '', aircraft: '', packs: [], job: '', notes: '', oonp: false }; r.sum = sumSnap(f); return r; }
+  function touch(f, fn) { const r = recOf(f); fn(r); r.updated = Date.now(); saveDB(); listFlights(); renderDetails(); }
+
+  function usage(test) {
+    let n = 0, s = 0, mah = 0, mahN = 0, cellMin = NaN, last = 0;
+    for (const r of Object.values(DB.flights)) {
+      if (!r.sum || !test(r)) continue;
+      n++; s += r.sum.armedS || 0;
+      if (r.sum.mah > 0) { mah += r.sum.mah / Math.max(1, (r.packs || []).length || 1); mahN++; }
+      if (r.sum.vMin > 0 && r.sum.cells) { const c = r.sum.vMin / r.sum.cells; cellMin = isNaN(cellMin) ? c : Math.min(cellMin, c); }
+      last = Math.max(last, r.sum.startMs || 0);
+    }
+    return { n, s, mah, avgMah: mahN ? mah / mahN : NaN, cellMin, last };
+  }
+  function packStats(id) {
+    const p = DB.packs.find(x => x.id === id) || {}, u = usage(r => (r.packs || []).includes(id));
+    u.cycles = (+p.baseCycles || 0) + u.n; u.total = (+p.baseH || 0) * 3600 + u.s;
+    u.warn = [];
+    if (p.cap > 0 && u.avgMah > 0.8 * p.cap) u.warn.push('averaging over 80% of capacity');
+    if (u.cellMin > 0 && u.cellMin < 3.3) u.warn.push('sagged below 3.30 V/cell');
+    return u;
+  }
+  const pilotStats = (name) => usage(r => r.pilot === name);
+  const acftStats = (name) => usage(r => r.aircraft === name);
+
+  // ───────── Flight details panel ─────────
+  function flightTags(f) {
+    const r = DB.flights[f.id] || {}, t = [];
+    t.push(r.pilot ? '<span class="tag ok">' + esc(r.pilot) + '</span>' : '<span class="tag miss">no pilot</span>');
+    t.push((r.packs || []).length ? r.packs.map(p => '<span class="tag ok">🔋' + esc(p) + '</span>').join('') : '<span class="tag miss">no pack</span>');
+    return t.join('');
+  }
+  function fillSelect(id, names, cur, ph) {
+    const opts = [...names]; if (cur && !opts.includes(cur)) opts.push(cur);
+    $(id).innerHTML = '<option value="">' + ph + '</option>' + opts.map(n => '<option value="' + esc(n) + '"' + (n === cur ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '<option value="__new">＋ Add new…</option>';
+  }
+  function renderDetails() {
+    const f = S.cur, off = !f;
+    ['dPilot', 'dAcft', 'dPackIn', 'dPackAdd', 'dJob', 'dNotes', 'dOonp', 'dCopyAll'].forEach(id => $(id).disabled = off);
+    const r = f ? (DB.flights[f.id] || {}) : {};
+    fillSelect('dPilot', DB.pilots.map(p => p.name), r.pilot, '— pilot —');
+    fillSelect('dAcft', DB.aircraft.map(a => a.name), r.aircraft, '— aircraft —');
+    $('dJob').value = r.job || ''; $('dNotes').value = r.notes || ''; $('dOonp').checked = !!r.oonp;
+    $('packList').innerHTML = DB.packs.filter(p => !p.retired).sort((a, b) => ((r.aircraft && a.rpa === r.aircraft) ? 0 : 1) - ((r.aircraft && b.rpa === r.aircraft) ? 0 : 1)).map(p => '<option value="' + esc(p.id) + '">').join('');
+    const cur = r.packs || [];
+    $('dPacks').innerHTML = cur.length ? cur.map(p => '<span class="chip">🔋 ' + esc(p) + '<button data-rm="' + esc(p) + '" title="Remove">×</button></span>').join('') : '<span class="lbl warnTxt">No pack recorded for this flight</span>';
+    // Suggest packs not yet used on any open flight first (usually the next fresh pack)
+    const usedHere = new Set(S.flights.flatMap(x => (DB.flights[x.id] || {}).packs || []));
+    const mine = (p) => r.aircraft && p.rpa === r.aircraft ? 0 : 1;
+    const sug = DB.packs.filter(p => !p.retired && !cur.includes(p.id) && (!r.aircraft || !p.rpa || p.rpa === r.aircraft)).sort((a, b) => (mine(a) - mine(b)) || (usedHere.has(a.id) - usedHere.has(b.id)) || a.id.localeCompare(b.id, undefined, { numeric: true })).slice(0, 12);
+    $('dPackSug').innerHTML = f && sug.length ? sug.map(p => '<span class="chip sug" data-add="' + esc(p.id) + '" title="' + (usedHere.has(p.id) ? 'Already used on another open flight' : 'Not used yet in these logs') + '">' + (usedHere.has(p.id) ? '' : '● ') + esc(p.id) + '</span>').join('') : '';
+    $('dPackInfo').innerHTML = cur.map(id => { const u = packStats(id); return '<div><b>' + esc(id) + '</b> · ' + u.cycles + ' cycles · ' + fmtHM(u.total) + (isNaN(u.avgMah) ? '' : ' · avg ' + Math.round(u.avgMah) + ' mAh') + (isNaN(u.cellMin) ? '' : ' · low ' + u.cellMin.toFixed(2) + ' V/c') + (u.warn.length ? ' <span class="warnTxt">⚠ ' + u.warn.join(', ') + '</span>' : '') + '</div>'; }).join('');
+    $('dPacks').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => touch(S.cur, r2 => r2.packs = r2.packs.filter(x => x !== b.dataset.rm)));
+    $('dPackSug').querySelectorAll('[data-add]').forEach(b => b.onclick = () => addPack(b.dataset.add));
+    renderMoiList(); renderSheet();
+  }
+  function addPack(raw) {
+    const f = S.cur, id = normPack(raw); if (!f || !id) return;
+    if (!DB.packs.find(p => p.id === id)) { DB.packs.push({ id, rpa: (DB.flights[f.id] || {}).aircraft || '', cells: f.sum.cells || null, cap: null, baseCycles: 0, baseH: 0, notes: '', retired: false, added: localDate(Date.now()) }); toast('New pack ' + id + ' added to the battery register.'); }
+    touch(f, r => { if (!r.packs.includes(id)) r.packs.push(id); });
+    $('dPackIn').value = '';
+  }
+  $('dPackAdd').onclick = () => addPack($('dPackIn').value);
+  $('dPackIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPack($('dPackIn').value); } });
+  $('dPackIn').addEventListener('change', () => { const v = normPack($('dPackIn').value); if (DB.packs.find(p => p.id === v)) addPack(v); });
+  function pickNew(kind) {
+    const name = (prompt(kind === 'pilot' ? 'Pilot name' : 'Aircraft name (as in your fleet)') || '').trim(); if (!name) return '';
+    if (kind === 'pilot') { if (!DB.pilots.find(p => p.name === name)) DB.pilots.push({ name, arn: (prompt('ARN (optional)') || '').trim() }); }
+    else if (!DB.aircraft.find(a => a.name === name)) { const w = parseFloat(prompt('All-up weight in grams (for the kinetic energy check, optional)') || ''); DB.aircraft.push({ name, weight: isFinite(w) ? w : null }); }
+    return name;
+  }
+  $('dPilot').onchange = () => { let v = $('dPilot').value; if (v === '__new') v = pickNew('pilot'); touch(S.cur, r => r.pilot = v); };
+  $('dAcft').onchange = () => { let v = $('dAcft').value; if (v === '__new') v = pickNew('acft'); touch(S.cur, r => r.aircraft = v); };
+  $('dJob').onchange = () => touch(S.cur, r => r.job = $('dJob').value.trim());
+  $('dNotes').onchange = () => touch(S.cur, r => r.notes = $('dNotes').value);
+  $('dOonp').onchange = () => touch(S.cur, r => r.oonp = $('dOonp').checked);
+  $('dCopyAll').onclick = () => {
+    const r = DB.flights[S.cur.id] || {};
+    if (!confirm('Set pilot "' + (r.pilot || '—') + '", aircraft "' + (r.aircraft || '—') + '", job "' + (r.job || '—') + '" and over-people (' + (r.oonp ? 'yes' : 'no') + ') on all ' + S.flights.length + ' open flights?\nBattery packs and notes are not changed.')) return;
+    S.flights.forEach(f => { const x = recOf(f); x.pilot = r.pilot || ''; x.aircraft = r.aircraft || ''; x.job = r.job || ''; x.oonp = !!r.oonp; x.updated = Date.now(); });
+    saveDB(); listFlights(); renderDetails(); toast('Copied to all ' + S.flights.length + ' flights.');
+  };
+
+  // ───────── Batteries & crew register ─────────
+  let mTab = 'packs';
+  $('regBtn').onclick = () => { $('modal').classList.add('on'); renderReg(); };
+  $('mClose').onclick = () => { $('modal').classList.remove('on'); listFlights(); renderDetails(); };
+  $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') $('mClose').click(); });
+  $('mTabs').querySelectorAll('button').forEach(b => b.onclick = () => { mTab = b.dataset.t; $('mTabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); renderReg(); });
+  const inp = (arr, i, k, v, type, w) => '<input data-arr="' + arr + '" data-i="' + i + '" data-k="' + k + '" type="' + (type || 'text') + '" value="' + esc(v ?? '') + '"' + (w ? ' style="width:' + w + 'px"' : '') + '>';
+  function renderReg() {
+    const B = $('mBody'); let h = '';
+    if (mTab === 'packs') {
+      h += '<div class="row" style="display:flex;gap:6px;margin-bottom:8px"><input id="newPack" placeholder="New pack ID, e.g. 6S-07" style="max-width:220px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 6px;color:var(--text)"><button class="btn" id="newPackBtn">Add pack</button><span class="lbl" style="align-self:center">Enter the cycles and hours a pack already had before you started logging here, and they will be added to the totals.</span></div>';
+      h += '<table class="reg"><tr><th>Pack ID</th><th>Aircraft</th><th>Cells</th><th>Capacity mAh</th><th>Cycles before</th><th>Hours before</th><th>Logged flights</th><th>Total cycles</th><th>Total time</th><th>Avg mAh</th><th>Lowest V/cell</th><th>Last used</th><th>Notes</th><th>Retired</th><th></th></tr>';
+      DB.packs.forEach((p, i) => { const u = packStats(p.id);
+        h += '<tr' + (p.retired ? ' style="opacity:.5"' : '') + '><td>' + inp('packs', i, 'id', p.id, 'text', 120) + '</td><td><select data-arr="packs" data-i="' + i + '" data-k="rpa" style="width:150px"><option value="">— any —</option>' + DB.aircraft.map(a => '<option value="' + esc(a.name) + '"' + (a.name === p.rpa ? ' selected' : '') + '>' + esc(a.name) + '</option>').join('') + (p.rpa && !DB.aircraft.some(a => a.name === p.rpa) ? '<option selected>' + esc(p.rpa) + '</option>' : '') + '</select></td><td>' + inp('packs', i, 'cells', p.cells, 'number', 50) + '</td><td>' + inp('packs', i, 'cap', p.cap, 'number', 70) + '</td><td>' + inp('packs', i, 'baseCycles', p.baseCycles, 'number', 60) + '</td><td>' + inp('packs', i, 'baseH', p.baseH, 'number', 60) + '</td>' +
+          '<td class="num">' + u.n + '</td><td class="num"><b>' + u.cycles + '</b></td><td class="num"><b>' + fmtHM(u.total) + '</b></td><td class="num">' + (isNaN(u.avgMah) ? '—' : Math.round(u.avgMah)) + '</td><td class="num' + (u.cellMin < 3.3 ? ' warnTxt' : '') + '">' + (isNaN(u.cellMin) ? '—' : u.cellMin.toFixed(2)) + '</td><td class="num">' + (u.last ? fmtDate(u.last) : '—') + '</td>' +
+          '<td>' + inp('packs', i, 'notes', p.notes, 'text', 140) + '</td><td style="text-align:center"><input type="checkbox" data-arr="packs" data-i="' + i + '" data-k="retired"' + (p.retired ? ' checked' : '') + ' style="width:auto"></td><td><button class="x" data-del="packs" data-i="' + i + '" title="Delete pack">×</button></td></tr>'; });
+      if (!DB.packs.length) h += '<tr><td colspan="15" class="lbl">No packs yet. Add them here, or type a pack ID on a flight and it will be added automatically.</td></tr>';
+      h += '</table>';
+    } else if (mTab === 'pilots') {
+      h += '<div style="margin-bottom:8px"><button class="btn" id="newPilot">Add pilot</button></div><table class="reg"><tr><th>Name</th><th>ARN</th><th>Logged flights</th><th>Logged time</th><th>Last flight</th><th></th></tr>';
+      DB.pilots.forEach((p, i) => { const u = pilotStats(p.name); h += '<tr><td>' + inp('pilots', i, 'name', p.name, 'text', 200) + '</td><td>' + inp('pilots', i, 'arn', p.arn, 'text', 110) + '</td><td class="num">' + u.n + '</td><td class="num"><b>' + fmtHM(u.s) + '</b></td><td class="num">' + (u.last ? fmtDate(u.last) : '—') + '</td><td><button class="x" data-del="pilots" data-i="' + i + '">×</button></td></tr>'; });
+      h += '</table>';
+    } else if (mTab === 'acft') {
+      h += '<div style="margin-bottom:8px"><button class="btn" id="newAcft">Add aircraft</button> <span class="lbl">Use the same names as your planner fleet so the export matches.</span></div><table class="reg"><tr><th>Name</th><th>All-up weight (g)</th><th>Logged flights</th><th>Logged time</th><th>Last flight</th><th></th></tr>';
+      DB.aircraft.forEach((a, i) => { const u = acftStats(a.name); h += '<tr><td>' + inp('aircraft', i, 'name', a.name, 'text', 220) + '</td><td>' + inp('aircraft', i, 'weight', a.weight, 'number', 90) + '</td><td class="num">' + u.n + '</td><td class="num"><b>' + fmtHM(u.s) + '</b></td><td class="num">' + (u.last ? fmtDate(u.last) : '—') + '</td><td><button class="x" data-del="aircraft" data-i="' + i + '">×</button></td></tr>'; });
+      h += '</table>';
+    } else {
+      h += '<div style="display:grid;gap:10px;max-width:520px"><label class="lbl">Operator name on reports<br><input id="opName" value="' + esc(DB.operator) + '" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 7px;color:var(--text)"></label>' +
+        '<div class="lbl">Records stored in this browser: <b style="color:var(--text)">' + Object.keys(DB.flights).length + '</b> flights, ' + DB.packs.length + ' packs, ' + DB.pilots.length + ' pilots, ' + DB.aircraft.length + ' aircraft. Save a session file after each job as your backup.</div>' +
+        '<div style="border:1px solid var(--line);border-radius:8px;padding:9px 10px"><b>Planner lists</b><div class="lbl" style="margin:3px 0 7px">Load pilots (with ARNs), aircraft (with weights) and battery IDs from a planner backup (Database &amp; Settings → Export). Names then match the planner exactly when you export. Nothing here is removed; blanks are filled in.</div><button class="btn" id="loadPlanner">Load from planner backup…</button></div>' +
+        '<div><button class="btn" id="clearAll">Clear all saved records…</button></div></div>';
+    }
+    B.innerHTML = h;
+    B.querySelectorAll('input[data-arr],select[data-arr]').forEach(el => el.onchange = () => {
+      const arr = DB[el.dataset.arr], i = +el.dataset.i, k = el.dataset.k, o = arr[i];
+      let v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : el.value.trim();
+      if (el.dataset.arr === 'packs' && k === 'id') v = normPack(v);
+      if ((k === 'id' || k === 'name') && !v) { el.value = o[k]; return; }
+      if ((k === 'id' || k === 'name') && arr.some((x, j) => j !== i && (x.id || x.name) === v)) { alert('"' + v + '" already exists.'); el.value = o[k]; return; }
+      // Renames carry through to every flight record
+      if (k === 'id' || k === 'name') { const old = o[k]; Object.values(DB.flights).forEach(r => {
+        if (el.dataset.arr === 'packs') r.packs = (r.packs || []).map(x => x === old ? v : x);
+        if (el.dataset.arr === 'pilots' && r.pilot === old) r.pilot = v;
+        if (el.dataset.arr === 'aircraft' && r.aircraft === old) r.aircraft = v; }); if (el.dataset.arr === 'aircraft') DB.packs.forEach(p => { if (p.rpa === old) p.rpa = v; }); }
+      o[k] = v; saveDB(); renderReg();
+    });
+    B.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      const arr = DB[b.dataset.del], o = arr[+b.dataset.i], nm = o.id || o.name;
+      if (!confirm('Delete "' + nm + '" from the register?\nFlights keep their record of it; it just won\'t be in the list.' + (b.dataset.del === 'packs' ? '\n(Tick "Retired" instead to keep its history visible.)' : ''))) return;
+      arr.splice(+b.dataset.i, 1); saveDB(); renderReg();
+    });
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+    on('newPackBtn', () => { const id = normPack($('newPack').value); if (!id) return; if (DB.packs.find(p => p.id === id)) return alert(id + ' already exists.'); DB.packs.push({ id, cells: null, cap: null, baseCycles: 0, baseH: 0, notes: '', retired: false, added: localDate(Date.now()) }); saveDB(); renderReg(); });
+    const np = document.getElementById('newPack'); if (np) np.onkeydown = (e) => { if (e.key === 'Enter') $('newPackBtn').click(); };
+    on('newPilot', () => { if (pickNew('pilot')) { saveDB(); renderReg(); } });
+    on('newAcft', () => { if (pickNew('acft')) { saveDB(); renderReg(); } });
+    const opn = document.getElementById('opName'); if (opn) opn.onchange = () => { DB.operator = opn.value.trim() || 'Waking Dream FPV'; saveDB(); };
+    on('loadPlanner', () => $('sessIn').click());
+    on('clearAll', () => { if (prompt('This removes every pack, pilot, aircraft and flight record from this browser. Session files you saved are not affected.\nType CLEAR to continue.') !== 'CLEAR') return; DB = blankDB(); saveDB(); renderReg(); toast('All records cleared.'); });
+  }
+
+  // ───────── Session files (.wdflight.json) ─────────
+  function download(text, name, type) { const blob = new Blob([text], { type }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); }
+  const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
+  function baseName() {
+    const f = S.flights[0], job = (S.flights.map(x => (DB.flights[x.id] || {}).job).find(Boolean)) || '';
+    return 'FlightLog_' + (f ? localDate(f.startMs) : localDate(Date.now())) + (job ? '_' + slug(job) : '');
+  }
+  $('sessSaveBtn').onclick = () => {
+    if (!S.files.length) return toast('Open a log first.');
+    const records = {}; S.flights.forEach(f => { if (DB.flights[f.id]) records[f.id] = DB.flights[f.id]; });
+    const out = { format: 'wd-flightlog-session', version: 1, appVersion: APP_VERSION, savedAt: isoLocal(Date.now()), radioClock: S.clock,
+      files: S.files, records, register: { operator: DB.operator, packs: DB.packs, pilots: DB.pilots, aircraft: DB.aircraft } };
+    download(JSON.stringify(out), baseName() + '_' + stampNow() + '.wdflight.json', 'application/json');
+    toast('Session saved: ' + S.files.length + ' log' + (S.files.length > 1 ? 's' : '') + ', ' + Object.keys(records).length + ' flight records.');
+  };
+  $('sessOpenBtn').onclick = () => $('sessIn').click();
+  $('sessIn').onchange = (e) => { if (e.target.files[0]) openSession(e.target.files[0]); e.target.value = ''; };
+  function openSession(file) {
+    file.text().then(tx => {
+      let J; try { J = JSON.parse(tx); } catch (e) { return alert('That file is not valid JSON.'); }
+      if (J && !J.format && (J._backup || (J.fleet && J.pilots))) return importPlannerLists(J);
+      if (!J || J.format !== 'wd-flightlog-session' || !Array.isArray(J.files)) return alert(J && J.format === 'wd-flightlog-export' ? 'That is a planner export, not a session. Open the matching .wdflight.json session instead.' : 'That is not a Flight Log session or a planner backup.');
+      // Merge the register: anything missing here is added; your local edits are kept.
+      const R = J.register || {}, added = [];
+      (R.packs || []).forEach(p => { if (!DB.packs.find(x => x.id === p.id)) { DB.packs.push(p); added.push(p.id); } });
+      (R.pilots || []).forEach(p => { if (!DB.pilots.find(x => x.name === p.name)) DB.pilots.push(p); });
+      (R.aircraft || []).forEach(a => { if (!DB.aircraft.find(x => x.name === a.name)) DB.aircraft.push(a); });
+      // Flight records: the newer edit wins
+      Object.entries(J.records || {}).forEach(([id, r]) => { const l = DB.flights[id]; if (!l || (r.updated || 0) > (l.updated || 0)) DB.flights[id] = r; });
+      saveDB();
+      if (J.radioClock && J.radioClock !== S.clock) { S.clock = J.radioClock; try { localStorage.setItem('wd_tlm_clock', S.clock); } catch (e) {} document.querySelectorAll('#clockSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === S.clock)); }
+      S.files = J.files; S.cur = null; reparse();
+      toast('Opened session: ' + J.files.length + ' log(s)' + (added.length ? ', ' + added.length + ' pack(s) added to register' : '') + '.');
+    });
+  }
+
+  function importPlannerLists(J) {
+    const fleet = J.fleet || {}, add = { pilots: 0, aircraft: 0, packs: 0 }, filled = [];
+    (J.pilots || []).forEach(p => { if (!p || !p.name) return; const x = DB.pilots.find(q => q.name.toLowerCase() === p.name.toLowerCase());
+      if (!x) { DB.pilots.push({ name: p.name, arn: p.arn || '' }); add.pilots++; } else if (!x.arn && p.arn) { x.arn = p.arn; filled.push(x.name + ' ARN'); } });
+    Object.keys(fleet).filter(k => k !== 'Custom').forEach(k => { const g = parseFloat(fleet[k].weight) > 0 ? Math.round(parseFloat(fleet[k].weight) * 1000) : null; const x = DB.aircraft.find(a => a.name.toLowerCase() === k.toLowerCase());
+      if (!x) { DB.aircraft.push({ name: k, weight: g }); add.aircraft++; } else { if (x.name !== k) { const old = x.name; Object.values(DB.flights).forEach(r => { if (r.aircraft === old) r.aircraft = k; }); DB.packs.forEach(p => { if (p.rpa === old) p.rpa = k; }); x.name = k; } if (!x.weight && g) { x.weight = g; filled.push(k + ' weight'); } } });
+    const addPk = (id, rpa) => { id = String(id || '').trim(); if (!id) return; const x = DB.packs.find(p => p.id.toLowerCase() === id.toLowerCase());
+      if (!x) { DB.packs.push({ id, rpa: rpa || '', cells: (/^(\d+)S\b/i.exec(id) || [])[1] ? +(/^(\d+)S\b/i.exec(id)[1]) : null, cap: null, baseCycles: 0, baseH: 0, notes: '', retired: false, added: localDate(Date.now()) }); add.packs++; }
+      else if (!x.rpa && rpa) x.rpa = rpa; };
+    Object.entries(J.rpaBatteries || {}).forEach(([rpa, list]) => (list || []).forEach(n => addPk(n, rpa)));
+    (J.batteries || []).forEach(n => addPk(n, ''));
+    saveDB(); if ($('modal').classList.contains('on')) renderReg(); listFlights(); renderDetails();
+    alert('Loaded from the planner backup' + (J._backup && J._backup.appVersion ? ' (v' + J._backup.appVersion + ')' : '') + ':\n• ' + add.pilots + ' new pilot(s)\n• ' + add.aircraft + ' new aircraft\n• ' + add.packs + ' new battery pack(s)' + (filled.length ? '\n• filled in: ' + filled.join(', ') : '') + '\n\nPick pilots, aircraft and packs from these lists so the planner import matches.');
+  }
+
+  // ───────── Export for the planner ─────────
+  function heightsOf(f) {
+    const A = f.armA, B = f.armB, tA = f.t[A], tB = f.t[B]; let to = NaN, ld = NaN;
+    for (let i = A; i <= B; i++) { const a = f.alt[i]; if (isNaN(a)) continue; if (f.t[i] - tA <= 15) to = isNaN(to) ? a : Math.max(to, a); if (tB - f.t[i] <= 15) ld = isNaN(ld) ? a : Math.max(ld, a); }
+    return { takeoffMax_m: rnd(to, 1), overallMax_m: rnd(f.sum.maxAlt, 1), landingMax_m: rnd(ld, 1) };
+  }
+  function traceOf(f, N) {
+    N = N || 160; const A = f.armA, B = f.armB, tA = f.t[A], out = [];
+    for (let k = 0; k < N; k++) { const t = tA + (f.t[B] - tA) * k / (N - 1), i = idxAt(t); out.push([rnd(t - tA, 1), rnd(f.alt[i], 1), rnd(f.spd[i], 1)]); }
+    return out;
+  }
+  function keOf(f, acName) { const ac = DB.aircraft.find(a => a.name === acName); if (!ac || !(ac.weight > 0) || !(f.sum.maxSpd > 0)) return null; return 0.5 * (ac.weight / 1000) * (f.sum.maxSpd / 3.6) ** 2; }
+  let pCache = null;
+  function plannerTelemetryFor(f) {
+    if (!pCache || pCache.clock !== S.clock || pCache.n !== S.files.length) { pCache = { clock: S.clock, n: S.files.length, map: new Map() };
+      S.files.forEach(fl => { try { plannerParse(fl.text, fl.name, S.clock).forEach(t => pCache.map.set(fl.name + '|' + t.startMs, t)); } catch (e) { console.warn(e); } }); }
+    return pCache.map.get(f.file + '|' + f.startMs) || null;
+  }
+  function flightExport(f, k) {
+    const r = DB.flights[f.id] || {}, sm = f.sum, pl = DB.pilots.find(p => p.name === r.pilot), ke = keOf(f, r.aircraft);
+    return { id: f.id, seq: k + 1, sourceFile: f.file, date: localDate(f.startMs), start: isoLocal(f.startMs), end: isoLocal(f.endMs),
+      armedSeconds: Math.round(sm.armed), durationMin: Math.max(1, Math.round(sm.armed / 60)),
+      pilot: r.pilot || '', pilotArn: pl ? pl.arn || '' : '', aircraft: r.aircraft || '', batteryPacks: r.packs || [],
+      job: r.job || '', notes: r.notes || '', oonp: !!r.oonp, source: 'telemetry',
+      plannerTelemetry: plannerTelemetryFor(f),
+      telemetry: { maxAlt_m: rnd(sm.maxAlt, 1), maxSpeed_kmh: rnd(sm.maxSpd, 1), maxDist_m: rnd(sm.maxDist, 0), path_m: rnd(sm.path, 0),
+        battStart_V: rnd(sm.v0, 2), battEnd_V: rnd(sm.v1, 2), battSag_V: rnd(sm.vMin, 2), cells: sm.cells, mAhUsed: rnd(sm.mah, 0), maxCurrent_A: rnd(sm.maxA, 1),
+        minRQly_pct: rnd(sm.minRq, 0), minRSSI_dBm: rnd(sm.minRss, 0), maxTxPower_mW: rnd(sm.maxTp, 0), sats: [rnd(sm.sats[0], 0), rnd(sm.sats[1], 0)],
+        peakKE_J: rnd(ke, 1), keOver34J: ke !== null && ke > 34, heights: heightsOf(f),
+        events: f.events.map(e => ({ t_s: rnd(e.t - f.t[f.armA], 1), text: e.text })), notes: f.notes,
+        traceFields: ['t_s', 'alt_m', 'spd_kmh'], trace: traceOf(f) } };
+  }
+  $('expBtn').onclick = () => {
+    if (!S.flights.length) return toast('Open a log first.');
+    const miss = S.flights.filter(f => { const r = DB.flights[f.id]; return !r || !r.pilot || !r.aircraft || !(r.packs || []).length; });
+    if (miss.length && !confirm(miss.length + ' of ' + S.flights.length + ' flights are missing a pilot, aircraft or battery pack (flights ' + miss.map(f => S.flights.indexOf(f) + 1).join(', ') + ').\n\nExport anyway? Missing fields are left blank.')) return;
+    const flights = S.flights.map(flightExport), T = { pilots: {}, aircraft: {}, batteries: {} };
+    const noTlm = flights.filter(x => !x.plannerTelemetry);
+    if (noTlm.length) alert(noTlm.length + ' flight(s) could not be summarised in the planner format (' + noTlm.map(x => x.seq).join(', ') + '). They are still exported, but the planner will skip them.');
+    const add = (o, key, fl, mah) => { if (!key) return; const x = o[key] = o[key] || { flights: 0, seconds: 0 }; x.flights++; x.seconds += fl.armedSeconds; if (mah !== undefined) x.mAh = (x.mAh || 0) + (mah || 0); };
+    flights.forEach(fl => { add(T.pilots, fl.pilot, fl); add(T.aircraft, fl.aircraft, fl); fl.batteryPacks.forEach(p => add(T.batteries, p, fl, fl.telemetry.mAhUsed ? Math.round(fl.telemetry.mAhUsed / fl.batteryPacks.length) : 0)); });
+    const out = { format: 'wd-flightlog-export', schemaVersion: 2, appVersion: APP_VERSION, exportedAt: isoLocal(Date.now()), operator: DB.operator, radioClock: S.clock,
+      sourceFiles: S.files.map(f => f.name), flightCount: flights.length, flights, totals: T,
+      batteryRegister: DB.packs.map(p => { const u = packStats(p.id); return Object.assign({}, p, { totalCycles: u.cycles, totalSeconds: Math.round(u.total), loggedFlights: u.n, avgMahPerFlight: rnd(u.avgMah, 0), lowestCell_V: rnd(u.cellMin, 2), lastUsed: u.last ? localDate(u.last) : null }); }),
+      pilots: DB.pilots, aircraft: DB.aircraft };
+    download(JSON.stringify(out, null, 1), baseName() + '_planner.json', 'application/json');
+    toast('Exported ' + flights.length + ' flights for the planner.');
+  };
+
+  // ───────── PDF report ─────────
+  const RC = { alt: '#1d6fd8', spd: '#d97706', v: '#15803d', a: '#be185d', rq: '#7c3aed', thr: '#64748b' };
+  function chartImage(f, W, H) {
+    const dpr = 2, cvs = document.createElement('canvas'); cvs.width = W * dpr; cvs.height = H * dpr; const c = cvs.getContext('2d'); c.scale(dpr, dpr);
+    c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+    const PL = 56, PR = 62, top = 4, axisH = 18, gap = 8, lh = (H - top - axisH - gap * 2) / 3, tA = f.t[f.armA];
+    const X = (t) => PL + (t / Math.max(1e-6, f.dur)) * (W - PL - PR);
+    lanes.forEach((ln, li) => {
+      const y0 = top + li * (lh + gap);
+      c.fillStyle = '#f8fafc'; c.fillRect(PL, y0, W - PL - PR, lh);
+      c.fillStyle = 'rgba(29,111,216,.07)'; c.fillRect(X(tA), y0, X(f.t[f.armB]) - X(tA), lh);
+      c.strokeStyle = '#cbd5e1'; c.lineWidth = 1; c.strokeRect(PL + .5, y0 + .5, W - PL - PR - 1, lh - 1);
+      ln.series.forEach(s => {
+        const arr = f[s.k]; let mn = Infinity, mx = -Infinity; s._pmn = undefined;
+        if (s.fixed) [mn, mx] = s.fixed; else { for (let i = 0; i < f.n; i++) { const x = arr[i]; if (!isNaN(x)) { if (x < mn) mn = x; if (x > mx) mx = x; } } if (mn === Infinity) return; if (s.k === 'alt' || s.k === 'spd' || s.k === 'a') mn = Math.min(0, mn); const p = (mx - mn) * 0.08 || 1; mx += p; if (s.k !== 'alt' && s.k !== 'spd' && s.k !== 'a') mn -= p; }
+        const Y = (v) => y0 + lh - 3 - ((v - mn) / (mx - mn || 1)) * (lh - 6);
+        s._pmn = mn; s._pmx = mx;
+        c.strokeStyle = RC[s.k]; c.lineWidth = 1.4; c.globalAlpha = s.k === 'thr' ? 0.6 : 1; c.beginPath();
+        let st = false, col = -1, lo = 0, hi = 0;
+        const emit = () => { const x = PL + col; if (!st) { c.moveTo(x, Y(lo)); st = true; } else c.lineTo(x, Y(lo)); if (hi !== lo) c.lineTo(x, Y(hi)); };
+        for (let i = 0; i < f.n; i++) { const v = arr[i]; if (isNaN(v)) continue; const cc = Math.round(X(f.t[i]) - PL); if (cc !== col) { if (col >= 0) emit(); col = cc; lo = hi = v; } else { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+        if (col >= 0) emit(); c.stroke(); c.globalAlpha = 1;
+        c.fillStyle = RC[s.k]; c.font = '10px system-ui'; c.textAlign = s.right ? 'left' : 'right';
+        const ax = s.right ? W - PR + 4 : PL - 4; c.fillText(fmtAxis(mx, s.u), ax, y0 + 10); c.fillText(fmtAxis(mn, s.u), ax, y0 + lh - 3);
+      });
+      c.font = 'bold 9px system-ui'; c.textAlign = 'left'; let lx = PL + 6;
+      ln.series.forEach(s => { c.fillStyle = RC[s.k]; c.fillRect(lx, y0 + 6, 8, 3); const t = s.lab.toUpperCase() + (s.u ? ' (' + s.u + ')' : ''); c.fillStyle = '#475569'; c.fillText(t, lx + 11, y0 + 11); lx += c.measureText(t).width + 24; });
+    });
+    f.events.forEach(e => { c.strokeStyle = /bad/.test(e.c) ? '#dc2626' : '#d97706'; c.lineWidth = 1.2; c.setLineDash([3, 3]); c.beginPath(); c.moveTo(X(e.t), top); c.lineTo(X(e.t), H - axisH); c.stroke(); c.setLineDash([]); });
+    const placedP = [];
+    shownMoments(f).forEach(m => {
+      if (m.i < 0) return;
+      const x = X(f.t[m.i]), li = m.def.lane[0], y0 = top + li * (lh + gap), s = m.def.lane[1] === null ? null : lanes[li].series[m.def.lane[1]];
+      let y = (s && s._pmn !== undefined && !isNaN(m.raw)) ? y0 + lh - 3 - ((m.raw - s._pmn) / (s._pmx - s._pmn || 1)) * (lh - 6) : y0 + 9;
+      y = Math.max(y0 + 5, Math.min(y0 + lh - 5, y));
+      c.fillStyle = m.def.pcol; c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill(); c.stroke();
+      c.font = 'bold 9px system-ui'; c.textAlign = 'left'; const lbl = m.def.icon + ' ' + m.short, tw = c.measureText(lbl).width;
+      let lx = x + 6; if (lx + tw > W - PR - 2) lx = x - 8 - tw; let ly = y - 5; if (ly < y0 + 10) ly = y + 13;
+      ly = placeLabel(placedP, lx, ly, tw, 9, y0 + 10, y0 + lh - 3);
+      c.fillStyle = 'rgba(255,255,255,.88)'; c.fillRect(lx - 2, ly - 9, tw + 4, 12); c.fillStyle = m.def.pcol; c.fillText(lbl, lx, ly);
+    });
+    c.fillStyle = '#64748b'; c.font = '10px system-ui'; c.textAlign = 'center';
+    const step = niceStep(f.dur / 9);
+    for (let rel = Math.ceil(-tA / step) * step; tA + rel <= f.dur + 1e-6; rel += step) c.fillText((rel < 0 ? '−' : 'T+') + fmtT(Math.abs(rel)).replace(/\.0$/, ''), X(tA + rel), H - 5);
+    return cvs.toDataURL('image/png');
+  }
+  function trackImage(f, W, H) {
+    const dpr = 2, cvs = document.createElement('canvas'); cvs.width = W * dpr; cvs.height = H * dpr; const c = cvs.getContext('2d'); c.scale(dpr, dpr);
+    c.fillStyle = '#eef2f5'; c.fillRect(0, 0, W, H);
+    const P = []; for (let i = 0; i < f.n; i++) if (!isNaN(f.lat[i])) P.push(i);
+    if (!P.length) { c.fillStyle = '#64748b'; c.font = '13px system-ui'; c.textAlign = 'center'; c.fillText('No GPS fixes in this flight', W / 2, H / 2); return cvs.toDataURL('image/png'); }
+    const la0 = f.lat[P[0]], lo0 = f.lng[P[0]], kx = Math.cos(la0 * Math.PI / 180) * 111320, ky = 110540;
+    const xy = (la, lo) => [(lo - lo0) * kx, (la - la0) * ky];
+    const pts = P.map(i => xy(f.lat[i], f.lng[i])), hm = f.home ? xy(f.home[0], f.home[1]) : null, all = hm ? pts.concat([hm]) : pts;
+    let x0 = Math.min(...all.map(p => p[0])), x1 = Math.max(...all.map(p => p[0])), y0 = Math.min(...all.map(p => p[1])), y1 = Math.max(...all.map(p => p[1]));
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, sw = Math.max(30, x1 - x0), sh = Math.max(30, y1 - y0), pad = 28, sc = Math.min((W - 2 * pad) / sw, (H - 2 * pad) / sh);
+    const S2 = (p) => [W / 2 + (p[0] - mx) * sc, H / 2 - (p[1] - my) * sc];
+    const nice = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000], bar = nice.find(d => d * sc >= W / 6) || 10000;
+    c.strokeStyle = '#dde3e9'; c.lineWidth = 1;
+    for (let gx = W / 2 % (bar * sc); gx < W; gx += bar * sc) { c.beginPath(); c.moveTo(gx, 0); c.lineTo(gx, H); c.stroke(); }
+    for (let gy = H / 2 % (bar * sc); gy < H; gy += bar * sc) { c.beginPath(); c.moveTo(0, gy); c.lineTo(W, gy); c.stroke(); }
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    c.strokeStyle = '#fff'; c.lineWidth = 6; c.beginPath(); pts.forEach((p, k) => { const q = S2(p); k ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }); c.stroke();
+    const vmax = Math.max(1, f.sum.maxSpd); c.lineWidth = 3;
+    for (let k = 1; k < pts.length; k++) { const a = S2(pts[k - 1]), b = S2(pts[k]); c.strokeStyle = colorAt((f.spd[P[k]] || 0) / vmax); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
+    f.events.forEach(e => { const i = idxAt(e.t); if (isNaN(f.latF[i])) return; const q = S2(xy(f.latF[i], f.lngF[i])); c.fillStyle = /bad/.test(e.c) ? '#dc2626' : '#f59e0b'; c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(q[0], q[1], 5, 0, 7); c.fill(); c.stroke(); });
+    const placedT = [], mt = shownMoments(f).filter(m => m.i >= 0 && !isNaN(f.latF[m.i]));
+    mt.forEach(m => { const q = S2(xy(f.latF[m.i], f.lngF[m.i])); c.fillStyle = m.def.pcol; c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(q[0], q[1], 5, 0, 7); c.fill(); c.stroke(); placedT.push({ x0: q[0] - 6, x1: q[0] + 6, y0: q[1] - 6, y1: q[1] + 6 }); });
+    mt.forEach(m => {
+      const q = S2(xy(f.latF[m.i], f.lngF[m.i]));
+      c.font = 'bold 10px system-ui'; c.textAlign = 'left'; const lbl = m.def.icon + ' ' + m.short, tw = c.measureText(lbl).width;
+      let lx = q[0] + 8; if (lx + tw > W - 4) lx = q[0] - 10 - tw; const ly = placeLabel(placedT, lx, q[1] + 4, tw, 13, 14, H - 4);
+      if (ly !== q[1] + 4) { c.strokeStyle = m.def.pcol; c.lineWidth = 1; c.beginPath(); c.moveTo(q[0], q[1]); c.lineTo(lx < q[0] ? lx + tw + 3 : lx - 3, ly - 4); c.stroke(); }
+      c.fillStyle = 'rgba(255,255,255,.92)'; c.strokeStyle = m.def.pcol; c.lineWidth = 1; c.fillRect(lx - 3, ly - 11, tw + 6, 15); c.strokeRect(lx - 3 + .5, ly - 11 + .5, tw + 5, 14);
+      c.fillStyle = m.def.pcol; c.fillText(lbl, lx, ly);
+    });
+    const end = S2(pts[pts.length - 1]); c.fillStyle = '#111'; c.fillRect(end[0] - 4, end[1] - 4, 8, 8);
+    if (hm) { const q = S2(hm); c.fillStyle = '#16a34a'; c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(q[0], q[1], 8, 0, 7); c.fill(); c.stroke(); c.fillStyle = '#fff'; c.font = 'bold 10px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('H', q[0], q[1] + 0.5); c.textBaseline = 'alphabetic'; }
+    // Scale bar, north arrow, speed key
+    c.fillStyle = '#111'; c.fillRect(14, H - 18, bar * sc, 4); c.font = '10px system-ui'; c.textAlign = 'left'; c.fillText(bar >= 1000 ? bar / 1000 + ' km' : bar + ' m', 14, H - 23);
+    c.beginPath(); c.moveTo(W - 22, 12); c.lineTo(W - 28, 30); c.lineTo(W - 22, 26); c.lineTo(W - 16, 30); c.closePath(); c.fill(); c.textAlign = 'center'; c.fillText('N', W - 22, 42);
+    const gw = 110, gx = W - gw - 14, g = c.createLinearGradient(gx, 0, gx + gw, 0); ramp.forEach((col, k) => g.addColorStop(k / (ramp.length - 1), col));
+    c.fillStyle = g; c.fillRect(gx, H - 18, gw, 5); c.fillStyle = '#333'; c.textAlign = 'left'; c.fillText('0', gx, H - 23); c.textAlign = 'right'; c.fillText(Math.round(vmax) + ' km/h', gx + gw, H - 23);
+    c.textAlign = 'left'; c.fillStyle = '#475569'; c.fillText('Track coloured by ground speed · H take-off · ■ end', 14, 16);
+    return cvs.toDataURL('image/png');
+  }
+  const KV = (k, v) => '<div class="kv"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>';
+  const dash = (x, d, u) => (x === null || x === undefined || isNaN(x)) ? '—' : (+x).toFixed(d) + (u || '');
+  const rpHead = (title, sub) => '<div class="rp-head"><div><h1>' + esc(title) + '</h1><div class="sub">' + sub + '</div></div><div class="sub" style="text-align:right"><b style="color:#111">' + esc(DB.operator) + '</b><br>Generated ' + esc(new Date().toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' })) + '<br>' + APP_VERSION + '</div></div>';
+  const clockNote = () => 'Times are local (' + (S.clock === 'utc' ? 'radio clock set to UTC, converted' : 'radio clock set to local time') + ').';
+  function summaryPage(list) {
+    const recs = list.map(f => DB.flights[f.id] || {});
+    const tot = list.reduce((s, f) => s + f.sum.armed, 0), mah = list.reduce((s, f) => s + (isNaN(f.sum.mah) ? 0 : f.sum.mah), 0);
+    const uniq = (a) => [...new Set(a.filter(Boolean))];
+    const d0 = fmtDate(list[0].startMs), d1 = fmtDate(list[list.length - 1].startMs);
+    let h = '<div class="rp">' + rpHead('Flight Log Summary', esc(d0 === d1 ? d0 : d0 + ' – ' + d1) + ' · ' + list.length + ' flights' + (uniq(recs.map(r => r.job)).length ? ' · ' + esc(uniq(recs.map(r => r.job)).join(', ')) : ''));
+    h += '<div class="grid">' + KV('Flights', list.length) + KV('Total flight time', fmtHM(tot)) + KV('Pilot(s)', esc(uniq(recs.map(r => r.pilot)).join(', ') || '—')) + KV('Aircraft', esc(uniq(recs.map(r => r.aircraft)).join(', ') || '—')) +
+      KV('Max height', dash(Math.max(...list.map(f => f.sum.maxAlt).filter(x => !isNaN(x))), 0, ' m')) + KV('Max distance', dash(Math.max(...list.map(f => f.sum.maxDist).filter(x => !isNaN(x))), 0, ' m')) +
+      KV('Energy used', Math.round(mah) + ' mAh') + KV('Events', list.reduce((s, f) => s + f.events.length, 0)) + '</div>';
+    h += '<div class="rp-sec">Flights</div><table><tr><th>#</th><th>Start</th><th>Armed</th><th>Pilot</th><th>Aircraft</th><th>Pack(s)</th><th>Max h</th><th>Max dist</th><th>Max spd</th><th>mAh</th><th>Batt V</th><th>Min link</th><th>Events</th></tr>';
+    list.forEach((f, k) => { const r = recs[k], s = f.sum;
+      h += '<tr><td class="n">' + (S.flights.indexOf(f) + 1) + '</td><td>' + esc(fmtDate(f.startMs)) + ' ' + fmtClock(f.startMs).slice(0, 5) + '</td><td class="n">' + fmtMS(s.armed) + '</td><td>' + esc(r.pilot || '—') + '</td><td>' + esc(r.aircraft || '—') + '</td><td>' + esc((r.packs || []).join(', ') || '—') + '</td>' +
+        '<td class="n">' + dash(s.maxAlt, 0, ' m') + '</td><td class="n">' + dash(s.maxDist, 0, ' m') + '</td><td class="n">' + dash(s.maxSpd, 0, ' km/h') + '</td><td class="n">' + dash(s.mah, 0) + '</td><td class="n">' + dash(s.v0, 1) + '→' + dash(s.v1, 1) + '</td><td class="n">' + dash(s.minRq, 0, '%') + '</td><td>' + (f.events.length ? f.events.map(e => esc(e.text)).join(', ') : '—') + '</td></tr>'; });
+    h += '<tr class="tot"><td></td><td>Total</td><td class="n">' + fmtHM(tot) + '</td><td colspan="6"></td><td class="n">' + Math.round(mah) + '</td><td colspan="3"></td></tr></table>';
+    const packs = uniq(recs.flatMap(r => r.packs || []));
+    if (packs.length) {
+      h += '<div class="rp-sec">Battery packs</div><table><tr><th>Pack</th><th>Flights here</th><th>Time here</th><th>mAh here</th><th>Lowest sag here</th><th>Total cycles to date</th><th>Total time to date</th><th>Notes</th></tr>';
+      packs.forEach(p => { const fl = list.filter((f, k) => (recs[k].packs || []).includes(p)), u = packStats(p), reg = DB.packs.find(x => x.id === p) || {};
+        const sag = Math.min(...fl.map(f => f.sum.cells && f.sum.vMin > 0 ? f.sum.vMin / f.sum.cells : Infinity));
+        h += '<tr><td><b>' + esc(p) + '</b></td><td class="n">' + fl.length + '</td><td class="n">' + fmtHM(fl.reduce((s, f) => s + f.sum.armed, 0)) + '</td><td class="n">' + Math.round(fl.reduce((s, f, k) => s + (isNaN(f.sum.mah) ? 0 : f.sum.mah / Math.max(1, (DB.flights[f.id].packs || []).length)), 0)) + '</td><td class="n' + (sag < 3.3 ? ' flag' : '') + '">' + (isFinite(sag) ? sag.toFixed(2) + ' V/cell' : '—') + '</td><td class="n">' + u.cycles + '</td><td class="n">' + fmtHM(u.total) + '</td><td>' + esc(reg.notes || '') + (u.warn.length ? ' <span class="flag">⚠ ' + u.warn.join(', ') + '</span>' : '') + '</td></tr>'; });
+      h += '</table>';
+    }
+    const miss = list.filter((f, k) => !recs[k].pilot || !(recs[k].packs || []).length);
+    if (miss.length) h += '<p class="flag" style="margin:6px 0 0">' + miss.length + ' flight(s) have no pilot or battery pack recorded: ' + miss.map(f => S.flights.indexOf(f) + 1).join(', ') + '.</p>';
+    h += '<div class="sig"><div>RPIC signature</div><div>Name</div><div>Date</div></div>';
+    h += '<div class="foot">' + clockNote() + ' Flight time is the armed period from the EdgeTX/ELRS telemetry log. Height is relative to the arming point. mAh on multi-pack flights is split evenly between packs.</div></div>';
+    return h;
+  }
+  function flightPage(f, k) {
+    const r = DB.flights[f.id] || {}, s = f.sum, pl = DB.pilots.find(p => p.name === r.pilot), ke = keOf(f, r.aircraft), hs = heightsOf(f);
+    let h = '<div class="rp">' + rpHead('Flight ' + (k + 1) + ' — ' + fmtDate(f.startMs), fmtClock(f.startMs) + ' – ' + fmtClock(f.endMs) + ' · ' + esc(f.file) + (r.job ? ' · ' + esc(r.job) : ''));
+    h += '<div class="grid">' + KV('Pilot (RPIC)', esc(r.pilot || '—') + (pl && pl.arn ? ' <span style="font-weight:400;font-size:8pt">ARN ' + esc(pl.arn) + '</span>' : '')) + KV('Aircraft', esc(r.aircraft || '—')) + KV('Battery pack(s)', esc((r.packs || []).join(', ') || '—')) + KV('Armed time', fmtMS(s.armed)) + '</div>';
+    h += '<div class="rp-sec">Flight track</div><img src="' + trackImage(f, 720, 200) + '">';
+    h += '<div class="rp-sec">Telemetry</div><img src="' + chartImage(f, 720, 215) + '">';
+    h += '<div class="rp-sec">Summary</div><div class="grid g5">' +
+      KV('Max height', dash(s.maxAlt, 1, ' m')) + KV('Take-off / land max', dash(hs.takeoffMax_m, 1) + ' / ' + dash(hs.landingMax_m, 1, ' m')) + KV('Max speed', dash(s.maxSpd, 1, ' km/h')) + KV('Max distance', dash(s.maxDist, 0, ' m')) +
+      KV('Path flown', (s.path / 1000).toFixed(2) + ' km') + KV('Battery', (s.cells ? s.cells + 'S ' : '') + dash(s.v0, 1) + ' → ' + dash(s.v1, 1, ' V')) + KV('Lowest sag (2 s)', dash(s.vMin, 1, ' V') + (s.cells && s.vMin > 0 ? ' · ' + (s.vMin / s.cells).toFixed(2) + ' V/c' : '')) + KV('Used', dash(s.mah, 0, ' mAh')) +
+      KV('Max current', dash(s.maxA, 1, ' A')) + KV('Min link', dash(s.minRq, 0, '%') + ' · ' + dash(s.minRss, 0, ' dBm')) + KV('Max TX power', dash(s.maxTp, 0, ' mW')) + KV('GPS sats', isNaN(s.sats[0]) ? '—' : s.sats[0] + '–' + s.sats[1]) +
+      KV('Peak KE (no drag)', ke === null ? '<span style="font-weight:400;font-size:8pt">add aircraft weight</span>' : '<span class="' + (r.oonp && ke > 34 ? 'flag' : '') + '">' + ke.toFixed(1) + ' J' + (r.oonp ? (ke > 34 ? ' ⚠ over 34 J' : ' ✓ ≤34 J') : '') + '</span>') + KV('Over people', r.oonp ? 'Yes' : 'No') + '</div>';
+    const ml = shownMoments(f);
+    if (ml.length) h += '<div class="rp-sec">Moments of interest</div><table class="tight"><tr><th>Moment</th><th>Time</th><th>Value</th><th>At that moment</th></tr>' +
+      ml.map(m => '<tr><td><b style="color:' + m.def.pcol + '">' + m.def.icon + '</b> ' + esc(m.def.label) + '</td><td class="n">' + (m.i < 0 ? '—' : 'T+' + fmtT(m.rel)) + '</td><td class="n"><b>' + esc(m.value) + '</b></td><td>' + esc(m.ctx || '') + '</td></tr>').join('') + '</table>';
+    if (f.events.length || f.notes.length || r.notes) {
+      h += '<div class="rp-sec">Events &amp; notes</div>';
+      h += f.events.map(e => '<div class="ev' + (/bad/.test(e.c) ? ' bad' : '') + '">⚠ T+' + fmtT(e.t - f.t[f.armA]) + ' — ' + esc(e.text) + '</div>').join('');
+      h += f.notes.map(n => '<div>ⓘ ' + esc(n) + '</div>').join('');
+      if (r.notes) h += '<div style="white-space:pre-wrap;margin-top:4px"><b>Pilot notes:</b> ' + esc(r.notes) + '</div>';
+    }
+    h += '<div class="foot">' + clockNote() + ' Height is relative to the arming point. Speed is GPS ground speed (3-sample median). Peak KE = ½mv² from the aircraft weight and max ground speed, without drag.</div></div>';
+    return h;
+  }
+  function printReport(list) {
+    $('report').innerHTML = (list.length > 1 ? summaryPage(list) : '') + list.map(f => flightPage(f, S.flights.indexOf(f))).join('');
+    const imgs = [...$('report').querySelectorAll('img')];
+    Promise.all(imgs.map(i => i.decode ? i.decode().catch(() => {}) : 0)).then(() => setTimeout(() => window.print(), 50));
+  }
+  window.addEventListener('afterprint', () => { $('report').innerHTML = ''; });
+  $('pdfBtn').onclick = (e) => {
+    if (!S.cur) return toast('Open a log first.');
+    const old = document.getElementById('pdfMenu'); if (old) { old.remove(); return; }
+    const m = document.createElement('div'); m.id = 'pdfMenu';
+    const r = $('pdfBtn').getBoundingClientRect();
+    m.style.cssText = 'position:fixed;z-index:2500;top:' + (r.bottom + 4) + 'px;left:' + Math.min(r.left, window.innerWidth - 270) + 'px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px;display:grid;gap:4px;width:260px;box-shadow:0 8px 24px rgba(0,0,0,.4)';
+    m.innerHTML = '<button class="btn" data-w="one" style="text-align:left">This flight <span class="lbl">(flight ' + (S.k + 1) + ')</span></button>' + (S.flights.length > 1 ? '<button class="btn" data-w="all" style="text-align:left">All ' + S.flights.length + ' flights <span class="lbl">(summary + a page each)</span></button><button class="btn" data-w="sum" style="text-align:left">Summary page only</button>' : '') + '<div class="lbl" style="padding:2px 4px">In the print window choose <b>Save as PDF</b>.</div>';
+    document.body.appendChild(m);
+    m.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { m.remove(); const w = b.dataset.w; if (w === 'one') printReport([S.cur]); else if (w === 'all') printReport(S.flights); else { $('report').innerHTML = summaryPage(S.flights); setTimeout(() => window.print(), 50); } });
+    setTimeout(() => document.addEventListener('click', function cl(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('click', cl); } }), 0);
+  };
+  // ───────── v2.2: moments controls, list and summary sheet ─────────
+  function setMoi(ch) {
+    Object.assign(S.moi, ch); saveMoi();
+    $('moiBtn').classList.toggle('on', S.moi.on);
+    if (!S.moi.on) $('moiPop').style.display = 'none';
+    renderMoiMenu(); chartCache = null; drawMoments(); drawCharts(); renderMoiList(); renderSheet();
+  }
+  function renderMoiMenu() {
+    $('moiMenu').innerHTML = '<label><input type="checkbox" data-m="on"' + (S.moi.on ? ' checked' : '') + '> <span><b>Show moments of interest</b></span></label><hr>' +
+      MOI_DEF.map(d => '<label' + (S.moi.on ? '' : ' style="opacity:.5"') + '><input type="checkbox" data-mk="' + d.k + '"' + (S.moi.k[d.k] ? ' checked' : '') + '> <b style="color:' + d.col + '">' + d.icon + '</b> ' + d.label + '</label>').join('') +
+      '<hr><label><input type="checkbox" data-m="pop"' + (S.moi.pop ? ' checked' : '') + '> Pop-up as playback passes each one</label>';
+    $('moiMenu').querySelectorAll('[data-m]').forEach(el => el.onchange = () => setMoi({ [el.dataset.m]: el.checked }));
+    $('moiMenu').querySelectorAll('[data-mk]').forEach(el => el.onchange = () => { S.moi.k[el.dataset.mk] = el.checked; setMoi({ on: true }); });
+  }
+  $('moiBtn').onclick = () => setMoi({ on: !S.moi.on });
+  $('moiOpt').onclick = (e) => { e.stopPropagation(); renderMoiMenu(); $('moiMenu').classList.toggle('on'); };
+  document.addEventListener('click', (e) => { if (!$('moiMenu').contains(e.target) && e.target.id !== 'moiOpt') $('moiMenu').classList.remove('on'); });
+  function renderMoiList() {
+    const f = S.cur, ml = shownMoments(f);
+    $('moiH').style.display = $('moiList').style.display = ml.length ? '' : 'none';
+    $('moiList').innerHTML = ml.map((m, j) => '<div class="mrow' + (m.i < 0 ? ' flat' : '') + '" data-j="' + j + '" style="--c:' + m.def.col + '"><span class="mi">' + m.def.icon + '</span><div><b>' + m.def.label + '</b> <span class="mono">' + esc(m.value) + '</span>' +
+      '<div class="s">' + (m.i < 0 ? '' : 'T+' + fmtT(m.rel) + (m.ctx ? ' · ' : '')) + esc(m.ctx || '') + '</div></div></div>').join('');
+    $('moiList').querySelectorAll('.mrow').forEach(el => el.onclick = () => jumpTo(ml[+el.dataset.j]));
+  }
+  function setSheet(on) { S.sheet = on; saveMoi(); $('sheetBtn').classList.toggle('primary', on); $('sheet').classList.toggle('on', on); $('mapWrap').classList.toggle('sheetOn', on); renderSheet(); if (!on) setTimeout(() => { map.invalidateSize(); layoutPins(); }, 0); }
+  function renderSheet() {
+    if (!S.sheet) return;
+    const f = S.cur;
+    $('sheetTitle').textContent = f ? 'Flight ' + (S.k + 1) + ' of ' + S.flights.length : 'Flight summary';
+    $('sheetPrev').disabled = !f || S.k <= 0; $('sheetNext').disabled = !f || S.k >= S.flights.length - 1; $('sheetPdf').disabled = !f;
+    const top = $('sheet').scrollTop;
+    $('sheetBody').innerHTML = f ? flightPage(f, S.k) : '<p style="color:#666">Open a log to see the flight summary.</p>';
+    $('sheet').scrollTop = top;
+  }
+  $('sheetBtn').onclick = () => setSheet(!S.sheet);
+  $('sheetClose').onclick = () => setSheet(false);
+  $('sheetPdf').onclick = () => { if (S.cur) printReport([S.cur]); };
+  $('sheetPrev').onclick = () => { if (S.k > 0) selectFlight(S.k - 1); };
+  $('sheetNext').onclick = () => { if (S.k < S.flights.length - 1) selectFlight(S.k + 1); };
+  $('moiBtn').classList.toggle('on', S.moi.on);
+  setSheet(S.sheet);
+  renderDetails();
+
+  window.__replay = { S, get DB() { return DB; }, loadText: (text, name) => { S.files = [{ name, text }]; reparse(); }, seek, select: (k) => selectFlight(k), addPack, flightExport, summaryPage, flightPage };
+  // ── Links to the other tools, and a log handed over from HUD Studio (same website)
+  { const L = { hud: 'https://planner.wakingdreamfpv.com/hud/', log: 'https://planner.wakingdreamfpv.com/log/', planner: 'https://planner.wakingdreamfpv.com/' };
+    document.querySelectorAll('#toolnav a').forEach(a => { a.href = L[a.dataset.k]; if (a.dataset.k !== 'log') a.target = '_blank'; }); }
+  try { const h = JSON.parse(localStorage.getItem('wd_handoff') || 'null'); if (h && h.files && h.files.length && Date.now() - (h.at || 0) < 10 * 60 * 1000) {
+      localStorage.removeItem('wd_handoff'); if (h.clock && h.clock !== S.clock) { S.clock = h.clock; try { localStorage.setItem('wd_tlm_clock', S.clock); } catch (e) {} document.querySelectorAll('#clockSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === S.clock)); }
+      h.files.forEach(r => { const i = S.files.findIndex(x => x.name === r.name); if (i >= 0) S.files[i] = r; else S.files.push(r); }); reparse(); toast('Opened from ' + (h.from || 'HUD Studio') + ': ' + h.files.map(f => f.name).join(', ')); } } catch (e) {}
+})();
+</script>
+</body>
+</html>
