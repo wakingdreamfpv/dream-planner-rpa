@@ -65,7 +65,7 @@ export default defineConfig(({ mode }) => {
     resolve: single ? { alias: { 'virtual:pwa-register': fileURLToPath(new URL('./src/pwa-stub.js', import.meta.url)) } } : {},
     build: {
       outDir: single ? 'dist-single' : 'dist',
-      target: 'es2019',
+      target: 'es2020', // v7.48: es2020 for BigInt (Google 3D tiles library); every supported browser has it
       chunkSizeWarningLimit: 4000,
       // Keep function names: the PDF export writes drawHeatDabs / heatMpp into the print window by name
       // (fn.toString()), so they must not be renamed by the minifier.
