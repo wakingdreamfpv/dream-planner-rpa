@@ -164,11 +164,12 @@ export const checkOps = (m, keFor) => {
     const speed = Number(path.speed) || 0;
     const res = { legs: [], profile: [], length: 0 };
     let dist0 = 0;
+    const grouped = new Map(); // v7.53: one check per path and problem, listing the legs, instead of one per leg
     pathLegs(path).forEach(([A, B], i) => {
       const a = proj.to(A), b = proj.to(B), len = Math.hypot(b.x - a.x, b.y - a.y);
       const n = Math.max(2, Math.min(240, Math.ceil(len / 1)));
       const msgs = new Map(); let status = 'ok';
-      const add = (lvl, key, text) => { if (!msgs.has(key)) msgs.set(key, { lvl, text, key }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
+      const add = (lvl, key, text, extra) => { if (!msgs.has(key)) msgs.set(key, { lvl, text, key, ...(extra || {}) }); if (lvl === 'stop') status = 'stop'; else if (status === 'ok') status = 'warn'; };
       for (let s = 0; s <= n; s++) {
         const t = s / n, p = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
         const alt = (Number(A[2]) || 0) + t * ((Number(B[2]) || 0) - (Number(A[2]) || 0));
@@ -195,7 +196,7 @@ export const checkOps = (m, keFor) => {
           const g = terr != null ? terr : Number(z.ground) || 0; ground = Math.max(ground, g);
           const agl = alt - g;
           if (lim.h != null) { ceil = ceil == null ? g + lim.h : Math.min(ceil, g + lim.h); if (agl > lim.h + 0.01) add('stop', 'h' + z.id, 'is ' + agl.toFixed(1) + ' m above ground in "' + (z.name || KINDS[z.kind].label) + '" (limit ' + lim.h + ' m)'); }
-          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + fmtSpeed(speed) + ' is over ' + fmtSpeed(lim.v) + ' in "' + (z.name || KINDS[z.kind].label) + '"');
+          if (lim.v != null && speed > lim.v + 0.01) add('stop', 'v' + z.id, 'speed ' + fmtSpeed(speed) + ' is over ' + fmtSpeed(lim.v) + ' in "' + (z.name || KINDS[z.kind].label) + '"', { fixSpeed: lim.v });
           if ((z.kind === 'oonp' || z.kind === 'near') && K && speed > 0) {
             const E = Number(z.energy) || 34, ke = keAt(K, agl, speed);
             if (ke > E + 0.05) add('stop', 'ke' + z.id, 'impact energy ' + ke.toFixed(1) + ' J is over ' + E + ' J in "' + (z.name || KINDS[z.kind].label) + '" (' + (path.drone || 'drone') + ')');
@@ -207,7 +208,13 @@ export const checkOps = (m, keFor) => {
       dist0 += len;
       const list = [...msgs.values()];
       res.legs.push({ i, status, msgs: list, len });
-      list.forEach((q) => { out.issues.push({ lvl: q.lvl, path: path.id, leg: i, key: path.id + ':' + i + ':' + q.key, text: (path.name || 'Path') + ', leg ' + (i + 1) + '→' + (i + 2) + ' ' + q.text }); });
+      list.forEach((q) => { const g = grouped.get(q.key); if (g) { g.legs.push(i); if (q.lvl === 'stop') g.lvl = 'stop'; } else grouped.set(q.key, { ...q, legs: [i] }); });
+    });
+    const nLegs = res.legs.length;
+    grouped.forEach((q) => {
+      const where = q.legs.length === nLegs && nLegs > 1 ? 'the whole way' : (q.legs.length === 1 ? 'leg ' : 'legs ') + legRanges(q.legs);
+      out.issues.push({ lvl: q.lvl, path: path.id, leg: q.legs[0], legs: q.legs, key: path.id + ':' + q.key, legKeys: q.legs.map((i) => path.id + ':' + i + ':' + q.key),
+        fixSpeed: q.fixSpeed, text: (path.name || 'Path') + ' ' + q.text + ' (' + where + ')' });
     });
     res.length = dist0;
     out.paths[path.id] = res;
@@ -224,7 +231,8 @@ export const checkOps = (m, keFor) => {
   });
   // v7.12: a check can be acknowledged (with a note) in the editor; it then no longer counts as open
   const acks = m.acks || {};
-  out.issues.forEach((q) => { const a = q.key && acks[q.key]; if (a) q.ack = a; else out.counts[q.lvl]++; });
+  // (a grouped path check also counts as acknowledged if every leg was acknowledged before v7.53)
+  out.issues.forEach((q) => { const a = (q.key && acks[q.key]) || (q.legKeys && q.legKeys.every((k) => acks[k]) && acks[q.legKeys[0]]); if (a) q.ack = a; else out.counts[q.lvl]++; });
   out.counts.acked = out.issues.filter((q) => q.ack).length;
   return out;
 };
@@ -339,3 +347,10 @@ export const followKey = (path, m) => JSON.stringify([Number(path.agl) || 0, (pa
 export const PATH_COLOURS = ['#7c3aed', '#0891b2', '#db2777', '#2563eb', '#65a30d', '#0f172a', '#c2410c'];
 export const pathColour = (p, all) => p.color || PATH_COLOURS[Math.max(0, (all || []).findIndex((q) => q.id === p.id)) % PATH_COLOURS.length];
 export const PATH_WIDTHS = [1, 2, 3]; // 3D: the airspace tube around the path, metres across
+
+// v7.53: [0,1,2,5,6,9] → "1→3, 6→7 and 10→11" style ranges of legs (leg i runs from point i+1 to i+2)
+export function legRanges(legs) {
+  const r = []; let a = legs[0], b = legs[0];
+  for (let k = 1; k <= legs.length; k++) { const x = legs[k]; if (x === b + 1) { b = x; continue; } r.push(a === b ? (a + 1) + '→' + (a + 2) : (a + 1) + '→' + (b + 2)); a = b = x; }
+  return r.length > 1 ? r.slice(0, -1).join(', ') + ' and ' + r[r.length - 1] : r[0];
+}

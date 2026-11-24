@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.53 — 24 Nov 2026 — Ops map checks: one line per problem
+- **Far fewer warnings.** The ops map's Checks list used to repeat the same problem for every leg of a path (a drawn path has dozens of legs). Now each problem shows once per path, with where it applies, e.g. "Path A speed 5 m/s is over 1.5 m/s in Over people (direct) 1 (the whole way)" or "(legs 3→9)".
+- **Speed too high for a zone?** The check has a **Set the path to 1.5 m/s** button (the zone's limit). Each new path starts at 5 m/s, so over-people zones with a slow energy-table limit flag it until you set the speed.
+- Acknowledgements made before still count.
+- Supabase: nothing to do.
+
 ## v7.52 — 24 Nov 2026 — Tools page, HUD Studio and Flight Log are now on the website
 - **Tools page, HUD Studio and Flight Log are now on the website**: planner.wakingdreamfpv.com/tools/, /hud/ and /log/. The planner's header has links to all three (they open in the same tab; use Back to return).
 - They are separate pages: the planner's offline copy never stands in for them, and doesn't download them in the background.

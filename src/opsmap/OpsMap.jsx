@@ -969,6 +969,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
                       <button type="button" data-ops-ackok="1" disabled={q.lvl === 'stop' && ackOpen.note.trim().length < 5} onClick={() => { patch((d) => ({ ...d, acks: { ...(d.acks || {}), [q.key]: { note: ackOpen.note.trim(), by: reviewer || 'Pilot', at: new Date().toISOString() } } })); setAckOpen(null); }} className="px-2 py-1 rounded bg-slate-800 text-white font-semibold disabled:opacity-40">OK</button>
                       <button type="button" onClick={() => setAckOpen(null)} className="underline">Cancel</button></div>
                   : <div className="mt-1 flex gap-3">{q.review && <button type="button" data-ops-reviewed-check="1" className="underline font-semibold" onClick={() => setZone(q.zone, { limitReviewed: { by: reviewer || 'Pilot', at: new Date().toISOString() } })}>I've reviewed it</button>}
+                      {q.fixSpeed != null && <button type="button" data-ops-fixspeed="1" className="underline font-semibold" onClick={() => setPath(q.path, { speed: q.fixSpeed })}>Set the path to {fmtSpeed(q.fixSpeed)}</button>}
                       {!q.review && <button type="button" data-ops-ack="1" className="underline" onClick={() => setAckOpen({ key: q.key, note: '' })}>Acknowledge</button>}</div>)}
               </div>))}
             {checks && checks.issues.length > 0 && <div className="text-[11px] text-slate-500" data-ops-pdfchecks="1">These checks are for you only. They're never printed on the PDF.</div>}
