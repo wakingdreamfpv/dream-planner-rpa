@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt } from './geo.js';
 import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
 // with the site plan overlay blended on top; paths are clean lines with a start flag instead of a label on every point.
@@ -17,15 +17,15 @@ const loadThree = () => threeP || (threeP = new Promise((res, rej) => {
 }));
 const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
-export default function Ops3D({ doc, checks, apiRef, camRef: camProp }) {
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true }) {
   const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
   const host = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
-  }, [doc, checks]);
+  }, [doc, checks, buildings]);
   return (
     <div className="absolute inset-0 bg-slate-200" data-ops-3d="1">
       <div ref={host} className="absolute inset-0"></div>
@@ -52,7 +52,7 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   return sp;
 }
 
-function build(THREE, el, doc, checks, camRef, apiRef) {
+function build(THREE, el, doc, checks, camRef, apiRef, showBuildings) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -72,7 +72,7 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
   if (!pts.length) pts.push({ x: -50, z: -50 }, { x: 50, z: 50 });
   const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x)), minZ = Math.min(...pts.map((p) => p.z)), maxZ = Math.max(...pts.map((p) => p.z));
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2, span = Math.max(20, maxX - minX, maxZ - minZ);
-  const maxAlt = Math.max(5, ...doc.paths.flatMap((p) => p.pts.map((q) => Number(q[2]) || 0)), ...doc.zones.map((z) => (Number(z.ground) || 0) + (Number(z.h) || 0)).filter((x) => x < 200));
+  const maxAlt = Math.max(5, ...doc.paths.flatMap((p) => p.pts.map((q) => Number(q[2]) || 0)), ...doc.zones.map((z) => (Number(z.ground) || 0) + (Number(z.h) || 0)).filter((x) => x < 200), ...doc.zones.filter((z) => z.kind === 'exclusion').map((z) => { const B = exBand(z); return B.hi != null ? B.hi : B.lo; }).filter((x) => x < 400));
   const lblScale = span / 22;
 
   // ground: the plan overlay, else a grid (outdoors this is replaced by the satellite / terrain ground once it loads)
@@ -87,6 +87,9 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
   const grid = new THREE.GridHelper(span * 1.6, 32, 0x94a3b8, 0xcbd5e1); grid.position.set(cx, -0.05, cz); scene.add(grid);
   let alive = true;
   const groundNote = (t) => { const n = el.parentNode && el.parentNode.querySelector('[data-ops-3d-ground]'); if (n) n.textContent = t; };
+  let groundAt = null;
+  const bGroup = new THREE.Group(); scene.add(bGroup);
+  const addBuildings = (list, gAt) => buildingMesh(THREE, bGroup, list, P, gAt, cx, cz, span * 0.8);
   if (doc.mode !== 'plan') (async () => {
     const half = span * 0.8, N = 48;
     const corner = (dx, dz) => prj.from({ x: cx + dx, y: -(cz + dz) });
@@ -132,17 +135,31 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
       const H = terr.h, gAt = (x, zz) => { const fi = ((x - cx + half) / (2 * half)) * N, fj = ((zz - cz + half) / (2 * half)) * N; if (!(fi >= 0 && fj >= 0 && fi <= N && fj <= N)) return null;
         const i0 = Math.min(N - 1, Math.floor(fi)), j0 = Math.min(N - 1, Math.floor(fj)), ti = fi - i0, tj = fj - j0, v = (i, j) => H[j * (N + 1) + i];
         return (v(i0, j0) * (1 - ti) + v(i0 + 1, j0) * ti) * (1 - tj) + (v(i0, j0 + 1) * (1 - ti) + v(i0 + 1, j0 + 1) * ti) * tj; };
-      placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
+      groundAt = gAt; placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
     }
-    groundNote((sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).'));
+    const gNote = (sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).');
+    groundNote(gNote);
     req();
+    // v7.47: 3D buildings (OpenStreetMap footprints and heights), standing on the terrain
+    if (showBuildings) {
+      const gAt = terr ? groundAt : null;
+      const bb = [Math.min(sw[0], ne[0]), Math.min(sw[1], ne[1]), Math.max(sw[0], ne[0]), Math.max(sw[1], ne[1])];
+      groundNote(gNote + ' Loading 3D buildings (can take up to a minute)…');
+      const list = await osmBuildings(bb).catch(() => null);
+      if (!alive) return;
+      if (!list) { groundNote(gNote + ' Buildings need an internet connection.'); return; }
+      const n = addBuildings(list, gAt);
+      groundNote(gNote + ' ' + n + ' building' + (n === 1 ? '' : 's') + ' (OpenStreetMap; heights estimated where not recorded).');
+      req();
+    }
   })();
 
   // zones and markers. v7.28: on real terrain each zone's walls follow the ground along its edge (bottom on the ground,
   // top at its height limit above that ground) and its floor is painted onto the ground picture; TLZ / E-LZ / caution
   // markers sit on the ground too. Until terrain loads (or without it) they stand on a flat ground as before.
   const onGround = new THREE.Group(); scene.add(onGround);
-  const zoneTops = (z) => z.kind === 'exclusion' ? Math.max(maxAlt * 1.3, 10) : Math.min(Number(z.h) > 0 ? Number(z.h) : (z.kind === 'clear' ? Math.max(maxAlt * 1.3, 10) : 2), maxAlt * 2 + 10);
+  const zoneBot = (z) => z.kind === 'exclusion' ? exBand(z).lo : 0; // v7.47: an exclusion can start above its ground
+  const zoneTops = (z) => z.kind === 'exclusion' ? (exBand(z).hi != null ? exBand(z).hi : Math.max(maxAlt * 1.3, exBand(z).lo + 10, 10)) : Math.min(Number(z.h) > 0 ? Number(z.h) : (z.kind === 'clear' ? Math.max(maxAlt * 1.3, 10) : 2), maxAlt * 2 + 10);
   const ringOf = (z) => { // the zone's edge in scene x/z, a point every few metres
     const step = Math.max(0.5, span / 90);
     if (z.shape === 'circle') { const c = P(z.c), r = Number(z.r) || 0.1, n = Math.max(48, Math.min(160, Math.ceil((2 * Math.PI * r) / step))); return { pts: Array.from({ length: n }, (_, i) => ({ x: c.x + r * Math.cos((2 * Math.PI * i) / n), z: c.z + r * Math.sin((2 * Math.PI * i) / n) })), corners: [] }; }
@@ -158,18 +175,18 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
     const sorted = [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion'));
     sorted.forEach((z) => {
       if (z.shape !== 'circle' && (z.pts || []).length < 3) return;
-      const k = kindStyle(z.kind, doc.settings), base = Number(z.ground) || 0, h = zoneTops(z);
+      const k = kindStyle(z.kind, doc.settings), base = Number(z.ground) || 0, lo = zoneBot(z), h = zoneTops(z) - lo; // h = the wall's height, from lo
       const mat = new THREE.MeshLambertMaterial({ color: k.color, transparent: true, opacity: z.kind === 'exclusion' ? 0.32 : 0.22, depthWrite: false, side: THREE.DoubleSide });
       const line = new THREE.LineBasicMaterial({ color: k.stroke });
       const cen = z.shape === 'circle' ? P(z.c) : (() => { const q = z.pts.map(P); return { x: q.reduce((t, p) => t + p.x, 0) / q.length, z: q.reduce((t, p) => t + p.z, 0) / q.length }; })();
-      let topY = base + h;
+      let topY = base + lo + h;
       if (!gAt) { // flat: one solid block
         const geo = new THREE.ExtrudeGeometry(shapeOf(z), { depth: h, bevelEnabled: false, curveSegments: 48 }); geo.rotateX(-Math.PI / 2);
-        add(new THREE.Mesh(geo, mat)).position.y = base;
-        add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), line)).position.y = base;
+        add(new THREE.Mesh(geo, mat)).position.y = base + lo;
+        add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), line)).position.y = base + lo;
         if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = add(new THREE.Mesh(new THREE.RingGeometry(z.r, z.r + b, 64), new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, base + 0.03, c.z); } }
       } else { // on the terrain: walls that follow the ground, a top that follows it too (height limit above own ground)
-        const { pts: R, corners } = ringOf(z), n = R.length, gy = R.map((p) => G(p.x, p.z, base) + 0.05);
+        const { pts: R, corners } = ringOf(z), n = R.length, gy = R.map((p) => G(p.x, p.z, base) + 0.05 + lo);
         const pos = [], idx = [];
         R.forEach((p, i) => { pos.push(p.x, gy[i], p.z, p.x, gy[i] + h, p.z); });
         for (let i = 0; i < n; i++) { const j = (i + 1) % n, a0 = 2 * i, a1 = 2 * i + 1, b0 = 2 * j, b1 = 2 * j + 1; idx.push(a0, b0, a1, a1, b0, b1); }
@@ -181,10 +198,10 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
         for (let i = 0; i < n; i++) { const j = (i + 1) % n; seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[j].x, y: gy[j], z: R[j].z }); seg({ x: R[i].x, y: gy[i] + h, z: R[i].z }, { x: R[j].x, y: gy[j] + h, z: R[j].z }); }
         (corners.length ? corners : [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4)]).forEach((i) => seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[i].x, y: gy[i] + h, z: R[i].z }));
         const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); add(new THREE.LineSegments(lg, line));
-        topY = G(cen.x, cen.z, base) + h;
+        topY = G(cen.x, cen.z, base) + lo + h;
       }
       // label at the zone's top
-      const t = z.name + (z.kind === 'exclusion' ? '' : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
+      const B = exBand(z), t = z.name + (z.kind === 'exclusion' ? (B.lo > 0 || B.hi != null ? '\n' + (B.lo > 0 ? fmtHt(B.lo, z.exUnit) : 'ground') + ' to ' + (B.hi != null ? fmtHt(B.hi, z.exUnit) : 'no limit') : '') : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
       const sp = label(THREE, t, { border: k.stroke }); { const hh = 0.03 * t.split('\n').length + 0.012; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); add(sp);
     });
     // markers
@@ -207,7 +224,7 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
   };
   const rad = Math.max(0.12, span / 500);
   placeOnGround(null);
-  if (typeof window !== 'undefined') window.__WD_3D = { group: onGround, scene };
+  if (typeof window !== 'undefined') window.__WD_3D = { group: onGround, scene, buildings: bGroup };
 
   // paths
   doc.paths.forEach((path) => {
@@ -269,6 +286,51 @@ function build(THREE, el, doc, checks, camRef, apiRef) {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
-    alive = false; clearGroup(); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
+    alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
+}
+
+// ── v7.47: 3D buildings from OpenStreetMap (free, no account). Footprints with their recorded height, else
+// levels × 3 m, else 6 m. Fetched once per area and kept for the session.
+const bCache = new Map();
+export const osmBuildings = (bb) => {
+  if (typeof window !== 'undefined' && window.__WD_BUILDINGS) return Promise.resolve(window.__WD_BUILDINGS(bb)); // tests
+  const key = bb.map((v) => v.toFixed(4)).join(',');
+  if (bCache.has(key)) return bCache.get(key);
+  const q = '[out:json][timeout:25];(way["building"](' + bb.join(',') + ');way["building:part"](' + bb.join(',') + '););out tags geom;';
+  const p = fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
+    .then((r) => { if (!r.ok) throw new Error('buildings ' + r.status); return r.json(); })
+    .then((j) => (j.elements || []).filter((e) => e.geometry && e.geometry.length > 3).map((e) => ({ pts: e.geometry.map((g) => [g.lat, g.lon]), tags: e.tags || {} })))
+    .catch((e) => { bCache.delete(key); throw e; });
+  bCache.set(key, p); return p;
+};
+export const buildingHeight = (tags) => {
+  const num = (v) => { const m = /^\s*([\d.]+)\s*(m|ft|')?/i.exec(String(v || '')); if (!m) return NaN; return /ft|'/i.test(m[2] || '') ? Number(m[1]) * 0.3048 : Number(m[1]); };
+  const h = num(tags.height), lv = Number(tags['building:levels']), mh = num(tags.min_height), ml = Number(tags['building:min_level']);
+  const top = isFinite(h) && h > 0 ? h : isFinite(lv) && lv > 0 ? lv * 3 + 1 : 6;
+  const bot = isFinite(mh) ? mh : isFinite(ml) ? ml * 3 : 0;
+  return { top, bot: Math.min(bot, top - 0.5), known: (isFinite(h) && h > 0) || (isFinite(lv) && lv > 0) };
+};
+function buildingMesh(THREE, group, list, P, gAt, cx, cz, half) {
+  const pos = [], idx = []; let count = 0;
+  list.forEach((b) => {
+    let R = b.pts.map(P); if (R.length > 3 && Math.hypot(R[0].x - R[R.length - 1].x, R[0].z - R[R.length - 1].z) < 0.01) R = R.slice(0, -1);
+    if (R.length < 3) return;
+    const c = { x: R.reduce((t, p) => t + p.x, 0) / R.length, z: R.reduce((t, p) => t + p.z, 0) / R.length };
+    if (Math.abs(c.x - cx) > half || Math.abs(c.z - cz) > half) return;
+    const g = gAt ? gAt(c.x, c.z) : 0, base = g == null ? 0 : g, H = buildingHeight(b.tags), y0 = base + H.bot, y1 = base + H.top;
+    const o = pos.length / 3, n = R.length;
+    R.forEach((p) => pos.push(p.x, y0, p.z, p.x, y1, p.z));
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n; idx.push(o + 2 * i, o + 2 * j, o + 2 * i + 1, o + 2 * i + 1, o + 2 * j, o + 2 * j + 1); }
+    let tri = []; try { tri = THREE.ShapeUtils.triangulateShape(R.map((p) => new THREE.Vector2(p.x, p.z)), []); } catch (e) { tri = []; }
+    tri.forEach(([u, v, w]) => idx.push(o + 2 * u + 1, o + 2 * v + 1, o + 2 * w + 1));
+    count++;
+  });
+  if (!count) return 0;
+  // non-indexed copy so each face gets its own flat shading
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx);
+  const flat = geo.toNonIndexed(); flat.computeVertexNormals(); geo.dispose();
+  const mesh = new THREE.Mesh(flat, new THREE.MeshLambertMaterial({ color: 0xe7e5e4, side: THREE.DoubleSide }));
+  mesh.userData.buildings = count; group.add(mesh);
+  return count;
 }

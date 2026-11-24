@@ -207,7 +207,7 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
   const [sel, setSel] = useState(null);
   const [selPt, setSelPt] = useState(null);
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -752,14 +752,14 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
               : <button type="button" onClick={() => setSel({ t: 'overlay' })} className={`w-full text-left text-xs border rounded-md p-2 ${sel && sel.t === 'overlay' ? 'border-violet-600 bg-violet-50' : 'border-slate-200'}`}><b className="block truncate">{doc.overlay.name}</b><span className="text-slate-500">{doc.overlay.locked ? 'Locked' : 'Not locked'} · {doc.overlay.widthM} m wide</span></button>}
           </div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-1 mb-1">Show</div>
-            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
+            {[['zones', 'Zones'], ['buffers', 'Buffers'], ['paths', 'Paths'], ['ptNums', 'Path point numbers'], ['points', 'Points & notes'], ['overlay', 'Plan overlay'], ...((airspace || []).length && doc.mode !== 'plan' ? [['airspace', 'Airspace (openAIP)']] : []), ...(view === '3d' && doc.mode !== 'plan' ? [['buildings', '3D buildings']] : [])].map(([k, l]) => <label key={k} className="flex items-center gap-2 text-sm px-1 py-0.5"><input type="checkbox" checked={!!show[k]} onChange={() => setShow((s) => ({ ...s, [k]: !s[k] }))} />{l}</label>)}
           </div>
           <div className="px-1"><label className={lbl}>Over-people colour</label><div className="flex gap-1">{['green', 'blue'].map((c) => <button key={c} type="button" disabled={readOnly} onClick={() => patch((d) => ({ ...d, settings: { ...(d.settings || {}), oonpColour: c } }))} className={`${btn} flex-1 justify-center ${(settings.oonpColour || 'green') === c ? 'border-violet-600 bg-violet-50' : 'border-slate-300'}`}><span className="w-3 h-3 rounded-sm" style={{ background: c === 'blue' ? '#2563eb' : '#16a34a' }}></span>{c === 'blue' ? 'Blue' : 'Green'}</button>)}</div></div>
         </aside>
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
               <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? 'Press and drag from the end of the path to carry on drawing' : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
@@ -808,6 +808,17 @@ export default function OpsMap({ value, onChange, onClose, center, fleet = {}, j
             {selZone.kind === 'clear' && <div className="grid grid-cols-2 gap-2">
               <div><label className={lbl} htmlFor="oz-ch">Max height (m)</label><input id="oz-ch" type="number" min="0" className={inp} disabled={readOnly} value={selZone.h == null ? '' : selZone.h} onChange={(e) => setZone(selZone.id, { h: e.target.value === '' ? null : Number(e.target.value) })} placeholder="120" /></div>
               <SpeedField id="oz-cv" label="Max speed" ms={selZone.v} disabled={readOnly} placeholder="any" onMs={(v) => setZone(selZone.id, { v })} /></div>}
+            {selZone.kind === 'exclusion' && (() => { const u = selZone.exUnit === 'ft' ? 'ft' : 'm', k = u === 'ft' ? 3.28084 : 1, show = (m) => m == null || m === '' ? '' : Math.round(Number(m) * k * 10) / 10;
+              const toM = (v) => v === '' ? null : Math.max(0, Number(v) / k);
+              return <div className="space-y-1.5 border border-red-100 bg-red-50/40 rounded-lg p-2" data-ops-ex-band="1">
+                <div className="flex items-center justify-between"><span className={lbl}>Height of the exclusion (above its ground)</span>
+                  <span className="flex text-[11px] border border-slate-300 rounded overflow-hidden">{['m', 'ft'].map((x) => <button key={x} type="button" disabled={readOnly} data-ops-ex-unit={x} onClick={() => setZone(selZone.id, { exUnit: x })} className={`px-2 py-0.5 ${u === x ? 'bg-slate-800 text-white' : 'bg-white text-slate-600'}`}>{x}</button>)}</span></div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className={lbl} htmlFor="oz-exlo">Starts at ({u})</label><input id="oz-exlo" data-ops-ex-floor="1" type="number" min="0" className={inp} disabled={readOnly} value={show(selZone.exFloor) || ''} placeholder="0 (ground)" onChange={(e) => setZone(selZone.id, { exFloor: toM(e.target.value) })} /></div>
+                  <div><label className={lbl} htmlFor="oz-exhi">Goes up to ({u})</label><input id="oz-exhi" data-ops-ex-top="1" type="number" min="0" className={inp} disabled={readOnly} value={show(selZone.exTop)} placeholder="no limit" onChange={(e) => setZone(selZone.id, { exTop: toM(e.target.value) })} /></div>
+                </div>
+                <p className="text-[11px] text-slate-500">Leave both empty for an exclusion from the ground all the way up. Flight paths above its top or below its start are clear of it (its buffer still applies above and below).</p>
+              </div>; })()}
             {selZone.kind === 'exclusion' && <div className="space-y-2" data-ops-buffer="1">
               <div><label className={lbl} htmlFor="oz-buf">Buffer around it (m)</label><input id="oz-buf" type="number" min="0" className={inp} disabled={readOnly || selZone.shielded} value={selZone.buffer == null ? DEFAULT_BUFFER : selZone.buffer} onChange={(e) => setZone(selZone.id, { buffer: e.target.value === '' ? null : Number(e.target.value) })} /></div>
               <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" disabled={readOnly} checked={!!selZone.shielded} onChange={(e) => setZone(selZone.id, { shielded: e.target.checked, shieldBuffer: selZone.shieldBuffer == null ? 0 : selZone.shieldBuffer })} /><span>Shielded: people are protected (roof, netting, barrier, building), so a smaller buffer applies</span></label>

@@ -1,5 +1,12 @@
 # Planner changelog
 
+## v7.47 — 24 Nov 2026 — 3D buildings, and exclusion zones with a height band
+- **Exclusion zones can start above the ground and stop at a height.** Select an exclusion zone on the ops map and fill in **Starts at** (e.g. 20 m) and **Goes up to** (e.g. 400 ft). Pick m or ft for each zone. Leave both empty for the usual "ground all the way up".
+  - The path checks follow it: a path above the top or below the start is clear of the zone. Its buffer still applies above and below, so a path that passes just over the top gets a warning.
+  - The map label, the PDF and the 3D view show the band (e.g. "from 20 m · up to 400 ft"). In 3D the red block floats between its start and top.
+- **3D buildings in the 3D view** (outdoor maps). Building shapes and heights come from OpenStreetMap (free, no account): the recorded height where there is one, else 3 m per storey, else 6 m. They stand on the terrain. Turn them off with **3D buildings** under Show. They load from a free public server, which can take up to a minute; with no internet the view works without them.
+- Supabase: nothing to do.
+
 ## v7.46 — 23 Nov 2026 — Flight logs without GPS show current, throttle and tilt
 - **Flight telemetry with no GPS** (indoor flying, quads with no GPS module): the Max alt, Max speed and Max distance boxes, which only showed 0, are replaced by **Max current** (and average), **Throttle** (max and average %) and **Max tilt** (from the drone's pitch and roll; about 180° means it flipped or flew inverted). The chart shows current, throttle and tilt instead of a flat altitude and speed line. The 0 J kinetic-energy and "GPS sats 0–0" lines are replaced by a note that the log has no GPS.
 - **Pick what the chart shows.** Under each flight's chart, tap the readings to show or hide: altitude, speed, current, throttle, tilt, voltage and link. Your choice is remembered separately for logs with GPS (default: altitude and speed, as before) and without GPS (default: current, throttle and tilt).
