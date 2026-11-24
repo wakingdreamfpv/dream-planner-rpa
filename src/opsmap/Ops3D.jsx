@@ -83,6 +83,15 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   let alive = true;
   const groundNote = (t) => { const n = el.parentNode && el.parentNode.querySelector('[data-ops-3d-ground]'); if (n) n.textContent = t; };
   let groundAt = null, groundMesh = null, gTiles = null;
+  // v7.48: what the grey line says. While Google's 3D city is on, its status wins; if it fails, the satellite ground's
+  // note plus the reason, and the OpenStreetMap buildings load instead.
+  const googleOn = !!(googleKey && doc.mode !== 'plan');
+  let gState = googleOn ? 'loading' : 'off', gMsg = '', baseNote = '', osmStarted = false, loadOsm = null;
+  const showNote = (extra) => {
+    if (gState === 'loading') return groundNote('Loading Google 3D city…');
+    if (gState === 'ok') return groundNote(gTiles.note());
+    groundNote((baseNote || '') + (extra ? ' ' + extra : '') + (gState === 'fail' ? ' Google 3D city didn\'t load: ' + gMsg : ''));
+  };
   const bGroup = new THREE.Group(); scene.add(bGroup);
   const addBuildings = (list, gAt) => buildingMesh(THREE, bGroup, list, P, gAt, cx, cz, span * 0.8);
   if (doc.mode !== 'plan') (async () => {
@@ -125,28 +134,30 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const a = j * (N + 1) + i, b = a + 1, c = a + N + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
     const geo = keep(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, keep(new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })));
-    scene.add(mesh); groundMesh = mesh; if (gTiles && gTiles.ready) mesh.visible = false; grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
+    scene.add(mesh); groundMesh = mesh; if (gState === 'ok') mesh.visible = false; grid.visible = false; if (flatOverlay) flatOverlay.visible = false;
     if (terr) { // walls, tops and markers follow the ground (bilinear on the same grid as the terrain mesh)
       const H = terr.h, gAt = (x, zz) => { const fi = ((x - cx + half) / (2 * half)) * N, fj = ((zz - cz + half) / (2 * half)) * N; if (!(fi >= 0 && fj >= 0 && fi <= N && fj <= N)) return null;
         const i0 = Math.min(N - 1, Math.floor(fi)), j0 = Math.min(N - 1, Math.floor(fj)), ti = fi - i0, tj = fj - j0, v = (i, j) => H[j * (N + 1) + i];
         return (v(i0, j0) * (1 - ti) + v(i0 + 1, j0) * ti) * (1 - tj) + (v(i0, j0 + 1) * (1 - ti) + v(i0 + 1, j0 + 1) * ti) * tj; };
       groundAt = gAt; placeOnGround(gAt); if (window.__WD_3D) window.__WD_3D.onTerrain = true;
     }
-    const gNote = (sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).');
-    if (gTiles && gTiles.ready) groundNote(gTiles.note()); else groundNote(gNote);
-    req();
-    // v7.47: 3D buildings (OpenStreetMap footprints and heights), standing on the terrain
-    if (showBuildings) {
+    baseNote = (sat ? 'Satellite imagery' : 'Plan overlay') + (terr ? ' on the terrain (' + terr.src + '), heights from the take-off.' : ' (flat: terrain data unavailable).');
+    showNote(); req();
+    // v7.47: 3D buildings (OpenStreetMap footprints and heights), standing on the terrain. With Google's city on they
+    // only load if Google fails.
+    loadOsm = async () => {
+      if (osmStarted || !showBuildings || !alive) return; osmStarted = true;
       const gAt = terr ? groundAt : null;
       const bb = [Math.min(sw[0], ne[0]), Math.min(sw[1], ne[1]), Math.max(sw[0], ne[0]), Math.max(sw[1], ne[1])];
-      groundNote(gNote + ' Loading 3D buildings (can take up to a minute)…');
+      showNote('Loading 3D buildings (can take up to a minute)…');
       const list = await osmBuildings(bb).catch(() => null);
       if (!alive) return;
-      if (!list) { groundNote(gNote + ' Buildings need an internet connection.'); return; }
+      if (!list) { showNote('Buildings need an internet connection.'); return; }
       const n = addBuildings(list, gAt);
-      groundNote(gNote + ' ' + n + ' building' + (n === 1 ? '' : 's') + ' (OpenStreetMap; heights estimated where not recorded).');
+      showNote(n + ' building' + (n === 1 ? '' : 's') + ' (OpenStreetMap; heights estimated where not recorded).');
       req();
-    }
+    };
+    if (gState === 'off' || gState === 'fail') loadOsm();
   })();
 
   // zones and markers. v7.28: on real terrain each zone's walls follow the ground along its edge (bottom on the ground,
@@ -272,15 +283,22 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
   // v7.48: Google's photo-realistic 3D city (Map Tiles API, the CRP's own key) instead of our satellite ground and
   // OpenStreetMap buildings. One Google tile set is kept for the whole session and moved between rebuilds, because
   // Google bills each time a tile set is started.
-  if (googleKey && doc.mode !== 'plan') {
+  if (googleOn) {
     const rp = (doc.terrain && doc.terrain.ref) || terrainRefPoint(doc) || ref;
-    groundNote('Loading Google 3D city…');
+    const fail = (why) => { if (gState === 'fail' || !alive) return; gState = 'fail'; gMsg = why;
+      if (gTiles) { scene.remove(gTiles.tiles.group); gTiles.onChange = null; } dropGoogle(); if (groundMesh) groundMesh.visible = true;
+      showNote(); if (loadOsm) loadOsm(); req(); };
+    showNote();
     googleTiles(THREE, googleKey, rp, renderer, cam).then((g) => {
       if (!alive || !g) return;
       gTiles = g; const c = P(rp); g.place(c.x, c.z); scene.add(g.tiles.group);
-      g.onChange = () => { if (!g.ready && g.tiles.group.children.length) { g.ready = true; if (groundMesh) groundMesh.visible = false; grid.visible = false; } groundNote(g.note()); req(); };
+      g.onChange = () => {
+        if (g.err && !g.tiles.group.children.length) return fail(g.err);
+        if (gState === 'loading' && g.tiles.group.children.length) { gState = 'ok'; if (groundMesh) groundMesh.visible = false; grid.visible = false; }
+        if (gState === 'ok') showNote(); req(); };
       g.onChange();
-    }).catch((e) => { groundNote('Google 3D city didn\'t load: ' + (e.message || e) + ' Showing the satellite ground.'); });
+      setTimeout(() => { if (alive && gState === 'loading') fail(g.err || 'no reply from Google after 30 seconds.'); }, 30000);
+    }).catch((e) => fail(String((e && e.message) || e)));
   }
   // v7.12: the planner takes a picture of this view for the plan and the PDF
   if (apiRef) apiRef.current = {
@@ -294,7 +312,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey)
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
-    if (gTiles) { scene.remove(gTiles.tiles.group); gTiles.tiles.deleteCamera(cam); gTiles.onChange = null; }
+    if (gTiles) { scene.remove(gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }
     alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
   };
 }
@@ -368,13 +386,23 @@ async function googleTiles(THREE, key, rp, renderer, cam) {
     let n = 0;
     tiles.addEventListener('load-model', () => { if (n++ < 40) level(); g.onChange && g.onChange(); });
     tiles.addEventListener('needs-update', () => { g.onChange && g.onChange(); });
-    tiles.addEventListener('load-error', (e) => { g.err = String((e && e.error && e.error.message) || 'a tile failed'); g.onChange && g.onChange(); });
+    tiles.addEventListener('load-error', (e) => { g.err = googleWhy(String((e && e.error && e.error.message) || 'a tile failed')); g.onChange && g.onChange(); });
     g.place = (x, z) => { g.x = x; g.z = z; tiles.group.position.x = x; tiles.group.position.z = z; tiles.group.updateMatrixWorld(true); };
     g.note = () => { const at = []; try { tiles.getAttributions(at); } catch (e) {} const txt = at.filter((a) => a.type === 'string').map((a) => a.value).join(' ');
-      return g.err && !tiles.group.children.length ? 'Google 3D city: ' + g.err + ' (check the key and that the Map Tiles API is on).' : 'Google 3D city · ' + (txt || 'Google') + ' · heights from the take-off.'; };
+      return 'Google 3D city · ' + (txt || 'Google') + ' · heights from the take-off.'; };
     gCache = g;
   }
   const g = gCache;
   g.tiles.setCamera(cam); g.tiles.setResolutionFromRenderer(cam, renderer);
   return g;
 }
+
+// plain-words reason for a Google failure
+function googleWhy(m) {
+  if (/\b403\b/.test(m)) return 'Google refused the key (403). Check in Google Cloud that the key allows the website planner.wakingdreamfpv.com/* and the Map Tiles API, and that billing is on. Changes can take 5 minutes.';
+  if (/\b400\b/.test(m)) return 'Google says the key is not valid (400). Copy it again into Database & Settings › API integrations.';
+  if (/\b429\b/.test(m)) return 'Google\'s daily limit for this key was reached (429).';
+  return m;
+}
+// forget a failed Google tile set, so the next opening of the 3D view tries again (e.g. after fixing the key)
+function dropGoogle() { if (gCache) { try { gCache.tiles.dispose(); } catch (e) {} gCache = null; } }

@@ -7,9 +7,9 @@ R = Run(); ensure_server()
 LAT, LNG = -27.4635, 153.0170
 TERR = "window.__WD_SAT = false; window.__WD_TERRAIN = async (lls) => ({ src: 'test terrain', elev: lls.map(() => 30) }); window.__WD_BUILDINGS = () => [];"
 GOOG = """window.__G3D = []; window.__WD_GOOGLE3D = async (THREE, key, rp) => { window.__G3D.push({key, rp});
-  const group = new THREE.Group(); const m = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), new THREE.MeshBasicMaterial()); m.userData.google = 1; group.add(m);
+  const group = new THREE.Group(); const m = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), new THREE.MeshBasicMaterial()); m.userData.google = 1; if (!window.__G3D_FAIL) group.add(m);
   const g = { tiles: { group, update(){ window.__G3D_UPD = (window.__G3D_UPD||0)+1; }, deleteCamera(){} }, ready: false, onChange: null,
-    place(x, z){ group.position.set(x, 0, z); }, note: () => 'Google 3D city · Map data ©2026 Google · heights from the take-off.' }; return g; };"""
+    place(x, z){ group.position.set(x, 0, z); }, note: () => 'Google 3D city · Map data ©2026 Google · heights from the take-off.' }; if (window.__G3D_FAIL) setTimeout(() => { g.err = 'Google refused the key (403). Check in Google Cloud.'; g.onChange && g.onChange(); }, 1500); return g; };"""
 OPS = {'v': 1, 'mode': 'geo', 'settings': {}, 'overlay': None, 'views': [], 'zones': [], 'points': [],
        'paths': [{'id': 'pa', 'name': 'Path A', 'pts': [[LAT, LNG, 20], [LAT + 0.0005, LNG, 20]]}]}
 labels = lambda pg: pg.evaluate("()=>[...document.querySelectorAll('label:has(input[type=checkbox])')].map(l=>l.innerText.trim()).filter(t=>/3D (city|buildings)/.test(t))")
@@ -46,6 +46,14 @@ with sync_playwright() as p:
     R.check('the ground note credits Google (required by Google)', 'Google' in note and '©' in note, note)
     pg.locator('label:has-text("Google 3D city") input').uncheck(); pg.wait_for_timeout(4000)
     R.check('switching Google off brings back the satellite ground and the 3D buildings switch', gmesh(pg) == 0 and '3D buildings' in labels(pg), (gmesh(pg), labels(pg)))
+    # Google refuses the key: the reason shows, and the OpenStreetMap buildings load instead of nothing
+    pg.locator('label:has-text("Google 3D city") input').check(); pg.wait_for_timeout(300)
+    pg.evaluate("()=>{window.__G3D_FAIL=1; window.__WD_BUILDINGS=()=>[{pts:[[-27.4637,153.0172],[-27.4637,153.0174],[-27.4635,153.0174],[-27.4635,153.0172]],tags:{height:'20'}}];}")
+    pg.locator('label:has-text("Google 3D city") input').uncheck(); pg.wait_for_timeout(1500); pg.locator('label:has-text("Google 3D city") input').check(); pg.wait_for_timeout(7000)
+    note = pg.inner_text('[data-ops-3d-ground]')
+    R.check('if Google refuses the key, the grey line says why', 'refused the key (403)' in note and 'Satellite' not in note or 'refused the key (403)' in note, note)
+    nb = pg.evaluate("()=>window.__WD_3D && window.__WD_3D.buildings ? window.__WD_3D.buildings.children.length : -1")
+    R.check('...and the OpenStreetMap buildings are drawn instead', nb >= 1 and '1 building' in note, (nb, note))
     R.check('no page errors', not errs, errs[:3])
     pg.context.close(); b.close()
 R.done()
