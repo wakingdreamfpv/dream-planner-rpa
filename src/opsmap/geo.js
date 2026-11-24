@@ -334,3 +334,8 @@ export const terrainRefPoint = (m) => {
 // what a ground-following path's heights depend on (when this changes, they're worked out again)
 export const followKey = (path, m) => JSON.stringify([Number(path.agl) || 0, (path.pts || []).map((q) => [Math.round(q[0] * 1e6), Math.round(q[1] * 1e6)]),
   (m.zones || []).filter((z) => z.kind === 'surface').map((z) => [z.pts, z.c, z.r, z.deck, z.raise]), terrainRefPoint(m)]);
+
+// v7.51: each flight path has its own colour (problem legs keep an amber / red outline on the map)
+export const PATH_COLOURS = ['#7c3aed', '#0891b2', '#db2777', '#2563eb', '#65a30d', '#0f172a', '#c2410c'];
+export const pathColour = (p, all) => p.color || PATH_COLOURS[Math.max(0, (all || []).findIndex((q) => q.id === p.id)) % PATH_COLOURS.length];
+export const PATH_WIDTHS = [1, 2, 3]; // 3D: the airspace tube around the path, metres across
