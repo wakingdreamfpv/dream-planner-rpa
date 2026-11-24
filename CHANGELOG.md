@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.52 — 24 Nov 2026 — Tools page, HUD Studio and Flight Log are now on the website
+- **Tools page, HUD Studio and Flight Log are now on the website**: planner.wakingdreamfpv.com/tools/, /hud/ and /log/. The planner's header has links to all three (they open in the same tab; use Back to return).
+- They are separate pages: the planner's offline copy never stands in for them, and doesn't download them in the background.
+- Supabase: nothing to do.
+
 ## v7.51 — 24 Nov 2026 — Easier path drawing, coloured paths, 3D airspace tubes, tidier labels
 - **Drawing a flight path no longer moves the map.** After each stroke you stay in Draw, and the next stroke carries on the same path, so you can draw it in pieces. **New path** starts another one; **Done** goes back to Select. (Before, the second stroke dragged the map instead.)
 - **Each path has its own colour** (picked automatically, change it under the path's name). A leg the checks flag still shows an amber or red outline.

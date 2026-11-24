@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dream Flight Tools · Waking Dream FPV</title>
+<meta name="description" content="HUD Studio, Dream Flight Log and the Dream Flight RPA Planner: free FPV and RPAS tools from Waking Dream FPV. Turn your radio's telemetry log into a HUD overlay, a flight logbook and compliant RPAS records.">
+<meta property="og:title" content="Dream Flight Tools · Waking Dream FPV">
+<meta property="og:description" content="Turn your radio's telemetry log into a HUD overlay, a flight logbook and compliant RPAS records.">
+<meta property="og:image" content="https://planner.wakingdreamfpv.com/tools/img/hud-fighter.jpg">
+<link rel="icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=B612+Mono:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#070a0e;--panel:#0f141b;--panel2:#151c26;--line:#222c3a;--text:#e9eff6;--dim:#93a2b5;--faint:#5f6f84;--cy:#22b8cf;--gr:#4ade80;--am:#ffb020;--pu:#a78bfa}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 Barlow,system-ui,-apple-system,Segoe UI,sans-serif}
+  a{color:inherit}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+  header{position:sticky;top:0;z-index:5;background:rgba(7,10,14,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  header .wrap{display:flex;align-items:center;gap:18px;height:58px}
+  .brand{font-weight:800;letter-spacing:.02em;text-decoration:none;white-space:nowrap}
+  .brand span{color:var(--cy)}
+  nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+  nav a{text-decoration:none;color:var(--dim);font-weight:600;font-size:14px;padding:6px 10px;border-radius:7px}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  .hero{padding-top:56px;padding-bottom:34px}
+  .eyebrow{font:700 12px/1 'B612 Mono',monospace;letter-spacing:.14em;color:var(--cy);text-transform:uppercase}
+  h1{font-size:clamp(34px,5.2vw,58px);line-height:1.04;margin:14px 0 14px;letter-spacing:-.01em;font-weight:800;max-width:15ch}
+  .lede{color:var(--dim);font-size:19px;max-width:60ch;margin:0 0 24px}
+  .cta{display:flex;gap:10px;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:9px;border:1px solid var(--line);background:var(--panel2)}
+  .btn:hover{border-color:#34445a}
+  .btn.primary{background:linear-gradient(90deg,#22b8cf,#3b9cff);border:0;color:#04161a}
+  .shot{margin-top:34px;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.55);position:relative;aspect-ratio:1400/788;background:#0b1118}
+  .shot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .8s}
+  .shot img.on{opacity:1}
+  .shot .tag{position:absolute;left:14px;bottom:14px;font:700 11px/1 'B612 Mono',monospace;letter-spacing:.08em;background:rgba(4,8,12,.75);border:1px solid rgba(255,255,255,.12);padding:7px 9px;border-radius:6px;color:#cfe9ef}
+  section{padding:46px 0}
+  h2{font-size:clamp(26px,3.2vw,36px);line-height:1.1;margin:0 0 8px;font-weight:800}
+  .sub{color:var(--dim);margin:0 0 26px;max-width:62ch}
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;counter-reset:s}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;position:relative}
+  .step::before{counter-increment:s;content:counter(s);font:700 12px/1 'B612 Mono',monospace;color:#04161a;background:var(--cy);border-radius:5px;padding:4px 7px;display:inline-block;margin-bottom:10px}
+  .step b{display:block;font-size:17px;margin-bottom:4px}
+  .step p{margin:0;color:var(--dim);font-size:14.5px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:12px;border-top:3px solid var(--c)}
+  .card .ico{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--c)}
+  .card h3{margin:0;font-size:22px}
+  .price{font:700 12px/1 'B612 Mono',monospace;letter-spacing:.06em;color:var(--c);text-transform:uppercase}
+  .card p{margin:0;color:var(--dim)}
+  .card ul{margin:0;padding-left:18px;color:var(--dim);font-size:15px}
+  .card li{margin:3px 0}
+  .card .go{margin-top:auto}
+  .card .go .btn{width:100%;justify-content:center}
+  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:start}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .box ol{margin:0;padding-left:20px;color:var(--dim)}
+  .box li{margin:7px 0}
+  .box b{color:var(--text)}
+  code{font:13px 'B612 Mono',monospace;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:#cfe9ef}
+  .facts{display:grid;gap:12px}
+  .fact{display:flex;gap:12px;align-items:flex-start}
+  .fact i{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--panel2);color:var(--gr);font-style:normal;font-weight:800}
+  .fact p{margin:0;color:var(--dim)} .fact b{color:var(--text)}
+  footer{border-top:1px solid var(--line);padding:26px 0 40px;color:var(--faint);font-size:14px}
+  footer .wrap{display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between}
+  @media (max-width:900px){ .flow{grid-template-columns:1fr 1fr} .cards,.split{grid-template-columns:1fr} nav a.hide-s{display:none} }
+  @media (max-width:520px){ .flow{grid-template-columns:1fr} header .wrap{height:auto;padding:10px 16px;flex-wrap:wrap} .wrap{padding:0 16px} .hero{padding-top:34px} }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a class="brand" href="https://wakingdreamfpv.com">Waking Dream FPV · <span>Dream Flight Tools</span></a>
+  <nav><a href="/hud/">HUD Studio</a><a href="/log/">Flight Log</a><a href="/">RPA Planner</a><a class="hide-s" href="#setup">Radio setup</a></nav>
+</div></header>
+
+<main>
+  <div class="wrap hero">
+    <div class="eyebrow">For FPV pilots and RPAS operators</div>
+    <h1>From radio log to finished video and flight records.</h1>
+    <p class="lede">Your radio already records every flight. These three tools turn that log into a HUD overlay for your footage, a proper logbook with battery and pilot hours, and the planning and compliance records your operation needs.</p>
+    <div class="cta"><a class="btn primary" href="/hud/">Open HUD Studio</a><a class="btn" href="/log/">Open Flight Log</a><a class="btn" href="/">Open the RPA Planner</a></div>
+    <div class="shot" id="shot">
+      <img class="on" src="img/hud-fighter.jpg" alt="HUD Studio fighter jet cockpit with live screens over a flight">
+      <img src="img/hud-race.jpg" alt="HUD Studio race car cockpit with steering wheel and timing tower">
+      <img src="img/hud-scifi.jpg" alt="HUD Studio sci-fi HUD">
+      <div class="tag" id="shotTag">HUD STUDIO · FIGHTER JET COCKPIT</div>
+    </div>
+  </div>
+
+  <section><div class="wrap">
+    <h2>One log, four steps</h2>
+    <p class="sub">Every tool reads the same telemetry file from your EdgeTX radio, and they hand over to each other on this site.</p>
+    <div class="flow">
+      <div class="step"><b>Log on your radio</b><p>EdgeTX writes a .csv of height, speed, GPS, battery, current and link to the SD card while you're armed.</p></div>
+      <div class="step"><b>HUD Studio</b><p>Line the log up with your DJI, GoPro or DVR clip and export a fighter, race, sci-fi or Betaflight-style overlay.</p></div>
+      <div class="step"><b>Dream Flight Log</b><p>Replay the flight on a map, record pilot, aircraft and battery pack, and print a PDF report.</p></div>
+      <div class="step"><b>RPA Planner</b><p>Plan the job, JSA and risk, then keep flight, pilot and battery time with the operation.</p></div>
+    </div>
+  </div></section>
+
+  <section style="padding-top:10px"><div class="wrap">
+    <h2>The tools</h2>
+    <p class="sub">They run in your browser. Logs and videos are opened from your own computer and never uploaded.</p>
+    <div class="cards">
+      <div class="card" style="--c:#22b8cf">
+        <div class="ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 12h3M14 12h3M12 8v8"/></svg></div>
+        <div class="price">Free forever</div>
+        <h3>HUD Studio</h3>
+        <p>Telemetry overlays for your FPV footage.</p>
+        <ul><li>Nine HUD styles, with photo and 3D cockpits</li><li>Move and scale every item, map under the GPS track</li><li>Crop, 16:9 / 4:3 / 1:1 / 9:16, contrast and vibrance for log footage</li><li>Export an overlay or burn it into the clip</li></ul>
+        <div class="go"><a class="btn primary" href="/hud/">Open HUD Studio</a></div>
+      </div>
+      <div class="card" style="--c:#4ade80">
+        <div class="ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 5-6"/></svg></div>
+        <div class="price">Free</div>
+        <h3>Dream Flight Log</h3>
+        <p>A logbook that reads your flights for you.</p>
+        <ul><li>Every armed flight found automatically</li><li>Map replay, charts and moments of interest</li><li>Battery pack cycles, pilot and aircraft hours</li><li>PDF report and export to the planner</li></ul>
+        <div class="go"><a class="btn" href="/log/">Open Flight Log</a></div>
+      </div>
+      <div class="card" style="--c:#a78bfa">
+        <div class="ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></div>
+        <div class="price">Free to start · paid cloud sync</div>
+        <h3>Dream Flight RPA Planner</h3>
+        <p>Operations planning and compliance for RPAS operators.</p>
+        <ul><li>Ops map, risk register, JSA and approvals</li><li>Kinetic energy and OONP checks</li><li>Crew, fleet, maintenance and flight records</li><li>Annual or one-off pricing, no lock-in</li></ul>
+        <div class="go"><a class="btn" href="/">Open the RPA Planner</a></div>
+      </div>
+    </div>
+  </div></section>
+
+  <section id="setup"><div class="wrap split">
+    <div class="box">
+      <h2 style="font-size:26px">Set up logging on your radio</h2>
+      <p class="sub" style="margin-bottom:14px">EdgeTX (RadioMaster, Jumper, TBS and others) with ExpressLRS. About five minutes.</p>
+      <ol>
+        <li>On the radio: <b>Model › Telemetry › Discover new sensors</b> with the quad powered, so GPS, battery, current and link sensors appear.</li>
+        <li><b>Model › Special functions</b>: add <code>SF on your arm switch → SD Logs</code> with an interval of <code>0.1</code>–<code>0.2 s</code>.</li>
+        <li>In the ExpressLRS Lua script set <b>Telem ratio</b> to <code>1:2</code> or <code>1:4</code> (faster GPS and height). Re-plug the quad after changing it.</li>
+        <li>Fly. Each session lands on the SD card in <code>/LOGS</code> as a .csv named after the model.</li>
+        <li>Copy the .csv to your computer and open it in HUD Studio or the Flight Log.</li>
+      </ol>
+    </div>
+    <div class="box facts">
+      <div class="fact"><i>✓</i><p><b>Private by default.</b> Logs and video stay on your computer. Nothing is uploaded to open, replay or export them.</p></div>
+      <div class="fact"><i>✓</i><p><b>Works with your camera.</b> DJI O3/O4, Walksnail, GoPro and DVR recordings, any frame shape.</p></div>
+      <div class="fact"><i>✓</i><p><b>Best in Chrome or Edge</b> on a computer. Video export uses the browser's built-in encoder.</p></div>
+      <div class="fact"><i>✓</i><p><b>Built by a working operator.</b> Waking Dream FPV flies commercial FPV and RPAS jobs under a CASA ReOC and built these for its own operations.</p></div>
+    </div>
+  </div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>© Waking Dream FPV · Rubio Enterprises Pty Ltd</span>
+  <span><a href="https://wakingdreamfpv.com">wakingdreamfpv.com</a></span>
+</div></footer>
+
+<script>
+  // Rotate the hero screenshots
+  (function () { const imgs = [...document.querySelectorAll('#shot img')], tag = document.getElementById('shotTag'), names = ['HUD STUDIO · FIGHTER JET COCKPIT', 'HUD STUDIO · RACE CAR COCKPIT', 'HUD STUDIO · SCI-FI HUD']; let k = 0;
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setInterval(() => { imgs[k].classList.remove('on'); k = (k + 1) % imgs.length; imgs[k].classList.add('on'); tag.textContent = names[k]; }, 4500); })();
+</script>
+</body>
+</html>

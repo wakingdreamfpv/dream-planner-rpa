@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.51';
+        const APP_VERSION = '7.52';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -11766,6 +11766,12 @@ View in the Database & Settings tab.`);
                       <span data-beta-badge="1" title="Beta: the planner is still being improved. Keep your exported PDFs." className="shrink-0 px-2 py-0.5 rounded-md bg-amber-400 text-amber-950 text-[10px] sm:text-xs font-extrabold tracking-wider leading-none" style={{ transform: 'rotate(-4deg)' }}>BETA</span>
                     </h1>
                     <p className="hidden sm:block text-slate-400 text-xs mt-0.5">Dream Flight RPA — Operations Planner — Form F.1{(() => { const co = isCrewRole ? ((crewCloud && crewCloud.company) || {}) : (db.companyProfile || {}); return co.reocNumber ? ` · ReOC: ${co.reocNumber}` : ''; })()} <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[10px]">v{APP_VERSION}</span></p>
+                    {/* v7.52: the Dream Flight tools on the same website (their own pages, same tab) */}
+                    <nav aria-label="Dream Flight tools" data-head-tools="1" className="flex items-center gap-3 mt-1 text-[11px] sm:text-xs">
+                      <a href="/tools/" data-head-tool="tools" className="text-violet-200 hover:text-white font-semibold"><i className="fa-solid fa-toolbox mr-1"></i>Tools</a>
+                      <a href="/hud/" data-head-tool="hud" className="text-violet-200 hover:text-white font-semibold"><i className="fa-solid fa-display mr-1"></i>HUD Studio</a>
+                      <a href="/log/" data-head-tool="log" className="text-violet-200 hover:text-white font-semibold"><i className="fa-solid fa-book mr-1"></i>Flight Log</a>
+                    </nav>
                   </div>
                   <div className="flex flex-nowrap md:flex-wrap items-center md:justify-end gap-1.5 sm:gap-2 md:gap-3" data-header-actions="1">
                     <span id="wd-account-slot" className="self-center min-w-0 shrink"></span>
