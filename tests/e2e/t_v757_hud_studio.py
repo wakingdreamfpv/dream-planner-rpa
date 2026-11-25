@@ -22,7 +22,7 @@ with sync_playwright() as p:
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
     R.check('HUD Studio shows a BETA badge in the header', pg.evaluate("()=>{const t=document.getElementById('betaTag');return !!t && t.offsetParent!==null && t.textContent.trim()}") == 'BETA')
-    R.check('the Feedback button sits next to the badge', pg.evaluate("()=>document.getElementById('betaTag').nextElementSibling.id") == 'betaFb')
+    R.check('the Feedback button sits next to the badge (v1.9: after the version label)', pg.evaluate("()=>{const n=document.getElementById('betaTag').nextElementSibling;return n.id==='betaFb'||(n.id==='hudVer'&&n.nextElementSibling.id==='betaFb')}"))
     pg.click('#betaFb'); pg.wait_for_timeout(300)
     R.check('Feedback opens a form with bug / idea / general', pg.evaluate("()=>[...document.querySelectorAll('#fbDlg [data-fb-kind]')].map(b=>b.dataset.fbKind).join()") == 'bug,idea,general')
     pg.click('[data-fb-send]'); R.check('an empty message is caught', 'few words' in pg.inner_text('[data-fb-err]'))
@@ -33,7 +33,7 @@ with sync_playwright() as p:
     rpc = [c for c in calls if 'rpc/submit_enquiry' in c[0]]; body = json.loads(rpc[0][1]) if rpc else {}
     R.check('it calls submit_enquiry with the publishable key', len(rpc) == 1 and rpc[0][2].startswith('sb_publishable_'), calls)
     R.check('source is feedback-idea and the message names HUD Studio, its version and the device',
-            body.get('p_source') == 'feedback-idea' and body.get('p_message', '').startswith('[HUD Studio · Feature request]') and 'HUD Studio 1.8' in body.get('p_message', '') and body.get('p_consent') is True, body)
+            body.get('p_source') == 'feedback-idea' and body.get('p_message', '').startswith('[HUD Studio · Feature request]') and 'HUD Studio 1.' in body.get('p_message', '') and body.get('p_consent') is True, body)
     R.check('it asks for Mike\'s email alert with the new id', any('functions/v1/enquiry-alert' in c[0] and '11111111-2222' in (c[1] or '') for c in calls), calls)
     pg.click('[data-fb-again]'); R.check('Send another keeps your name and email', pg.input_value('[data-fb=email]') == 'pilot@test.com' and pg.input_value('[data-fb=message]') == '')
     mode['v'] = 'down'; pg.fill('[data-fb=message]', 'second'); pg.click('[data-fb-send]'); pg.wait_for_timeout(800)

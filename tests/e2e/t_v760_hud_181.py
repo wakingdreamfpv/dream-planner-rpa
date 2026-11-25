@@ -1,6 +1,6 @@
 # v7.60: HUD Studio 1.8.1. Sound-and-sticks sync strip (the video's sound over the log's throttle and sticks; drag the
 # log part to shift the sync, click to jump), and the fighter / race cockpits still draw with moving hands and feet.
-import sys, os, struct, math, wave, tempfile; sys.path.insert(0, os.path.dirname(__file__))
+import sys, os, re, struct, math, wave, tempfile; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *
 R = Run(); ensure_server()
 wav = os.path.join(tempfile.mkdtemp(), 'clip.wav')
@@ -11,7 +11,7 @@ with sync_playwright() as p:
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
-    R.check('HUD Studio is 1.8.2', 'HUD Studio 1.8.2' in pg.content())
+    R.check('HUD Studio is 1.8.2 or later', re.search(r'HUD Studio 1\.(8\.[2-9]|9|[1-9][0-9])', pg.content()) is not None)
     R.check('no sync strip before a log is open', not pg.is_visible('#syncWrap'))
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(1200)
     R.check('with a log the sync strip shows', pg.is_visible('#syncCv'))
