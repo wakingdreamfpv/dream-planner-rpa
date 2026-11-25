@@ -14,7 +14,7 @@
 <script>
 window.WD_BETA = {
   app: 'HUD Studio',
-  version: 'HUD Studio 1.7.0',
+  version: 'HUD Studio 1.8.0',
   // Map imagery under the GPS mini-maps. MapTiler key (free at maptiler.com) gives the satellite option; with no key it uses OpenStreetMap streets.
   mapKey: '',
   tiles: {
@@ -1686,12 +1686,13 @@ If you want to offset all timestamps of a track such that the first one is zero,
     race: () => ({ f: '"Barlow Condensed", sans-serif', w: 800, col: '#ffffff', acc: '#ff3b3b', warn: '#ffd400', panel: 'rgba(20,23,31,0.88)', stripe: true, italic: true }),
     arcade: () => ({ f: '"Press Start 2P", monospace', w: 400, col: '#ffffff', acc: '#ffd23f', warn: '#ff3ea5', panel: '#10102a', border: '#000000', pixel: true, small: 0.7 }),
     rainbow: () => ({ f: 'Fredoka, sans-serif', w: 700, col: '#4b2a6e', acc: '#ff6bb5', warn: '#ff8a3d', panel: 'rgba(255,255,255,0.88)', border: '#f2b6e0', round: true }),
+    coldwar: () => ({ f: '"B612 Mono", monospace', w: 700, col: '#ecefe4', acc: '#ffb347', warn: '#e0412f', panel: '#3b4850', border: '#8a9ea8', rivets: true }),
     space: () => ({ f: 'Orbitron, sans-serif', w: 500, col: '#e9fbff', acc: '#6fe7ff', warn: '#ffb347', panel: 'rgba(0,15,25,0.55)', border: 'rgba(111,231,255,0.6)', chamfer: true, glow: true }),
   };
-  const BOOST = { fighter: 'AFTERBURNER', scifi: 'OVERDRIVE', warbird: 'WAR EMERGENCY', race: 'BOOST', arcade: 'POWER UP!', rainbow: 'MAGIC BOOST!', space: 'HYPERDRIVE' };
+  const BOOST = { fighter: 'AFTERBURNER', scifi: 'OVERDRIVE', warbird: 'WAR EMERGENCY', race: 'BOOST', arcade: 'POWER UP!', rainbow: 'MAGIC BOOST!', space: 'HYPERDRIVE', coldwar: 'REHEAT' };
   const WSLOT = { amps: 0, rssi: 1, gforce: 2, sats: 3, peak: 4, flown: 5 };
   // Where the widgets start in each style: [x margin, y as a fraction of height, align left/right/centre, columns]
-  const WANCH = { fighter: [46, 0.25, 'l', 1], scifi: [0, 0.14, 'c', 3], warbird: [46, 0.07, 'l', 1], race: [46, 0.09, 'r', 1], arcade: [46, 0.24, 'l', 1], rainbow: [58, 0.405, 'r', 1], space: [46, 0.19, 'l', 1] };
+  const WANCH = { fighter: [46, 0.25, 'l', 1], scifi: [0, 0.14, 'c', 3], warbird: [46, 0.07, 'l', 1], race: [46, 0.09, 'r', 1], arcade: [46, 0.24, 'l', 1], rainbow: [58, 0.405, 'r', 1], space: [46, 0.19, 'l', 1], coldwar: [46, 0.07, 'l', 1] };
   function drawWidgets(c, W, H, s, o, st) {
     if (st === 'fighter') return jetDataBlock(c, W, H, s, o);
     const mk = WTH[st]; if (!mk) return;
@@ -1855,6 +1856,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
   function ckApply(c, W, H, o, st) { const p = ckPos(o, st); c.translate(W / 2 + p.x * W, H + p.y * H); c.scale(p.z, p.z); c.translate(-W / 2, -H); }
   function cockpit(c, W, H, s, o, st) { c.save(); ckApply(c, W, H, o, st); try { cockpitInner(c, W, H, s, o, st); } finally { c.restore(); } }
   function cockpitInner(c, W, H, s, o, st) {
+    if (st === 'coldwar') return; // the Cold-War jet style is a cockpit already
     if (st === 'fighter' && JET_IMG_OK) return jetImgCockpit(c, W, H, s, o);
     if (st === 'race' && F1_OK === 6) return f1Cockpit(c, W, H, s, o);
     if (o.ckHD && CK2[st] && hdCockpit(c, W, H, s, o, st)) return;
@@ -2874,18 +2876,131 @@ If you want to offset all timestamps of a track such that the first one is zero,
   const JI = { w: 1254, h: 1254, coam: 510,
     scr: { L: [312, 661, 152, 150], C: [528, 662, 184, 158], R: [778, 661, 166, 150], sL: [384, 558, 72, 66], sR: [790, 573, 64, 56] },
     ufc: [628, 562, 56, 48], stick: { bb: [566, 866], piv: [627, 1060] }, thr: { bb: [1073, 903] } };
+  // v1.8: a wider field of view, like a seat camera: the canopy bow, the panel, your knees and both hands all fit. On wide
+  // frames the photo's outer edge is stretched out to the sides as the cockpit walls.
   function jetImgRect(W, H, o, s) {
-    const sc = Math.max(W / JI.w, H / JI.h), u = H / 1080, t = s.t || 0, thr = clamp(((s.thr === undefined || isNaN(s.thr) ? -1 : s.thr) + 1) / 2, 0, 1);
-    let y0 = 0.45 * H - JI.coam * sc; if (y0 + JI.h * sc < H) y0 = H - JI.h * sc;
-    return { sc, x0: (W - JI.w * sc) / 2 + Math.sin(t * 41) * thr * 1.6 * u, y0: y0 + Math.cos(t * 37) * thr * 1.2 * u };
+    const sc = Math.max(H / 800, W / JI.w * 0.86);
+    return { sc, x0: (W - JI.w * sc) / 2, y0: H - 1080 * sc };
+  }
+  // v1.8: the pilot's head moves in the cockpit. Engine and airframe vibration grow with throttle, speed and G; pulling G
+  // pushes your head down (the panel rises); pushing over floats it up; roll and yaw inputs leave your head lagging a little.
+  const jv = (x) => (x === undefined || isNaN(x)) ? 0 : clamp(x, -1, 1);
+  function jetMotion(W, H, s) {
+    const u = H / 1080, t = s.t || 0, thr = clamp((jv(s.thr === undefined || isNaN(s.thr) ? -1 : s.thr) + 1) / 2, 0, 1);
+    const spd = clamp((s.spd || 0) / 140, 0, 1), g = isNaN(s.g) || s.g === undefined ? 1 : s.g, gx = clamp(g - 1, -1.5, 4);
+    const ail = jv(s.ail), ele = jv(s.ele), rud = jv(s.rud);
+    const va = (0.5 + 2.0 * thr + 1.8 * spd + 0.8 * Math.abs(gx)) * u, bf = 2.2 * spd * spd * u;
+    const dx = va * (Math.sin(t * 41) + 0.5 * Math.sin(t * 67 + 1.3)) + bf * Math.sin(t * 7.3) + (ail * 11 + rud * 7) * u;
+    const dy = va * 0.8 * (Math.cos(t * 37) + 0.5 * Math.sin(t * 59 + 0.7)) + bf * Math.cos(t * 5.9) - gx * 9 * u + ele * 8 * u;
+    const rot = ail * 0.022 + rud * 0.006 + va / u * 0.0006 * Math.sin(t * 29 + 0.4);
+    return { dx, dy, rot, thr, spd, gx, ail, ele, rud, t, u };
+  }
+  function jetXf(c, W, H, m) { c.translate(W / 2 + m.dx, H + m.dy); c.rotate(m.rot); c.translate(-W / 2, -H); }
+  // The pilot's legs in an olive flight suit with G-suit panels and a kneeboard. Knees ride the rudder pedals (right
+  // pedal forward drops the right knee) and squeeze toward the stick as you roll; the fabric shivers a touch more than the frame.
+  function jetLegs(c, r, m) {
+    const LEG = [
+      { k: [440, 828], b: [205, 585], side: -1, kb: true },
+      { k: [818, 828], b: [672, 1050], side: 1, kb: false } ];
+    c.save(); c.translate(r.x0, r.y0); c.scale(r.sc, r.sc);
+    const jit = (0.4 + 1.6 * m.thr + 1.2 * m.spd) * 0.6;
+    LEG.forEach((L, i) => {
+      const ped = (L.side > 0 ? m.rud : -m.rud) * 14, sq = -L.side * Math.max(0, L.side * m.ail) * 8 + -L.side * 3 * Math.abs(m.gx) / 4;
+      const kx = L.k[0] + sq + jit * Math.sin(m.t * 53 + i * 2.1), ky = L.k[1] + ped + jit * Math.cos(m.t * 47 + i), kw = 80, yb = 1420;
+      const inX = L.side < 0 ? L.b[1] : L.b[0], outX = L.side < 0 ? L.b[0] : L.b[1], kin = kx - L.side * kw, kout = kx + L.side * kw;
+      // Thigh: narrow at the knee, wide where it meets you
+      const path = () => { c.beginPath(); c.moveTo(kout, ky + 30); c.bezierCurveTo(kout + L.side * 30, ky + 140, outX + L.side * 10, yb - 260, outX, yb);
+        c.lineTo(inX, yb); c.bezierCurveTo(inX - L.side * 4, yb - 260, kin - L.side * 12, ky + 150, kin, ky + 30);
+        c.bezierCurveTo(kin + L.side * 6, ky - 40, kout - L.side * 6, ky - 40, kout, ky + 30); c.closePath(); };
+      c.save(); c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 26; c.shadowOffsetY = -6; path();
+      const gr = c.createLinearGradient(outX, 0, inX, 0); gr.addColorStop(0, '#0f100d'); gr.addColorStop(0.35, '#25281f'); gr.addColorStop(0.62, '#30342a'); gr.addColorStop(1, '#141611');
+      c.fillStyle = gr; c.fill(); c.restore();
+      c.save(); path(); c.clip();
+      // light from the canopy falls on the knee and fades toward you
+      const lg = c.createRadialGradient(kx, ky - 10, 10, kx, ky + 60, 260); lg.addColorStop(0, 'rgba(160,165,145,0.14)'); lg.addColorStop(0.5, 'rgba(110,115,100,0.05)'); lg.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = lg; c.fillRect(kx - 400, ky - 80, 800, 800);
+      const dk = c.createLinearGradient(0, ky + 150, 0, yb); dk.addColorStop(0, 'rgba(0,0,0,0)'); dk.addColorStop(1, 'rgba(0,0,0,0.55)'); c.fillStyle = dk; c.fillRect(kx - 500, ky, 1000, yb - ky);
+      // G-suit bladder panel down the outside of the thigh, with its lacing
+      const gx0 = kx + L.side * 22, gw = L.side * 70;
+      c.beginPath(); c.moveTo(gx0, ky + 90); c.lineTo(gx0 + gw, ky + 100); c.lineTo(outX - L.side * 40 + gw * 0.6, yb); c.lineTo(gx0 + (outX - kx) * 0.45, yb); c.closePath();
+      c.fillStyle = 'rgba(55,58,44,0.5)'; c.fill(); c.strokeStyle = 'rgba(10,12,8,0.55)'; c.lineWidth = 3; c.stroke();
+      c.strokeStyle = 'rgba(160,160,130,0.35)'; c.lineWidth = 2; c.setLineDash([8, 9]);
+      c.beginPath(); c.moveTo(gx0 + gw * 0.5, ky + 100); c.lineTo(outX - L.side * 40 + gw * 0.3 - (outX - kx) * 0.25, yb); c.stroke(); c.setLineDash([]);
+      // pocket with zip across the shin-side of the thigh
+      c.strokeStyle = 'rgba(12,14,10,0.6)'; c.lineWidth = 3; c.beginPath(); c.moveTo(kx - 46, ky + 175); c.quadraticCurveTo(kx, ky + 168, kx + 46, ky + 178); c.stroke();
+      c.strokeStyle = 'rgba(175,180,150,0.3)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(kx - 44, ky + 172); c.quadraticCurveTo(kx, ky + 165, kx + 44, ky + 175); c.stroke();
+      // fabric creases behind the knee
+      c.strokeStyle = 'rgba(0,0,0,0.35)'; c.lineWidth = 4; [[-30, 60, 10], [18, 70, -8], [-8, 112, 6]].forEach(([a, b, d]) => { c.beginPath(); c.moveTo(kx + a - 22, ky + b); c.quadraticCurveTo(kx + a, ky + b + d, kx + a + 26, ky + b - 4); c.stroke(); });
+      c.restore();
+      // Kneeboard strapped to the left thigh: a clipboard with the flight card
+      if (L.kb) {
+        c.save(); c.translate(kx - 4, ky + 150); c.rotate(-0.08); c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 14; c.shadowOffsetY = 6;
+        c.fillStyle = '#16181a'; c.beginPath(); c.roundRect(-62, 0, 124, 230, 10); c.fill(); c.shadowBlur = 0; c.shadowOffsetY = 0;
+        c.fillStyle = '#c9c5b4'; c.fillRect(-52, 22, 104, 200); c.fillStyle = 'rgba(40,40,40,0.55)';
+        for (let k = 0; k < 9; k++) c.fillRect(-44, 38 + k * 18, k % 3 === 2 ? 50 : 86, 4);
+        c.fillStyle = '#4a4d50'; c.fillRect(-26, -6, 52, 22); c.fillStyle = '#7d8185'; c.fillRect(-20, -2, 40, 8);
+        c.fillStyle = '#1e2117'; c.fillRect(-70, 128, 140, 22); c.fillStyle = '#5c5e55'; c.fillRect(-12, 126, 24, 26);
+        c.restore();
+      }
+      // knee cap highlight
+      c.save(); const kh = c.createRadialGradient(kx, ky + 4, 4, kx, ky + 10, 60); kh.addColorStop(0, 'rgba(190,195,175,0.14)'); kh.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = kh; c.beginPath(); c.ellipse(kx, ky + 14, 60, 44, 0, 0, Math.PI * 2); c.fill(); c.restore();
+    });
+    c.restore();
+  }
+  // A flying glove seen from the seat: back of the hand, knuckles, fingers curled round the grip, thumb on top, cuff toward you.
+  // side 1 = right hand, -1 = left. sz is the width of the hand in pixels.
+  function glove(c, x, y, sz, rot, side) {
+    c.save(); c.translate(x, y); c.rotate(rot); c.scale(sz / 100, sz / 100);
+    const sh = (g) => { g.addColorStop(0, '#6e6a5c'); g.addColorStop(0.5, '#47443b'); g.addColorStop(1, '#25231f'); return g; };
+    c.shadowColor = 'rgba(0,0,0,0.55)'; c.shadowBlur = 14; c.shadowOffsetY = 6;
+    // cuff and wrist strap
+    c.fillStyle = '#23221e'; c.beginPath(); c.roundRect(-38, 34, 76, 62, 14); c.fill(); c.shadowBlur = 0; c.shadowOffsetY = 0;
+    c.fillStyle = '#3a3830'; c.fillRect(-40, 46, 80, 14); c.fillStyle = '#6b685c'; c.fillRect(side * 18 - 7, 44, 14, 18);
+    // back of the hand
+    c.fillStyle = sh(c.createLinearGradient(-side * 40, -40, side * 40, 50)); c.beginPath(); c.moveTo(-36, 42); c.bezierCurveTo(-50, 10, -48, -30, -34, -44);
+    c.lineTo(34, -44); c.bezierCurveTo(48, -30, 50, 10, 36, 42); c.closePath(); c.fill();
+    // fingers curled over the front of the grip
+    for (let k = 0; k < 4; k++) { const fx = -27 + k * 18; const g = c.createLinearGradient(0, -66, 0, -36); g.addColorStop(0, '#2c2a25'); g.addColorStop(0.45, '#5c594d'); g.addColorStop(1, '#3a3831');
+      c.fillStyle = g; c.beginPath(); c.roundRect(fx - 9, -66 + Math.abs(k - 1.5) * 3, 18, 34, 9); c.fill(); c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = 2; c.stroke(); }
+    // knuckle seam and stitching
+    c.strokeStyle = 'rgba(0,0,0,0.4)'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(-38, -34); c.quadraticCurveTo(0, -42, 38, -34); c.stroke();
+    c.strokeStyle = 'rgba(190,185,160,0.28)'; c.lineWidth = 1.2; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(-30, 30); c.quadraticCurveTo(0, 22, 30, 30); c.stroke(); c.setLineDash([]);
+    // thumb along the top of the grip, toward the inside
+    c.save(); c.translate(-side * 30, -30); c.rotate(side * 0.5); c.fillStyle = sh(c.createLinearGradient(-12, -30, 12, 20)); c.beginPath(); c.ellipse(0, -8, 13, 30, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.4)'; c.lineWidth = 2; c.stroke(); c.restore();
+    // highlight from the canopy
+    const hl = c.createRadialGradient(side * 8, -16, 2, side * 8, -10, 46); hl.addColorStop(0, 'rgba(220,215,190,0.22)'); hl.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = hl; c.beginPath(); c.ellipse(side * 8, -8, 40, 40, 0, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+  // Side walls for wide frames: dark cockpit sides and canopy rails carry on past the photo's edges
+  function jetWalls(c, r) {
+    if (r.x0 <= -40) return; const ext = Math.max(0, r.x0) + 90, top = r.y0 + 560 * r.sc, bot = r.y0 + JI.h * r.sc + 60;
+    [-1, 1].forEach(sd => { const ex = sd < 0 ? r.x0 + 2 : r.x0 + JI.w * r.sc - 2, ox = ex + sd * ext;
+      c.save(); const g = c.createLinearGradient(ex, 0, ox, 0); g.addColorStop(0, '#121416'); g.addColorStop(1, '#060708'); c.fillStyle = g;
+      c.beginPath(); c.moveTo(ex, top); c.lineTo(ox, top - 150 * r.sc); c.lineTo(ox, bot); c.lineTo(ex, bot); c.closePath(); c.fill();
+      // canopy rail along the top of the wall, with a worn highlight
+      c.strokeStyle = '#1d2124'; c.lineWidth = 34 * r.sc; c.beginPath(); c.moveTo(ex, top + 10 * r.sc); c.lineTo(ox, top - 140 * r.sc); c.stroke();
+      c.strokeStyle = 'rgba(200,210,215,0.12)'; c.lineWidth = 3 * r.sc; c.beginPath(); c.moveTo(ex, top - 6 * r.sc); c.lineTo(ox, top - 156 * r.sc); c.stroke();
+      c.fillStyle = 'rgba(160,165,170,0.35)'; for (let i = 1; i < 6; i++) { const t = i / 6; c.beginPath(); c.arc(ex + (ox - ex) * t, top + 10 * r.sc - 150 * r.sc * t, 3 * r.sc, 0, 7); c.fill(); }
+      c.restore(); });
   }
   function jetImgCockpit(c, W, H, s, o) {
+    const m = jetMotion(W, H, s); c.save(); jetXf(c, W, H, m);
+    try { jetImgCockpit0(c, W, H, s, o, m); } finally { c.restore(); }
+  }
+  function jetImgCockpit0(c, W, H, s, o, m) {
     const r = jetImgRect(W, H, o, s), P = (a, b) => [r.x0 + a * r.sc, r.y0 + b * r.sc];
     c.drawImage(JET_IMG, r.x0, r.y0, JI.w * r.sc, JI.h * r.sc);
+    jetWalls(c, r);
+    jetLegs(c, r, m);
     // Throttle slides with your throttle stick; the centre stick tilts with roll and leans with pitch
     { const tv = isNaN(s.thr) ? 0 : (s.thr + 1) / 2, k = JI.thr; c.drawImage(FJ_THR, r.x0 + k.bb[0] * r.sc, r.y0 + (k.bb[1] + (0.5 - tv) * 46) * r.sc, FJ_THR.width * r.sc, FJ_THR.height * r.sc); }
     { const k = JI.stick; c.save(); c.translate(r.x0 + k.piv[0] * r.sc, r.y0 + k.piv[1] * r.sc); c.rotate(clamp(s.ail || 0, -1, 1) * 0.28); c.scale(1, 1 - clamp(s.ele || 0, -1, 1) * 0.07);
-      c.drawImage(FJ_STK, (k.bb[0] - k.piv[0]) * r.sc, (k.bb[1] - k.piv[1]) * r.sc, FJ_STK.width * r.sc, FJ_STK.height * r.sc); c.restore(); }
+      c.drawImage(FJ_STK, (k.bb[0] - k.piv[0]) * r.sc, (k.bb[1] - k.piv[1]) * r.sc, FJ_STK.width * r.sc, FJ_STK.height * r.sc);
+      glove(c, (622 - k.piv[0]) * r.sc, (918 - k.piv[1]) * r.sc, 74 * r.sc, 0, 1); c.restore(); }
+    // Left hand on a throttle on the left console, sliding forward as you add throttle
+    { const tv = isNaN(s.thr) ? 0 : (s.thr + 1) / 2, [px, py] = P(262, 968 - tv * 60); c.save(); c.translate(px, py); c.fillStyle = '#0c0d0e'; c.beginPath(); c.roundRect(-30 * r.sc, -10 * r.sc, 60 * r.sc, 120 * r.sc, 8 * r.sc); c.fill();
+      c.fillStyle = '#1a1c1e'; c.beginPath(); c.roundRect(-26 * r.sc, -40 * r.sc, 52 * r.sc, 70 * r.sc, 14 * r.sc); c.fill(); glove(c, 0, -14 * r.sc, 72 * r.sc, -0.12, -1); c.restore(); }
     const cv = unitConv(o), cells = (s.sum && s.sum.cells) || 4, maxA = Math.max(20, Math.ceil(((s.sum && s.sum.maxA) || 40) * 1.15 / 10) * 10), base = { cv, cells, maxA };
     Object.entries(JI.scr).forEach(([k, [ix, iy, iw, ih]]) => {
       const f = k[0] === 's' ? 1.75 : 1.25, dw = iw * f, dh = ih * f, [tx, ty] = P(ix, iy), tw = iw * r.sc, th = ih * r.sc, rect = () => [0, 0, dw, dh];
@@ -2898,15 +3013,12 @@ If you want to offset all timestamps of a track such that the first one is zero,
     { const [ux, uy, uw, uh] = JI.ufc; ['ALT ' + nfx((s.alt || 0) * cv.alt), 'LQ ' + nfx(s.rq) + '%', 'SAT ' + nfx(s.sats), 'V ' + nfx(s.v, 1), 'T+' + fmtV(Math.max(0, s.elapsed || 0)).slice(0, -3)].forEach((str, i) => ufc([ux, uy + i * uh / 5, uw, uh / 5], str)); }
   }
   // The fighter HUD, scaled into the window above the panel and cut away behind the cockpit
+  // v1.8: the fighter HUD is a helmet visor display: green symbols float in your view over everything, steady while the
+  // cockpit shakes around them (not cut away behind the panel). The panel screens already carry the map and the sticks.
   function jetHud(c, W, H, s, o, st) {
-    if (!HUD_TMP) HUD_TMP = document.createElement('canvas'); if (HUD_TMP.width !== W || HUD_TMP.height !== H) { HUD_TMP.width = W; HUD_TMP.height = H; }
-    const g = HUD_TMP.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, W, H);
-    const k = 0.62; g.translate(W / 2, -0.01 * H); g.scale(k, k); g.translate(-W / 2, 0); MV_K = k;
-    // the panel's displays already show battery, link, timer and the map, so those HUD blocks stay off here
-    const o2 = Object.assign({}, o, { el: Object.assign({}, o.el, { batt: false, link: false, timer: false, map: false, sticks: false }) });
-    try { drawStyle(g, W, H, s, o2, st); } finally { MV_K = 1; }
-    g.setTransform(1, 0, 0, 1, 0, 0); ckApply(g, W, H, o, 'fighter'); g.globalCompositeOperation = 'destination-out'; const r = jetImgRect(W, H, o, s); g.drawImage(JET_IMG, r.x0, r.y0, JI.w * r.sc, JI.h * r.sc); g.globalCompositeOperation = 'source-over';
-    c.drawImage(HUD_TMP, 0, 0);
+    const k = 0.9; c.save(); c.translate(W / 2, H * 0.46); c.scale(k, k); c.translate(-W / 2, -H * 0.46); MV_K = k;
+    const o2 = Object.assign({}, o, { el: Object.assign({}, o.el, { map: false, sticks: false }) });
+    try { drawStyle(c, W, H, s, o2, st); } finally { MV_K = 1; c.restore(); }
   }
   // Fighter data: plain HUD-style lines instead of panels and icons
   function jetDataBlock(c, W, H, s, o) {
@@ -2961,6 +3073,169 @@ If you want to offset all timestamps of a track such that the first one is zero,
     c.restore();
   }
 
+  // ═════════════════════════ v1.8: Cold-War jet: analogue panel of round gauges, grey-blue paint, glass reflector sight ═════════════════════════
+  // Everything is drawn here (no photos). Each round gauge shows live telemetry; the reflector sight's pipper lags with your
+  // sticks and G, and its ranging diamonds close in as you fly away from home. The whole cockpit shakes with jetMotion.
+  const CW = { paint: '#61737d', paintD: '#3b4850', paintL: '#8a9ea8', face: '#0e1012', ink: '#ecefe4', amber: '#ffb347', sight: '#ff9a3c', red: '#e0412f' };
+  const CWF = (px) => '700 ' + Math.max(6, Math.round(px)) + 'px "B612 Mono", ui-monospace, monospace';
+  function cwPlate(c, x, y, r) {
+    c.save(); c.fillStyle = 'rgba(0,0,0,0.35)'; c.beginPath(); c.roundRect(x - r * 1.32, y - r * 1.32 + r * 0.06, r * 2.64, r * 2.64, r * 0.18); c.fill();
+    const g = c.createLinearGradient(x - r, y - r, x + r, y + r); g.addColorStop(0, '#4c5a62'); g.addColorStop(1, '#2a3338'); c.fillStyle = g; c.beginPath(); c.roundRect(x - r * 1.3, y - r * 1.3, r * 2.6, r * 2.6, r * 0.16); c.fill();
+    c.fillStyle = '#8d9599'; [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => { c.beginPath(); c.arc(x + a * r * 1.08, y + b * r * 1.08, r * 0.07, 0, 7); c.fill(); c.strokeStyle = '#22292d'; c.lineWidth = r * 0.02; c.beginPath(); c.moveTo(x + a * r * 1.08 - r * 0.05, y + b * r * 1.08); c.lineTo(x + a * r * 1.08 + r * 0.05, y + b * r * 1.08); c.stroke(); });
+    c.restore();
+  }
+  function cwBezel(c, x, y, r) {
+    c.save(); const bz = c.createLinearGradient(x - r, y - r, x + r, y + r); bz.addColorStop(0, '#6c7174'); bz.addColorStop(0.45, '#1d2022'); bz.addColorStop(1, '#383c3f');
+    c.fillStyle = bz; c.beginPath(); c.arc(x, y, r * 1.13, 0, 7); c.fill(); c.fillStyle = '#060707'; c.beginPath(); c.arc(x, y, r * 1.02, 0, 7); c.fill(); c.restore();
+  }
+  function cwGlass(c, x, y, r) {
+    c.save(); const g = c.createLinearGradient(x - r, y - r, x + r * 0.3, y + r * 0.3); g.addColorStop(0, 'rgba(255,255,255,0.16)'); g.addColorStop(0.45, 'rgba(255,255,255,0.03)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.12)'; c.lineWidth = r * 0.03; c.beginPath(); c.arc(x, y, r * 0.93, Math.PI * 1.05, Math.PI * 1.45); c.stroke(); c.restore();
+  }
+  function cwNeedle(c, x, y, r, a, len, w, col) {
+    c.save(); c.translate(x, y); c.rotate(a); c.shadowColor = 'rgba(0,0,0,0.7)'; c.shadowBlur = r * 0.06; c.shadowOffsetY = r * 0.03; c.fillStyle = col || CW.ink;
+    c.beginPath(); c.moveTo(-w, r * 0.16); c.lineTo(-w * 0.55, -r * len * 0.9); c.lineTo(0, -r * len); c.lineTo(w * 0.55, -r * len * 0.9); c.lineTo(w, r * 0.16); c.closePath(); c.fill();
+    c.restore(); c.save(); c.fillStyle = '#2b2e30'; c.beginPath(); c.arc(x, y, r * 0.09, 0, 7); c.fill(); c.fillStyle = '#5a5f62'; c.beginPath(); c.arc(x - r * 0.02, y - r * 0.02, r * 0.04, 0, 7); c.fill(); c.restore();
+  }
+  // A round dial: o = { min, max, a0, a1 (radians, 0 = 12 o'clock, clockwise), major, minor, lab(v), title, unit, v, v2, tell, red }
+  function cwDial(c, x, y, r, d) {
+    cwPlate(c, x, y, r); cwBezel(c, x, y, r);
+    c.save(); c.fillStyle = CW.face; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    const A = (v) => d.a0 + (clamp(v, d.min, d.max) - d.min) / (d.max - d.min) * (d.a1 - d.a0), P = (a, rr) => [x + Math.sin(a) * rr, y - Math.cos(a) * rr];
+    if (d.red) { c.strokeStyle = CW.red; c.lineWidth = r * 0.07; c.beginPath(); c.arc(x, y, r * 0.86, A(d.red[0]) - Math.PI / 2, A(d.red[1]) - Math.PI / 2); c.stroke(); }
+    if (d.green) { c.strokeStyle = '#3fa35a'; c.lineWidth = r * 0.07; c.beginPath(); c.arc(x, y, r * 0.86, A(d.green[0]) - Math.PI / 2, A(d.green[1]) - Math.PI / 2); c.stroke(); }
+    c.strokeStyle = CW.ink; c.fillStyle = CW.ink; c.lineCap = 'butt';
+    for (let v = d.min; v <= d.max + 1e-6; v += d.minor) { const a = A(v), maj = Math.abs((v - d.min) / d.major - Math.round((v - d.min) / d.major)) < 1e-6, [x1, y1] = P(a, r * 0.94), [x2, y2] = P(a, r * (maj ? 0.76 : 0.85));
+      c.lineWidth = r * (maj ? 0.045 : 0.022); c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); }
+    c.font = CWF(r * 0.2); c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (let v = d.min; v <= d.max + 1e-6; v += d.major) { if (d.skip && d.skip(v)) continue; const [tx, ty] = P(A(v), r * 0.58); c.fillText(d.lab ? d.lab(v) : String(v), tx, ty); }
+    const ty = d.ty === undefined ? 0.24 : d.ty, uy = d.uy === undefined ? 0.4 : d.uy, dy = d.dy === undefined ? -0.3 : d.dy;
+    c.font = CWF(r * 0.13); c.fillStyle = '#b9bdb2'; if (d.title) c.fillText(d.title, x, y + r * ty); if (d.unit) c.fillText(d.unit, x, y + r * uy);
+    if (d.drum !== undefined) { const w = r * 0.62, h = r * 0.24; c.fillStyle = '#000'; c.fillRect(x - w / 2, y + r * dy - h / 2, w, h); c.strokeStyle = '#555'; c.lineWidth = r * 0.015; c.strokeRect(x - w / 2, y + r * dy - h / 2, w, h);
+      c.fillStyle = CW.ink; c.font = CWF(r * 0.17); c.fillText(d.drum, x, y + r * dy + r * 0.005); }
+    c.restore();
+    if (d.tell !== undefined && !isNaN(d.tell)) cwNeedle(c, x, y, r, A(d.tell), 0.8, r * 0.03, CW.amber);
+    if (d.v2 !== undefined && !isNaN(d.v2)) cwNeedle(c, x, y, r, d.a2 ? d.a2(d.v2) : A(d.v2), 0.55, r * 0.075);
+    cwNeedle(c, x, y, r, d.aV ? d.aV(d.v) : A(isNaN(d.v) ? d.min : d.v), 0.88, r * 0.05);
+    cwGlass(c, x, y, r);
+  }
+  // Attitude ball: sky over earth, turning with roll and sliding with pitch, fixed amber aircraft bar
+  function cwADI(c, x, y, r, s) {
+    cwPlate(c, x, y, r); cwBezel(c, x, y, r);
+    const pit = isNaN(s.pit) ? 0 : s.pit, rol = isNaN(s.rol) ? 0 : s.rol;
+    c.save(); c.beginPath(); c.arc(x, y, r, 0, 7); c.clip(); c.translate(x, y); c.rotate(-rol * Math.PI / 180); const py = clamp(pit, -60, 60) * r / 45;
+    const sk = c.createLinearGradient(0, -r * 2, 0, py); sk.addColorStop(0, '#2f4f6e'); sk.addColorStop(1, '#7c9bb5'); c.fillStyle = sk; c.fillRect(-r * 2, -r * 3, r * 4, r * 3 + py);
+    const gr = c.createLinearGradient(0, py, 0, r * 2); gr.addColorStop(0, '#5b4029'); gr.addColorStop(1, '#22170e'); c.fillStyle = gr; c.fillRect(-r * 2, py, r * 4, r * 3);
+    c.strokeStyle = '#fff'; c.lineWidth = r * 0.03; c.beginPath(); c.moveTo(-r * 2, py); c.lineTo(r * 2, py); c.stroke();
+    c.fillStyle = '#fff'; c.font = CWF(r * 0.12); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = r * 0.018;
+    for (let p = -40; p <= 40; p += 10) { if (!p) continue; const yy = py - p * r / 45, w = r * (p % 20 ? 0.16 : 0.3); c.beginPath(); c.moveTo(-w, yy); c.lineTo(w, yy); c.stroke(); if (!(p % 20)) { c.fillText(Math.abs(p), -w - r * 0.13, yy); c.fillText(Math.abs(p), w + r * 0.13, yy); } }
+    c.restore();
+    // roll scale and pointer
+    c.save(); c.translate(x, y); c.strokeStyle = CW.ink; c.lineWidth = r * 0.025; [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60].forEach(a => { const t = a * Math.PI / 180, l = a % 30 ? 0.08 : 0.14; c.beginPath(); c.moveTo(Math.sin(t) * r * 0.98, -Math.cos(t) * r * 0.98); c.lineTo(Math.sin(t) * r * (0.98 - l), -Math.cos(t) * r * (0.98 - l)); c.stroke(); });
+    c.rotate(-rol * Math.PI / 180); c.fillStyle = CW.ink; c.beginPath(); c.moveTo(0, -r * 0.8); c.lineTo(-r * 0.07, -r * 0.68); c.lineTo(r * 0.07, -r * 0.68); c.closePath(); c.fill(); c.restore();
+    // fixed aircraft symbol
+    c.save(); c.translate(x, y); c.strokeStyle = CW.amber; c.lineWidth = r * 0.06; c.lineCap = 'round'; c.beginPath(); c.moveTo(-r * 0.55, 0); c.lineTo(-r * 0.2, 0); c.lineTo(-r * 0.1, r * 0.1); c.moveTo(r * 0.55, 0); c.lineTo(r * 0.2, 0); c.lineTo(r * 0.1, r * 0.1); c.stroke();
+    c.fillStyle = CW.amber; c.beginPath(); c.arc(0, 0, r * 0.045, 0, 7); c.fill(); c.restore();
+    cwGlass(c, x, y, r);
+  }
+  // Compass card: turns with heading under a fixed lubber line; the green needle points home
+  function cwHSI(c, x, y, r, s) {
+    cwPlate(c, x, y, r); cwBezel(c, x, y, r);
+    c.save(); c.fillStyle = CW.face; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.translate(x, y); c.rotate(-(s.hdg || 0) * Math.PI / 180);
+    c.strokeStyle = CW.ink; c.fillStyle = CW.ink; c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (let d = 0; d < 360; d += 5) { const t = d * Math.PI / 180, l = d % 30 ? (d % 10 ? 0.07 : 0.12) : 0.16; c.lineWidth = r * (d % 30 ? 0.02 : 0.035); c.beginPath(); c.moveTo(Math.sin(t) * r * 0.95, -Math.cos(t) * r * 0.95); c.lineTo(Math.sin(t) * r * (0.95 - l), -Math.cos(t) * r * (0.95 - l)); c.stroke();
+      if (!(d % 30)) { c.save(); c.rotate(t); c.font = CWF(r * (d % 90 ? 0.15 : 0.2)); c.fillStyle = d === 0 ? CW.amber : CW.ink; c.fillText(d % 90 ? String(d / 10) : 'NESW'[d / 90], 0, -r * 0.64); c.restore(); } }
+    c.restore();
+    if (!isNaN(s.homeBrg)) { c.save(); c.translate(x, y); c.rotate((s.homeBrg - (s.hdg || 0)) * Math.PI / 180); c.strokeStyle = '#47c46a'; c.fillStyle = '#47c46a'; c.lineWidth = r * 0.04; c.beginPath(); c.moveTo(0, r * 0.45); c.lineTo(0, -r * 0.4); c.stroke(); c.beginPath(); c.moveTo(0, -r * 0.5); c.lineTo(-r * 0.08, -r * 0.36); c.lineTo(r * 0.08, -r * 0.36); c.closePath(); c.fill(); c.restore(); }
+    c.save(); c.translate(x, y); c.fillStyle = CW.amber; c.beginPath(); c.moveTo(0, -r * 0.98); c.lineTo(-r * 0.07, -r * 1.1); c.lineTo(r * 0.07, -r * 1.1); c.closePath(); c.fill();
+    c.strokeStyle = CW.amber; c.lineWidth = r * 0.05; c.lineCap = 'round'; c.beginPath(); c.moveTo(0, -r * 0.2); c.lineTo(0, r * 0.22); c.moveTo(-r * 0.2, -r * 0.02); c.lineTo(r * 0.2, -r * 0.02); c.moveTo(-r * 0.09, r * 0.2); c.lineTo(r * 0.09, r * 0.2); c.stroke();
+    c.fillStyle = '#b9bdb2'; c.font = CWF(r * 0.12); c.textAlign = 'center'; c.fillText(String(Math.round(s.hdg || 0)).padStart(3, '0') + '°', 0, r * 0.42); c.restore();
+    cwGlass(c, x, y, r);
+  }
+  // Warning lamp: dim when off, glowing when on
+  function cwLamp(c, x, y, w, h, txt, on, col) {
+    c.save(); c.fillStyle = '#15191b'; c.beginPath(); c.roundRect(x - w / 2 - h * 0.12, y - h / 2 - h * 0.12, w + h * 0.24, h * 1.24, h * 0.15); c.fill();
+    c.fillStyle = on ? col : 'rgba(60,55,45,0.9)'; if (on) { c.shadowColor = col; c.shadowBlur = h * 0.9; } c.beginPath(); c.roundRect(x - w / 2, y - h / 2, w, h, h * 0.1); c.fill(); c.shadowBlur = 0;
+    c.fillStyle = on ? 'rgba(20,10,0,0.85)' : 'rgba(150,140,120,0.55)'; c.font = CWF(h * 0.42); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(txt, x, y + h * 0.03); c.restore();
+  }
+  // Glass reflector sight on the coaming: a tilted pane with an orange ring of ranging diamonds and a pipper that lags
+  // with your sticks and G. The ring closes in as you fly further from home.
+  function cwSight(c, cx, y0, k, s, m) {
+    const gw = 130 * k, gh = 150 * k;
+    c.save(); c.fillStyle = '#1a1e20'; c.beginPath(); c.roundRect(cx - 80 * k, y0 - 22 * k, 160 * k, 52 * k, 8 * k); c.fill(); c.fillStyle = '#2c3236'; c.fillRect(cx - 70 * k, y0 - 16 * k, 140 * k, 10 * k);
+    c.fillStyle = '#4b5458'; [[-60, 0], [60, 0]].forEach(([a]) => { c.beginPath(); c.arc(cx + a * k, y0 + 12 * k, 6 * k, 0, 7); c.fill(); });
+    // pane and its frame posts
+    c.strokeStyle = '#111416'; c.lineWidth = 7 * k; c.beginPath(); c.moveTo(cx - gw / 2, y0 - 20 * k); c.lineTo(cx - gw / 2 - 8 * k, y0 - 20 * k - gh); c.moveTo(cx + gw / 2, y0 - 20 * k); c.lineTo(cx + gw / 2 + 8 * k, y0 - 20 * k - gh); c.stroke();
+    const pg = c.createLinearGradient(cx - gw / 2, y0 - gh, cx + gw / 2, y0); pg.addColorStop(0, 'rgba(190,230,220,0.16)'); pg.addColorStop(0.5, 'rgba(190,230,220,0.06)'); pg.addColorStop(1, 'rgba(190,230,220,0.14)');
+    c.fillStyle = pg; c.beginPath(); c.moveTo(cx - gw / 2, y0 - 20 * k); c.lineTo(cx - gw / 2 - 8 * k, y0 - 20 * k - gh); c.lineTo(cx + gw / 2 + 8 * k, y0 - 20 * k - gh); c.lineTo(cx + gw / 2, y0 - 20 * k); c.closePath(); c.fill();
+    c.strokeStyle = 'rgba(220,240,235,0.25)'; c.lineWidth = 1.5 * k; c.stroke();
+    // reticle
+    const rcx = cx, rcy = y0 - 20 * k - gh * 0.52, dist = isNaN(s.dist) ? 0 : s.dist, rr = (52 - clamp(dist / 600, 0, 1) * 26) * k, g = isNaN(s.g) ? 1 : s.g;
+    const px = rcx - m.ail * 26 * k - m.rud * 10 * k, py = rcy + clamp(g - 1, -1, 3) * 12 * k + m.ele * 14 * k;
+    c.save(); c.globalCompositeOperation = 'lighter'; c.shadowColor = CW.sight; c.shadowBlur = 8 * k; c.strokeStyle = CW.sight; c.fillStyle = CW.sight; c.lineWidth = 2.2 * k;
+    c.beginPath(); c.arc(rcx, rcy, 68 * k, 0, 7); c.globalAlpha = 0.55; c.stroke(); c.globalAlpha = 1;
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + Math.PI / 8; c.save(); c.translate(px + Math.sin(a) * rr, py - Math.cos(a) * rr); c.rotate(a); c.beginPath(); c.moveTo(0, -5 * k); c.lineTo(3.5 * k, 0); c.lineTo(0, 5 * k); c.lineTo(-3.5 * k, 0); c.closePath(); c.fill(); c.restore(); }
+    c.beginPath(); c.arc(px, py, 3.2 * k, 0, 7); c.fill();
+    c.beginPath(); c.moveTo(rcx - 10 * k, rcy); c.lineTo(rcx - 4 * k, rcy); c.moveTo(rcx + 4 * k, rcy); c.lineTo(rcx + 10 * k, rcy); c.moveTo(rcx, rcy - 80 * k); c.lineTo(rcx, rcy - 72 * k); c.stroke();
+    c.restore(); c.restore();
+  }
+  function drawColdWar(c, W, H, s, o) {
+    const k = Math.min(H / 1080, W / 1400) * (o.scale || 1), cx = W / 2, cv = unitConv(o), m = jetMotion(W, H, s);
+    const yP = H - 470 * k, thr = m.thr * 100, cells = (s.sum && s.sum.cells) || 4, maxA = Math.max(20, Math.ceil(((s.sum && s.sum.maxA) || 40) * 1.15 / 10) * 10);
+    c.save(); c.globalAlpha = o.opacity; jetXf(c, W, H, m);
+    // Canopy: windscreen posts from the coaming corners and a frame bow across the top
+    c.save(); c.fillStyle = '#20272b'; c.strokeStyle = 'rgba(160,175,180,0.18)'; c.lineWidth = 2 * k;
+    [-1, 1].forEach(sd => { c.beginPath(); c.moveTo(cx + sd * 300 * k, yP - 10 * k); c.lineTo(cx + sd * 250 * k, -40); c.lineTo(cx + sd * 290 * k, -40); c.lineTo(cx + sd * 335 * k, yP - 10 * k); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(cx + sd * (W / 2 + 60), H); c.lineTo(cx + sd * (W / 2 + 60), yP - 260 * k); c.quadraticCurveTo(cx + sd * W * 0.47, -80, cx + sd * W * 0.3, -80); c.lineTo(cx + sd * W * 0.36, -80); c.quadraticCurveTo(cx + sd * (W / 2 - 40 * k), yP - 300 * k, cx + sd * (W / 2 - 70 * k), H); c.closePath(); c.fill(); });
+    c.fillStyle = '#9aa3a6'; for (let i = 0; i < 9; i++) [-1, 1].forEach(sd => { const t = i / 8; c.beginPath(); c.arc(cx + sd * (296 - 20 * t) * k + sd * (-25 * t) * k, yP - 30 * k - t * (yP - 60 * k), 2.6 * k, 0, 7); c.fill(); });
+    c.restore();
+    // Panel body: grey-blue paint, a padded glareshield lip, darker side consoles
+    c.save(); const pg = c.createLinearGradient(0, yP, 0, H); pg.addColorStop(0, CW.paintL); pg.addColorStop(0.25, CW.paint); pg.addColorStop(1, CW.paintD); c.fillStyle = pg;
+    c.beginPath(); c.moveTo(-80, H + 80); c.lineTo(-80, yP + 70 * k); c.quadraticCurveTo(cx, yP - 70 * k, W + 80, yP + 70 * k); c.lineTo(W + 80, H + 80); c.closePath(); c.fill();
+    // wear: deterministic scuffs and rust spots
+    for (let i = 0; i < 26; i++) { const fx = ((i * 0.6180339) % 1), fy = ((i * 0.3819) % 1); c.fillStyle = i % 5 ? 'rgba(30,36,40,0.18)' : 'rgba(150,90,50,0.22)'; c.beginPath(); c.ellipse(fx * W, yP + 60 * k + fy * (H - yP), (6 + (i % 4) * 5) * k, (3 + (i % 3) * 2) * k, i, 0, 7); c.fill(); }
+    c.fillStyle = '#16191b'; c.beginPath(); c.moveTo(-80, yP + 70 * k); c.quadraticCurveTo(cx, yP - 70 * k, W + 80, yP + 70 * k); c.lineTo(W + 80, yP + 40 * k); c.quadraticCurveTo(cx, yP - 105 * k, -80, yP + 40 * k); c.closePath(); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 2 * k; c.beginPath(); c.moveTo(-80, yP + 40 * k); c.quadraticCurveTo(cx, yP - 105 * k, W + 80, yP + 40 * k); c.stroke();
+    [-1, 1].forEach(sd => { const g = c.createLinearGradient(cx + sd * 640 * k, 0, cx + sd * (W / 2), 0); g.addColorStop(0, 'rgba(10,12,14,0)'); g.addColorStop(1, 'rgba(10,12,14,0.75)'); c.fillStyle = g; c.fillRect(sd < 0 ? -80 : cx + 640 * k, yP, W / 2 + 80, H - yP + 80); });
+    c.fillStyle = 'rgba(200,210,215,0.35)'; for (let i = 0; i < 24; i++) { const x = cx + (i - 11.5) * 60 * k; const yy = yP + 70 * k - 140 * k * (1 - Math.pow((x - cx) / (W / 2 + 80), 2)) / 2 + 18 * k; c.beginPath(); c.arc(x, yy, 2.4 * k, 0, 7); c.fill(); }
+    c.restore();
+    // Gauges, left to right
+    const y1 = yP + 150 * k, y2 = yP + 340 * k, spd = (s.spd || 0) * cv.spd, sMax = Math.max(cv.spdMax, Math.ceil(((s.sum && s.sum.maxSpd) || 0) * cv.spd * 1.1 / 20) * 20);
+    const alt = (s.alt || 0) * cv.alt, vs = (s.vs || 0) * cv.vs, vMax = cv.vsU === 'FPM' ? 2000 : cv.vsU === 'FT/S' ? 30 : 10;
+    const ARC = 2.45;
+    cwDial(c, cx - 245 * k, y1, 82 * k, { min: 0, max: sMax, a0: -ARC, a1: ARC, major: sMax / 8, minor: sMax / 40, lab: v => Math.round(v), title: 'AIRSPEED', unit: cv.spdU, v: spd, tell: (s.spdMx || 0) * cv.spd });
+    cwADI(c, cx, y1, 100 * k, s);
+    cwDial(c, cx + 245 * k, y1, 82 * k, { min: 0, max: 100, a0: 0, a1: Math.PI * 2, major: 10, minor: 2, lab: v => v / 10, skip: v => v === 100, title: 'ALT', unit: cv.altU, ty: -0.27, dy: 0.2, uy: 0.42, v: alt % 100, aV: () => (alt % 100) / 100 * Math.PI * 2, v2: alt, a2: () => (alt % 1000) / 1000 * Math.PI * 2, drum: String(Math.round(alt)).padStart(4, '0') });
+    cwDial(c, cx - 245 * k, y2, 70 * k, { ty: -0.28, uy: 0.3, min: -vMax, max: vMax, a0: -Math.PI / 2 - 2.7, a1: -Math.PI / 2 + 2.7, major: vMax / 2, minor: vMax / 10, lab: v => Math.abs(v) >= 1000 ? Math.abs(v / 1000) + 'K' : String(Math.abs(v)), title: 'CLIMB', unit: cv.vsU, v: vs });
+    cwHSI(c, cx, y2, 78 * k, s);
+    cwDial(c, cx + 245 * k, y2, 70 * k, { min: -1, max: 5, a0: -2.4, a1: 2.4, major: 1, minor: 0.5, title: 'G', unit: 'ACCEL', v: isNaN(s.g) ? 1 : s.g, tell: s.gMax, red: [4, 5] });
+    // Left: engine and fuel. Right: clock, radio and GPS
+    cwDial(c, cx - 470 * k, y1 + 20 * k, 62 * k, { min: 0, max: 110, a0: -2.5, a1: 2.5, major: 20, minor: 5, title: 'RPM', unit: '% THR', v: thr, red: [100, 110] });
+    cwDial(c, cx - 625 * k, y1 + 50 * k, 54 * k, { min: 0, max: 100, a0: -2.2, a1: 2.2, major: 25, minor: 5, title: 'FUEL', unit: 'BATT %', ty: 0.16, uy: 0.32, dy: 0.62, v: isNaN(s.pct) ? NaN : s.pct, red: [0, 20], drum: nfx(s.v, 1) + 'V' });
+    cwDial(c, cx - 470 * k, y2 + 10 * k, 58 * k, { min: 0, max: maxA, a0: -2.4, a1: 2.4, major: maxA / 4, minor: maxA / 20, lab: v => Math.round(v), title: 'LOAD', unit: 'AMPS', v: s.a, red: [maxA * 0.85, maxA] });
+    const el = Math.max(0, s.elapsed || 0);
+    cwDial(c, cx + 470 * k, y1 + 20 * k, 62 * k, { min: 0, max: 60, a0: 0, a1: Math.PI * 2, major: 5, minor: 1, lab: v => v / 5 || 12, skip: v => v === 60, title: 'FLT TIME', ty: 0.3, v: el % 60, aV: () => (el % 60) / 60 * Math.PI * 2, v2: el, a2: () => (el / 60 % 60) / 60 * Math.PI * 2 });
+    cwDial(c, cx + 625 * k, y1 + 50 * k, 54 * k, { min: 0, max: 100, a0: -2.2, a1: 2.2, major: 25, minor: 5, title: 'RADIO', unit: 'LQ %', v: s.rq, red: [0, 40] });
+    cwDial(c, cx + 470 * k, y2 + 10 * k, 58 * k, { min: 0, max: 20, a0: -2.4, a1: 2.4, major: 5, minor: 1, title: 'GPS', unit: 'SATS', v: s.sats, red: [0, 5] });
+    // Warning lamps between the columns
+    const lw = 96 * k, lh = 28 * k, low = !isNaN(s.pct) && s.pct < 25, blink = Math.floor((s.t || 0) * 3) % 2 === 0, ly = yP + 30 * k;
+    cwLamp(c, cx - 420 * k, ly, lw, lh, 'ARMED', !!s.armed, '#58d26e'); cwLamp(c, cx - 310 * k, ly, lw, lh, 'LOW FUEL', low && blink, CW.amber); cwLamp(c, cx - 200 * k, ly, lw, lh, 'REHEAT', m.thr > 0.9, CW.red);
+    cwLamp(c, cx + 200 * k, ly, lw, lh, 'GPS', !isNaN(s.sats) && s.sats < 6, CW.amber); cwLamp(c, cx + 310 * k, ly, lw, lh, 'LINK', !isNaN(s.rq) && s.rq < 50, CW.red); cwLamp(c, cx + 420 * k, ly, lw, lh, 'G LIMIT', !isNaN(s.g) && s.g > 4, CW.red);
+    // Reflector sight on top of the coaming
+    cwSight(c, cx, yP - 4 * k, k, s, m);
+    // Pilot: legs, stick between the knees, hands on stick and throttle
+    const ls = 1.2 * k, lr = { x0: cx - 629 * ls, y0: H - 70 * k - 828 * ls, sc: ls };
+    jetLegs(c, lr, m);
+    { const ox = cx, oy = H + 150 * k; c.save(); c.translate(ox, oy); c.rotate(m.ail * 0.25); const lean = 1 - m.ele * 0.08;
+      c.fillStyle = '#1b1e20'; c.beginPath(); c.ellipse(0, -10 * k, 70 * k, 26 * k, 0, 0, 7); c.fill();
+      const sg = c.createLinearGradient(-14 * k, 0, 14 * k, 0); sg.addColorStop(0, '#2a2e31'); sg.addColorStop(0.5, '#5b6064'); sg.addColorStop(1, '#202326'); c.fillStyle = sg; c.fillRect(-12 * k, -250 * k * lean, 24 * k, 250 * k * lean);
+      c.fillStyle = '#131516'; c.beginPath(); c.roundRect(-30 * k, -330 * k * lean, 60 * k, 110 * k, 22 * k); c.fill(); c.fillStyle = CW.red; c.beginPath(); c.arc(0, -330 * k * lean + 10 * k, 7 * k, 0, 7); c.fill();
+      glove(c, 0, -290 * k * lean, 90 * k, 0, 1); c.restore(); }
+    { const tx = cx - 610 * k, ty = H - 70 * k - m.thr * 60 * k; c.save(); c.fillStyle = '#0e1011'; c.fillRect(tx - 18 * k, ty, 36 * k, H - ty + 40); c.fillStyle = '#26292b'; c.beginPath(); c.roundRect(tx - 32 * k, ty - 50 * k, 64 * k, 80 * k, 16 * k); c.fill(); glove(c, tx, ty - 22 * k, 86 * k, -0.15, -1); c.restore(); }
+    c.restore();
+  }
+
   const STYLES = {
     fighter: { name: 'Fighter jet', fonts: ['700 20px "B612 Mono"'], screen: true, theme: true, note: 'Classic HUD lines and tapes. Blends cleanly with Screen.' },
     scifi: { name: 'Sci-fi', fonts: ['700 20px Orbitron', '900 20px Orbitron'], screen: true, theme: true, note: 'Neon frame, ring gauges and a radar minimap. Screen-blend friendly.' },
@@ -2970,6 +3245,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     rainbow: { name: 'Rainbow sky', fonts: ['700 20px Fredoka', '600 20px Fredoka'], screen: false, theme: false, note: 'Rainbow speedo, drifting clouds and a flying unicorn. Pastel panels: export PNG or burn-in.' },
     bfa: { name: 'Betaflight OSD · analogue', fonts: ['24px VT323'], screen: true, theme: false, osd: true, note: 'Classic analogue OSD: chunky white characters on a 30×16 grid. Choose items below and drag them on the preview.' },
     bfd: { name: 'Betaflight OSD · digital HD', fonts: ['24px "Share Tech Mono"'], screen: true, theme: false, osd: true, note: 'Crisp digital HD OSD on a 53×20 grid. Choose items below and drag them on the preview.' },
+    coldwar: { name: 'Cold-War jet', fonts: ['700 20px "B612 Mono"'], screen: false, theme: false, note: 'Analogue 1960s jet: grey-blue panel of live round gauges, warning lamps and a glass reflector sight, with your legs and hands. Solid panel: export PNG or burn-in.' },
     space: { name: 'Space chase', fonts: ['700 20px Orbitron', '500 20px Orbitron'], screen: false, theme: false, note: 'Third-person ship over a starfield that streams with your speed and banks with your roll. Export PNG or burn-in.' },
   };
   function drawHUD(c, W, H, s, o) {
@@ -2985,6 +3261,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     if (st === 'arcade') { drawArcade(c, W, H, s, o); mvB(c, o, W, H, 'map'); mapArcade(c, W, H, s, o); return mvE(c); }
     if (st === 'rainbow') return drawRainbow(c, W, H, s, o);
     if (st === 'space') return drawSpace(c, W, H, s, o);
+    if (st === 'coldwar') return drawColdWar(c, W, H, s, o);
     drawFighter(c, W, H, s, o); mvB(c, o, W, H, 'map'); mapFighter(c, W, H, s, o); mvE(c);
   }
 
