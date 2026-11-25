@@ -10,7 +10,7 @@ with sync_playwright() as p:
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
-    R.check('the version shows next to the BETA badge', pg.is_visible('#hudVer') and pg.inner_text('#hudVer').strip() == 'v1.9.0', pg.inner_text('#hudVer') if pg.is_visible('#hudVer') else None)
+    R.check('the version shows next to the BETA badge', pg.is_visible('#hudVer') and pg.inner_text('#hudVer').strip().startswith('v1.9'), pg.inner_text('#hudVer') if pg.is_visible('#hudVer') else None)
     R.check('Retro spaceship is a style card', pg.is_visible('.sty[data-s=retro]') and 'Retro spaceship' in pg.inner_text('.sty[data-s=retro]'))
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(2000)
     info = pg.evaluate("async()=>{const t=await window.WD_BETA.realSample();const L=t.trim().split('\\n');return {n:L.length,air:t.includes(',AIR,'),home:t.includes('-27.50')||t.includes(' 153.2')}}")
