@@ -31,6 +31,7 @@ with sync_playwright() as p:
         for i in range(n): pg.mouse.move(x0 + i * dx, y0 + i * dy)
         pg.mouse.up(); pg.wait_for_timeout(900)
     pg.get_by_text('Flight path').first.click(); pg.wait_for_timeout(400)
+    pg.click('[data-ops-pathmode="draw"]'); pg.wait_for_timeout(300)  # v7.57: Click points is the default now
     p0 = pane(); stroke(cx - 150, cy, 5, 0)
     R.check('after the first stroke you are still drawing (banner with New path / Done)', pg.locator('[data-ops-newpath]').count() == 1 and pg.locator('[data-ops-donedraw]').count() == 1)
     tags = lambda: pg.evaluate("()=>[...document.querySelectorAll('[data-ops-path-tag]')].map(e=>e.innerText)")

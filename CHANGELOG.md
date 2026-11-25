@@ -1,5 +1,21 @@
 # Planner changelog
 
+## v7.57 — 25 Nov 2026 — Flight paths: click your points, set each height, smooth the line
+- **Click points is now the default** for a flight path: click where each point goes, double-click (or Finish) to end. Drawing freehand is still there (Draw), but it now keeps only the handful of points that shape your line instead of hundreds of tiny dots.
+- **Each point has its own height.** The path panel lists your points (1, 2, 3…) with a height box each, e.g. 0 m at take-off, 10 m along the way, then up to 120 m. **Set all** sets points 2 onwards in one go. The map shows each point's height, and you can still drag a point up or down in the side-on profile.
+- **Heights are measured from the ground** (the drone rises and falls with the terrain between points) **or from the take-off** — your choice per path.
+- **Smooth line** bends the path through your points instead of straight lines between them. The fine flown line is worked out underneath, so the checks, 3D view and PDF follow the curve.
+- **Easy editing on the map:** drag a numbered point to move it, drag or click a **+** between two points to add one, right-click a point to delete it. **Fewer points** removes points that hardly change the shape.
+- Drawing with a mouse: the stroke now keeps going even if the pointer slips off the map.
+- Older paths still work; they switch to the new points the first time you edit them.
+- Supabase: nothing to do.
+
+## v7.56 — 25 Nov 2026 — Hide labels button on the map; new Tools page picture
+- **Hide labels / Show labels button** at the top right of the ops map, in 2D and 3D, so labels are one click away instead of in the Show list. In 3D it switches straight away without reloading the Google city.
+- **The 3D tips box can be closed** with its ×.
+- **Tools page carousel:** a new slide showing a plan over Google's photo-real 3D city (a Brisbane River plan), and a **Hide labels** switch at the top left of the carousel so the pictures can be seen clearly. It remembers your choice.
+- Supabase: nothing to do.
+
 ## v7.55 — 25 Nov 2026 — Tools page: big picture carousel at the top
 - **The Tools page (planner.wakingdreamfpv.com/tools/) opens with a big sliding carousel**, one picture per tool with a label and an Open button: HUD Studio's fighter-jet HUD over the catamaran footage, the Flight Log replaying a flight on the map with its flagged moments, the Planner's 3D ops map (Surfers Paradise buildings, exclusion, over-people, near-people and clear zones, two flight paths), then the other HUD styles.
 - It slides on its own every 5 seconds, stops while you hover or tap, and has arrows, dots and swipe. Works on phones.
