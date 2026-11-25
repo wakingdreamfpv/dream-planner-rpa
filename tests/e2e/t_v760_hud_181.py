@@ -1,4 +1,4 @@
-# v7.59: HUD Studio 1.8.1. Sound-and-sticks sync strip (the video's sound over the log's throttle and sticks; drag the
+# v7.60: HUD Studio 1.8.1. Sound-and-sticks sync strip (the video's sound over the log's throttle and sticks; drag the
 # log part to shift the sync, click to jump), and the fighter / race cockpits still draw with moving hands and feet.
 import sys, os, struct, math, wave, tempfile; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *

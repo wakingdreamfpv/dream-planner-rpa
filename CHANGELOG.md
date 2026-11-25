@@ -1,6 +1,6 @@
 # Planner changelog
 
-## v7.59 — 25 Nov 2026 — HUD Studio 1.8.1: hands and feet that move, sound-and-sticks sync, cleaner cockpits
+## v7.60 — 25 Nov 2026 — HUD Studio 1.8.1: hands and feet that move, sound-and-sticks sync, cleaner cockpits
 - **Fighter jet: the hands move with your sticks** in both views. The stick tilts with roll and leans with pitch, and the throttle hand slides with throttle. Small stick moves still show.
 - **Over shoulder:** the throttle hand now sits on the throttle box beside the seat, not on the knee.
 - **Pilot seat:** the HUD glass is fully clear, with two clean metal posts. No more sky showing through.
