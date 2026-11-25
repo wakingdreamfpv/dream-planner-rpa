@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.57 — 25 Nov 2026 — HUD Studio 1.8: photo fighter cockpits, Beta badge and feedback form
+- **Fighter jet cockpit is now photo-style**, from Mike's images, with the sky cut away so your drone footage shows through. The old drawn cockpit, cartoon legs and the Cold-War style are gone.
+- **Two views** (Cockpit view › View): **Pilot seat** (your legs and hands, live screens in the panel) and **Over shoulder** (behind the pilot's helmet). In Over shoulder the stick tilts with your roll and pitch, the throttle hand slides with throttle, and the head sinks under G, leans with rolls and shakes with speed. On wide videos the cockpit takes at most half the width and the green HUD moves over the open side.
+- **HUD Studio has a BETA badge and a Feedback form** like the planner's: Something's not working / Feature request / General feedback. It goes to your Enquiries list and emails you, marked "HUD Studio". With no signal it offers an email instead.
+- Supabase: nothing to do.
+
 ## v7.56 — 25 Nov 2026 — Drone camera: plan your shots in the 3D view
 - **Drone camera** (ops map › 3D view): put a virtual drone at the take-off point, any marker (**Drone camera from here**) or any path point (**Drone camera at point N**) and see what its camera would see, in Google's 3D city.
   - Sliders (and boxes) for **height above ground** (stops at the job's max height from the JSA, else 120 m), **heading** (0° = north) and **gimbal tilt** (+20° to −90°), plus latitude / longitude.
