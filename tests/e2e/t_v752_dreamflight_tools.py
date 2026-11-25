@@ -7,14 +7,14 @@ PAGES = [('tools', 'Dream Flight Tools'), ('hud', 'HUD Studio'), ('log', 'Dream 
 with sync_playwright() as p:
     b = p.chromium.launch()
     # 1) straight from the server, no service worker yet
-    ctx = b.new_context(service_workers='block'); ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost:4173' not in r.request.url) else r.continue_())
+    ctx = b.new_context(service_workers='block'); ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and ('localhost:' + PORT) not in r.request.url) else r.continue_())
     pg = ctx.new_page()
     for path, title in PAGES:
         pg.goto(URL + path + '/'); pg.wait_for_timeout(600)
         R.check('/%s/ loads its own page (%s)' % (path, title), title in pg.title() and 'wd-account-slot' not in pg.content(), pg.title())
     ctx.close()
     # 2) after the planner's service worker has installed and controls the site
-    ctx = b.new_context(service_workers='allow'); ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost:4173' not in r.request.url) else r.continue_())
+    ctx = b.new_context(service_workers='allow'); ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and ('localhost:' + PORT) not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL); pg.wait_for_timeout(3000)
     sw = pg.evaluate("()=>navigator.serviceWorker ? navigator.serviceWorker.ready.then(r=>!!r.active) : false")

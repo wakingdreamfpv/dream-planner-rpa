@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.53';
+        const APP_VERSION = '7.56';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -6128,13 +6128,27 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               if (notes.length) { P.push('<table style="width:100%;border-collapse:collapse;margin-bottom:8pt;"><tr><th style="'+th+'width:28%;">Marker</th><th style="'+th+'">Note</th></tr>');
                 notes.forEach(p => P.push('<tr><td style="'+td+'font-weight:700;">'+esc((OPS_POINT_KINDS[p.kind] || {}).label || p.kind)+': '+esc(p.title || '')+'</td><td style="'+td+'white-space:pre-wrap;">'+esc(p.text || '')+'</td></tr>')); P.push('</table>'); }
               // v7.12: the views kept for the plan (2D map areas re-drawn here, 3D as the picture taken)
-              (mo.views || []).forEach((v, i) => {
+              (mo.views || []).forEach((v, i) => { if (v.shot) return;
                 P.push('<div style="break-inside:avoid;margin:10pt 0 8pt;"><div style="font-size:9pt;font-weight:800;color:'+PU+';margin-bottom:3pt;">'+esc(v.title || ('View ' + (i + 1)))+' <span style="font-weight:400;color:'+S6+';font-size:7pt;">'+(v.kind === '3d' ? '3D view' : 'map view')+'</span></div>');
                 if (v.kind === '2d' && v.bounds) P.push('<div id="opsv'+i+'" style="width:182mm;height:120mm;border:1px solid '+S2+';border-radius:4pt;overflow:hidden;background:#f8fafc;"></div>');
                 else if (opsViewImages[v.id]) P.push('<img src="'+opsViewImages[v.id]+'" style="width:182mm;max-height:130mm;object-fit:contain;border:1px solid '+S2+';border-radius:4pt;background:#e2e8f0;" alt="">');
                 else P.push('<div style="font-size:7.5pt;color:'+S6+';">(picture not saved on this device)</div>');
                 P.push('</div>');
               });
+              // v7.56: drone camera shots, each with its settings
+              const shots = (mo.views || []).filter(v => v.shot);
+              if (shots.length) {
+                P.push('<div style="break-before:page;font-size:11pt;font-weight:800;color:'+PU+';margin:6pt 0 2pt;">Planned perspectives</div>');
+                P.push('<div style="font-size:7.5pt;color:'+S6+';margin-bottom:6pt;">Pictures from a virtual drone camera placed in Google\'s 3D imagery. Indicative only: the imagery may be out of date and does not show stages, crowds or other temporary structures. Heights are above the ground under the drone.</div>');
+                shots.forEach((v, n) => { const h = v.shot, f1 = (x) => Math.round((Number(x) || 0) * 10) / 10;
+                  P.push('<div style="break-inside:avoid;margin:0 0 10pt;"><div style="font-size:9pt;font-weight:800;color:'+PU+';margin-bottom:3pt;">'+(n + 1)+'. '+esc(v.title || ('Shot ' + (n + 1)))+'</div>');
+                  if (opsViewImages[v.id]) P.push('<img src="'+opsViewImages[v.id]+'" style="width:182mm;max-height:115mm;object-fit:contain;border:1px solid '+S2+';border-radius:4pt;background:#0f172a;" alt="">');
+                  else P.push('<div style="font-size:7.5pt;color:'+S6+';">(picture not saved on this device)</div>');
+                  const cells = [['From', h.from || '—'], ['Position', mo.mode === 'plan' ? '—' : (Number(h.lat).toFixed(6) + ', ' + Number(h.lng).toFixed(6))], ['Height', f1(h.agl) + ' m above ground' + (h.raised > 0 ? ' (+' + f1(h.raised) + ' m over a roof or tree)' : '')],
+                    ['Heading', Math.round(h.heading) + '°'], ['Gimbal tilt', Math.round(h.tilt) + '°'], ['Drone', h.drone || '—'], ['Lens', (h.lens || '—') + ' · ' + (h.aspect || '')], ['Field of view', Math.round(h.hfov) + '° across'], ['Taken', v.at ? new Date(v.at).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : '—']];
+                  P.push('<table style="width:182mm;border-collapse:collapse;margin-top:3pt;"><tr>' + cells.slice(0, 5).map(c => '<td style="'+td+'"><span style="color:'+S6+';font-size:6.5pt;display:block;">'+c[0]+'</span>'+esc(c[1])+'</td>').join('') + '</tr><tr>' + cells.slice(5).map(c => '<td style="'+td+'"><span style="color:'+S6+';font-size:6.5pt;display:block;">'+c[0]+'</span>'+esc(c[1])+'</td>').join('') + '<td style="'+td+'"><span style="color:'+S6+';font-size:6.5pt;display:block;">Imagery</span>'+esc(h.credit ? 'Google · ' + h.credit : 'Satellite and terrain (Google 3D city off)')+'</td></tr></table></div>');
+                });
+              }
               // v7.32: the map's own checks never print (they're for the pilot in the planner, not the client's PDF)
               P.push('</div>');
             }
@@ -6911,6 +6925,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             special: [1, 2, 3, 31, 17, 18, 19].includes(a.type), geometry: a.geometry })), [apiAirspaceData]);
           const opsChecks = React.useMemo(() => (hasOpsContent(opsMap) ? checkOps(opsMap, opsKeFor) : null), [opsMap, opsKeFor]);
           const saveDroneLimits = (drone, lim) => { if (!drone) return; const f = { ...(db.fleet || {}) }; f[drone] = { ...(f[drone] || {}), oonpLimits: lim }; updateDb('fleet', f); };
+          // v7.56: the drone camera's own lenses live on the drone's fleet card (name, sensor size, focal length, picture shape)
+          const saveDroneCameras = (drone, cams) => { if (!drone) return; const f = { ...(db.fleet || {}) }; f[drone] = { ...(f[drone] || {}), cameras: cams }; updateDb('fleet', f); };
           const [keEnabledPerRpa, setKeEnabledPerRpa] = useState({});
           const toggleKeForRpa = (rpa) => setKeEnabledPerRpa(prev => ({...prev, [rpa]: !prev[rpa]}));
           // Extra KE calculator instances
@@ -11289,7 +11305,7 @@ View in the Database & Settings tab.`);
               })()}
               {opsMapOpen && <OpsMap value={opsMap} onChange={(m) => { setOpsMap(m); setDirty(true); }} onClose={() => setOpsMapOpen(false)} readOnly={planLocked}
                 center={(() => { const p = (mapData.launches || []).find(q => q.lat != null) || (mapData.areaPolygon || []).find(q => q.lat != null) || (geoLoc && geoLoc.lat != null ? geoLoc : null); return p ? { lat: p.lat, lng: p.lng } : null; })()}
-                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} googleKey={db.googleTilesKey || ''} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} title={getOpTitle(overview)} />}
+                fleet={db.fleet || {}} jobDrones={overview.rpaTypes || []} keFor={opsKeFor} airspace={opsAirspace} googleKey={db.googleTilesKey || ''} plannedHeightM={(parseFloat(jsa.maxOperatingHeightAgl) || parseFloat(overview.maxHeightPlanned) || 0) * 0.3048} reviewer={(signedIn && auth.name) || approval.rpName || overview.rpic || ''} viewImages={opsViewImages} onViewImage={(id, src) => setOpsViewImages(p => { const n = { ...p }; if (src) n[id] = src; else delete n[id]; return n; })} onSaveDroneLimits={saveDroneLimits} onSaveDroneCamera={saveDroneCameras} title={getOpTitle(overview)} />}
               {manualOpen && <ManualViewer viewer={(auth.name || auth.email || 'Crew') + (auth.email ? ' · ' + auth.email : '')} onClose={() => setManualOpen(false)} />}
               {obsReview && <CrpObserverReview rec={obsReview} crpName={auth.name || approval.crpName || ''} onClose={() => { setObsReview(null); window.dispatchEvent(new Event('wd-cloud-refresh')); }} />}
               {logInvite && (() => {
