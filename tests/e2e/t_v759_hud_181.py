@@ -1,0 +1,37 @@
+# v7.59: HUD Studio 1.8.1. Sound-and-sticks sync strip (the video's sound over the log's throttle and sticks; drag the
+# log part to shift the sync, click to jump), and the fighter / race cockpits still draw with moving hands and feet.
+import sys, os, struct, math, wave, tempfile; sys.path.insert(0, os.path.dirname(__file__))
+from harness import *
+R = Run(); ensure_server()
+wav = os.path.join(tempfile.mkdtemp(), 'clip.wav')
+w = wave.open(wav, 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+w.writeframes(b''.join(struct.pack('<h', int((0.02 if i < 8000 * 5 else 0.6) * 30000 * math.sin(i * 0.3))) for i in range(8000 * 30))); w.close()
+with sync_playwright() as p:
+    b = p.chromium.launch(); ctx = b.new_context(viewport={'width': 1500, 'height': 1000})
+    ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
+    pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
+    R.check('HUD Studio is 1.8.1', 'HUD Studio 1.8.1' in pg.content())
+    R.check('no sync strip before a log is open', not pg.is_visible('#syncWrap'))
+    pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(1200)
+    R.check('with a log the sync strip shows', pg.is_visible('#syncCv'))
+    R.check('it asks for the video to show the sound', 'Add your video' in pg.inner_text('#audNote'))
+    pg.set_input_files('#vidIn', wav); pg.wait_for_timeout(2500)
+    R.check('the video\'s sound is read (no message left)', pg.inner_text('#audNote').strip() == '', pg.inner_text('#audNote'))
+    lit = pg.evaluate("()=>{const c=document.getElementById('syncCv'),g=c.getContext('2d'),d=g.getImageData(0,0,c.width,Math.round(c.height*0.45)).data;let n=0;for(let i=0;i<d.length;i+=4)if(d[i+2]>150&&d[i]>110)n++;return n}")
+    R.check('the sound wave is drawn', lit > 500, lit)
+    pg.locator('#syncCv').scroll_into_view_if_needed(); pg.wait_for_timeout(200)
+    arm0 = float(pg.input_value('#armAt')); bb = pg.locator('#syncCv').bounding_box()
+    pg.mouse.move(bb['x'] + 300, bb['y'] + 100); pg.mouse.down(); pg.mouse.move(bb['x'] + 375, bb['y'] + 100, steps=6); pg.mouse.up(); pg.wait_for_timeout(300)
+    arm1 = float(pg.input_value('#armAt'))
+    R.check('dragging the log part moves the arming time later', arm1 > arm0 + 0.3, (arm0, arm1))
+    pg.mouse.click(bb['x'] + bb['width'] * 0.9, bb['y'] + 25); pg.wait_for_timeout(300)
+    R.check('clicking the sound jumps the video there', not pg.inner_text('#tcode').startswith('0:00.00'), pg.inner_text('#tcode'))
+    pg.click('#syncZoom button[data-v=all]'); R.check('Whole video zoom can be picked', pg.evaluate("()=>document.querySelector('#syncZoom button[data-v=all]').classList.contains('on')"))
+    for st, view in [('fighter', 'seat'), ('fighter', 'shoulder'), ('race', None)]:
+        pg.evaluate("([st,v])=>{document.querySelector('.sty[data-s='+st+']').click(); const c=document.getElementById('cockpit'); if(!c.checked) c.click(); if(v) document.querySelector('#ckJetSeg button[data-v='+v+']').click()}", [st, view]); pg.wait_for_timeout(600)
+        for ar in ['16:9', '4:3']:
+            pg.evaluate("a=>document.querySelector('#arSeg button[data-v=\"'+a+'\"]').click()", ar); pg.wait_for_timeout(400)
+    R.check('fighter (both views) and race cockpits draw in 16:9 and 4:3 with no page errors', errs == [], errs)
+    ctx.close(); b.close()
+R.done()

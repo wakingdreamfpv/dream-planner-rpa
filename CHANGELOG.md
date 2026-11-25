@@ -1,5 +1,13 @@
 # Planner changelog
 
+## v7.59 — 25 Nov 2026 — HUD Studio 1.8.1: hands and feet that move, sound-and-sticks sync, cleaner cockpits
+- **Fighter jet: the hands move with your sticks** in both views. The stick tilts with roll and leans with pitch, and the throttle hand slides with throttle. Small stick moves still show.
+- **Over shoulder:** the throttle hand now sits on the throttle box beside the seat, not on the knee.
+- **Pilot seat:** the HUD glass is fully clear, with two clean metal posts. No more sky showing through.
+- **Race car:** the halo now carries on up out of the picture instead of stopping in a straight line. The driver's boots show in the footwell: the right foot presses with throttle and the left foot moves with yaw.
+- **Easier syncing:** under "Sync the log to the footage" there's a strip showing your video's sound as a wave, with the log's throttle and stick moves underneath. Drag the bottom part sideways until the throttle lines up with the motor sound, or click the top part to jump the video there. "Around arming" zooms in, and "Whole video" shows it all.
+- Supabase: nothing to do.
+
 ## v7.58 — 25 Nov 2026 — Ops map checks off; flight paths by clicking points, per-point heights, smooth line; Hide labels button
 - **Ops map checks are switched off for now.** No Checks list, nothing to acknowledge, no red or amber on the map, 3D view or profile, and the plan no longer says "to fix". (The red ones needed a note of 5+ characters before OK worked, which blocked planning.) They can come back later; the risk assessment covers safety.
 - **Click points is now the default** for a flight path: click where each point goes, double-click (or Finish) to end. Drawing freehand is still there (Draw), but it now keeps only the handful of points that shape your line instead of hundreds of tiny dots.
