@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.62 — 26 Nov 2026 — HUD Studio 1.9.1: tidy tall frames, head stays on its hose, cleaner patches behind moving hands
+- **Fighter jet in tall (9:16) frames:** the timer, flight mode and throttle (and the small sticks) now sit above the battery and link lines instead of overlapping them. Wide frames are unchanged.
+- **Over shoulder:** the oxygen hose now bends with the head, so the mask end stays attached when the head moves. Removed the bit of city that showed between the head and the hose.
+- **Moving hands (over shoulder, sci-fi, retro spaceship):** the area behind a hand now keeps the cockpit's texture instead of a dark smudge when the hand moves away.
+- Supabase: nothing to do.
+
 ## v7.61 — 25 Nov 2026 — HUD Studio 1.9.0: new cockpits with moving controls, Retro spaceship, real sample flight, version label
 - **Version label:** the header now shows the HUD Studio version (v1.9.0) next to the BETA badge.
 - **Sample flight is now a real flight:** a 3½-minute freestyle log from your radio (10 readings a second), moved to a random spot and date so it doesn't show where it was flown.
