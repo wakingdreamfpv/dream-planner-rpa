@@ -1,5 +1,9 @@
 # Planner changelog
 
+## v7.61 — 25 Nov 2026 — HUD Studio 1.8.2: over-shoulder throttle hand beside the knee
+- **Fighter jet, Over shoulder:** the left hand and throttle now sit on the side console, left of the knee, instead of over the leg. The view is nudged slightly so the helmet doesn't hide that hand.
+- Supabase: nothing to do.
+
 ## v7.60 — 25 Nov 2026 — HUD Studio 1.8.1: hands and feet that move, sound-and-sticks sync, cleaner cockpits
 - **Fighter jet: the hands move with your sticks** in both views. The stick tilts with roll and leans with pitch, and the throttle hand slides with throttle. Small stick moves still show.
 - **Over shoulder:** the throttle hand now sits on the throttle box beside the seat, not on the knee.

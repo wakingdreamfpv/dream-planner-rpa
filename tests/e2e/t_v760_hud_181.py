@@ -11,7 +11,7 @@ with sync_playwright() as p:
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
-    R.check('HUD Studio is 1.8.1', 'HUD Studio 1.8.1' in pg.content())
+    R.check('HUD Studio is 1.8.2', 'HUD Studio 1.8.2' in pg.content())
     R.check('no sync strip before a log is open', not pg.is_visible('#syncWrap'))
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(1200)
     R.check('with a log the sync strip shows', pg.is_visible('#syncCv'))
