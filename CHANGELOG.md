@@ -1,5 +1,15 @@
 # Planner changelog
 
+## v7.61 — 25 Nov 2026 — HUD Studio 1.9.0: new cockpits with moving controls, Retro spaceship, real sample flight, version label
+- **Version label:** the header now shows the HUD Studio version (v1.9.0) next to the BETA badge.
+- **Sample flight is now a real flight:** a 3½-minute freestyle log from your radio (10 readings a second), moved to a random spot and date so it doesn't show where it was flown.
+- **Fighter jet, Over shoulder:** replaced with your new picture (behind the pilot, canopy arch ahead). Sky, city and windscreen are cut out so your footage shows through. The head moves (sinks under G, leans into rolls, turns with yaw, shakes), the stick tilts and leans, and the throttle hand slides — exaggerated so it's easy to see.
+- **Sci-fi:** new photo cockpit from your picture. Canopy glass cut out; left hand pushes the throttle, right stick tilts with roll and leans with pitch (exaggerated). The sci-fi HUD floats in the canopy.
+- **Arcade 8-bit:** the cockpit is now your pixel go-kart. Its empty boxes show live data: altitude, battery (coin bar), flight mode (item box), flight time and a speedo needle. The steering wheel and arms turn with roll and yaw; the kart rumbles with throttle.
+- **New style card: Retro spaceship.** Neon pixel HUD (speed and altitude tapes, horizon, aim brackets, heading, power). Turn on Cockpit for your pixel-art ship: the THR, AMP and PWR screens and the top clock show live data, and both hands move with your sticks.
+- **HUD sway:** with any cockpit on, the whole HUD now drifts slightly with the cockpit's shake, roll and G from the flight data.
+- Supabase: nothing to do.
+
 ## v7.60 — 25 Nov 2026 — HUD Studio 1.8.1: hands and feet that move, sound-and-sticks sync, cleaner cockpits
 - **Fighter jet: the hands move with your sticks** in both views. The stick tilts with roll and leans with pitch, and the throttle hand slides with throttle. Small stick moves still show.
 - **Over shoulder:** the throttle hand now sits on the throttle box beside the seat, not on the knee.
