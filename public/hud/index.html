@@ -157,6 +157,11 @@ window.WD_BETA = {
         <button class="btn sm" data-n="-1">−1 s</button><button class="btn sm" data-n="-0.1">−0.1</button><button class="btn sm" data-n="-0.0333">−1 frame</button>
         <button class="btn sm" data-n="0.0333">+1 frame</button><button class="btn sm" data-n="0.1">+0.1</button><button class="btn sm" data-n="1">+1 s</button>
       </div>
+      <div id="syncWrap" style="display:none">
+        <div class="row"><span class="lbl">Sound and sticks</span><div class="seg" id="syncZoom"><button data-v="arm">Around arming</button><button data-v="all">Whole video</button></div><span class="note" id="audNote" style="margin:0"></span></div>
+        <canvas id="syncCv" style="width:100%;height:130px;display:block;border:1px solid var(--line);border-radius:8px;background:#0b0f14;touch-action:none;cursor:pointer"></canvas>
+        <div class="note">Top: your video's sound (motors spinning up and punch-outs are the loud bits). Bottom: throttle (green) and stick moves (blue) from the log. <b>Drag the bottom part sideways</b> until the throttle lines up with the sound; click the top part to jump the video there.</div>
+      </div>
       <div class="row note mono" id="syncInfo">—</div>
     </div>
 
@@ -3105,6 +3110,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
   }
   const fmtV = (s) => { const m = Math.floor(s / 60); return m + ':' + (s - m * 60).toFixed(2).padStart(5, '0'); };
   function updateInfo(lt) {
+    drawSync();
     $('tcode').textContent = fmtV(P.t) + ' / ' + fmtV(totalLen());
     $('scrub').max = totalLen(); $('scrub').value = P.t;
     if (!S.cur) return;
@@ -3159,6 +3165,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     seek(V.has ? P.t : 0);
   }
   function loadVideo(file) {
+    loadAudio(file);
     if (V.url) URL.revokeObjectURL(V.url);
     V.url = URL.createObjectURL(file); V.name = file.name;
     vid.src = V.url;
@@ -3185,6 +3192,60 @@ If you want to offset all timestamps of a track such that the first one is zero,
   $('armAt').onchange = (e) => setArm(+e.target.value || 0);
   document.querySelectorAll('[data-n]').forEach(b => b.onclick = () => setArm(P.armAt + (+b.dataset.n === 0.0333 || +b.dataset.n === -0.0333 ? Math.sign(+b.dataset.n) / (+$('fps').value || 30) : +b.dataset.n)));
 
+  // ── v1.8.1: sync strip. The video's sound as a wave (loudness 200 times a second) over the log's throttle and stick
+  // moves, on one timeline, so you can line up the motor sound with the throttle. Drag the log part to shift the sync.
+  const AUD = { env: null, rate: 200, state: 'nofile' }; let SYNC_ZOOM = 'arm', SYNC_DRAG = null;
+  async function loadAudio(file) {
+    AUD.env = null; AUD.state = 'loading'; drawSync();
+    if (file.size > 1.9e9) { AUD.state = 'big'; drawSync(); return; }
+    try {
+      const buf = await file.arrayBuffer(), OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      const ab = await new OAC(1, 1, 22050).decodeAudioData(buf), n = Math.ceil(ab.duration * AUD.rate), env = new Float32Array(n), step = ab.sampleRate / AUD.rate;
+      for (let ch = 0; ch < ab.numberOfChannels; ch++) { const d = ab.getChannelData(ch); for (let b = 0; b < n; b++) { let s2 = 0; const i0 = Math.floor(b * step), i1 = Math.min(d.length, Math.floor((b + 1) * step)); for (let i = i0; i < i1; i++) s2 += d[i] * d[i]; env[b] += Math.sqrt(s2 / Math.max(1, i1 - i0)); } }
+      const sorted = Array.from(env).filter(v => v > 0).sort((a, b) => a - b), ref = sorted.length ? sorted[Math.floor(sorted.length * 0.995)] : 1;
+      for (let b = 0; b < n; b++) env[b] = Math.min(1, env[b] / (ref || 1));
+      AUD.env = env; AUD.state = 'ok';
+    } catch (e) { AUD.state = 'none'; }
+    drawSync();
+  }
+  const syncWin = () => { const L = totalLen() || 1; if (SYNC_ZOOM === 'all') return [0, L]; const a = P.armAt - 8; return [a, a + 20]; };
+  function drawSync() {
+    const wrap = $('syncWrap'); if (!wrap) return; wrap.style.display = S.cur ? '' : 'none'; if (!S.cur) return;
+    const cv = $('syncCv'), dpr = window.devicePixelRatio || 1, Wc = Math.max(200, cv.clientWidth), Hc = 130;
+    if (cv.width !== Math.round(Wc * dpr)) { cv.width = Math.round(Wc * dpr); cv.height = Math.round(Hc * dpr); }
+    const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, Wc, Hc);
+    const [t0, t1] = syncWin(), X = (t) => (t - t0) / (t1 - t0) * Wc, T = (x) => t0 + x / Wc * (t1 - t0), yA = 62;
+    // seconds grid
+    const span = t1 - t0, stepS = span > 120 ? 30 : span > 40 ? 10 : span > 12 ? 2 : 1; c.font = '10px system-ui,sans-serif'; c.fillStyle = '#5b6b80'; c.strokeStyle = 'rgba(91,107,128,0.25)'; c.lineWidth = 1;
+    for (let t = Math.ceil(t0 / stepS) * stepS; t <= t1; t += stepS) { const x = Math.round(X(t)) + 0.5; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, Hc); c.stroke(); if (t >= 0) c.fillText(fmtV(t).replace(/\.\d+$/, ''), x + 3, 11); }
+    // sound
+    const note = $('audNote'); note.textContent = { nofile: 'Add your video to see its sound', loading: 'Reading the sound…', big: 'Video too big to read its sound (over 1.9 GB); the sticks still show', none: 'No sound track found in this video', ok: '' }[AUD.state] || '';
+    if (AUD.env) { c.fillStyle = '#8fb3c9'; const e = AUD.env, mid = 34, amp = 26;
+      for (let x = 0; x < Wc; x++) { const b0 = Math.floor(T(x) * AUD.rate), b1 = Math.max(b0 + 1, Math.floor(T(x + 1) * AUD.rate)); let v = 0; for (let b = Math.max(0, b0); b < Math.min(e.length, b1); b++) v = Math.max(v, e[b]); if (v > 0) c.fillRect(x, mid - v * amp, 1, Math.max(1, v * amp * 2)); } }
+    c.fillStyle = 'rgba(37,48,65,0.9)'; c.fillRect(0, yA, Wc, 1);
+    // log: throttle and stick moves, placed by the current sync
+    const f = S.cur, la = f.t[f.armA], yB = Hc - 6, hB = Hc - yA - 14;
+    const idx = (lt) => { let lo = 0, hi = f.n - 1; if (lt <= f.t[0]) return 0; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (f.t[m] <= lt) lo = m; else hi = m - 1; } return lo; };
+    const lane = (val, col, w) => { c.strokeStyle = col; c.lineWidth = w; c.beginPath(); let pen = false;
+      for (let x = 0; x < Wc; x += 1) { const lt = la + (T(x) - P.armAt); if (lt < f.t[0] || lt > f.dur) { pen = false; continue; } const v = val(idx(lt)); if (isNaN(v)) { pen = false; continue; } const y = yB - Math.max(0, Math.min(1, v)) * hB; if (pen) c.lineTo(x, y); else c.moveTo(x, y); pen = true; } c.stroke(); };
+    lane((i) => Math.max(Math.abs(f.ail[i] || 0), Math.abs(f.ele[i] || 0), Math.abs(f.rud[i] || 0)), 'rgba(80,170,255,0.75)', 1.2);
+    lane((i) => isNaN(f.thr[i]) ? NaN : (f.thr[i] + 1) / 2, '#3ddc84', 1.8);
+    // arming and playhead
+    const xa = X(P.armAt); c.strokeStyle = '#f59e0b'; c.lineWidth = 2; c.beginPath(); c.moveTo(xa, 14); c.lineTo(xa, Hc); c.stroke(); c.fillStyle = '#f59e0b'; c.font = '700 10px system-ui,sans-serif'; c.fillText('ARM', Math.min(Wc - 24, xa + 3), yA + 12);
+    const xp = X(P.t); c.strokeStyle = '#e6edf5'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(xp, 0); c.lineTo(xp, Hc); c.stroke();
+    if (SYNC_DRAG && SYNC_DRAG.moved) { c.fillStyle = '#e6edf5'; c.font = '700 11px system-ui,sans-serif'; c.fillText('Arming at ' + P.armAt.toFixed(2) + ' s', 6, Hc - 8); }
+  }
+  {
+    const cv = $('syncCv');
+    cv.addEventListener('pointerdown', (e) => { const r = cv.getBoundingClientRect(), y = e.clientY - r.top; SYNC_DRAG = { x: e.clientX, arm: P.armAt, log: y > 62, moved: false, w: r.width, win: syncWin() }; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointermove', (e) => { const d = SYNC_DRAG; if (!d) return; const dx = e.clientX - d.x; if (Math.abs(dx) > 3) d.moved = true;
+      if (d.log && d.moved) { const dt = dx / d.w * (d.win[1] - d.win[0]); P.armAt = Math.round((d.arm + dt) * 1000) / 1000; $('armAt').value = P.armAt.toFixed(2); render(); } });
+    cv.addEventListener('pointerup', (e) => { const d = SYNC_DRAG; SYNC_DRAG = null; if (!d) return; const r = cv.getBoundingClientRect();
+      if (d.log && d.moved) { setArm(P.armAt); return; }
+      if (!d.moved) seek(d.win[0] + (e.clientX - r.left) / r.width * (d.win[1] - d.win[0])); else drawSync(); });
+    { const z = $('syncZoom'), mark = () => z.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === SYNC_ZOOM)); z.querySelectorAll('button').forEach(x => x.onclick = () => { SYNC_ZOOM = x.dataset.v; mark(); drawSync(); }); mark(); }
+    window.addEventListener('resize', () => drawSync());
+  }
   // ───────────────────────── Style controls ─────────────────────────
   $('swatches').innerHTML = Object.entries(THEMES).map(([k, c]) => '<div class="swatch' + (O.theme === k ? ' on' : '') + '" data-k="' + k + '" title="' + k + '" style="background:' + c + '"></div>').join('');
   document.querySelectorAll('.swatch').forEach(el => el.onclick = () => { O.theme = el.dataset.k; document.querySelectorAll('.swatch').forEach(x => x.classList.toggle('on', x === el)); saveOpts(); render(); });
