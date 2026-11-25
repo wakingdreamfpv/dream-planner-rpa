@@ -7,8 +7,8 @@
 <script>
 /* ════════ SETTINGS — edit these before publishing ════════
    endsOn          Leave '' — HUD Studio is free forever (a date here would add a countdown and an end screen).
-   feedbackEmail   Where the Feedback button sends mail. Leave '' and the button tells testers
-                   to reply to their invite email instead. */
+   feedbackEmail   Leave ''. The Feedback button opens a form that goes to the planner's Enquiries list
+                   (feedbackApi). An address here makes the button open an email instead. */
 </script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <script>
@@ -25,6 +25,8 @@ window.WD_BETA = {
   },
   endsOn: '',
   feedbackEmail: '',
+  // v1.8: the Feedback form sends to the same Enquiries list (and email alert) as the planner. The publishable key is public by design.
+  feedbackApi: { url: 'https://jirvugtgclgdbysrfjsc.supabase.co', key: 'sb_publishable_1s8PEHe6R0g4OVrC6_MlJQ_-pXp3jFX', app: 'HUD Studio' },
   sampleSlots: ['#stageMsg'],
   // The "Open in …" button: product name and where it lives (same site, so the open log carries across)
   flightLogName: 'Dream Flight Log',
@@ -3424,6 +3426,27 @@ If you want to offset all timestamps of a track such that the first one is zero,
   .betaTag{display:inline-flex;align-items:center;gap:5px;font:700 11px/1 system-ui,sans-serif;letter-spacing:.04em;padding:5px 8px;border-radius:999px;background:#0f2a33;border:1px solid #22b8cf;color:#22b8cf;white-space:nowrap}
   .betaTag.warn{background:#2a2410;border-color:#f59e0b;color:#f59e0b}
   #betaFb{white-space:nowrap}
+  #fbDlg{position:fixed;inset:0;z-index:4800;background:rgba(5,8,12,.7);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;font:14px/1.45 system-ui,sans-serif;color:#e6edf5}
+  #fbDlg .box{width:100%;max-width:480px;margin:24px 0;background:#121821;border:1px solid #253041;border-radius:14px;overflow:hidden;box-shadow:0 16px 40px rgba(0,0,0,.5)}
+  #fbDlg .hd{position:relative;padding:14px 18px;background:linear-gradient(135deg,#0f2a33,#123844);border-bottom:1px solid #22b8cf}
+  #fbDlg .hd small{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#22b8cf}
+  #fbDlg .hd h3{margin:4px 0 0;font-size:18px}
+  #fbDlg .x{position:absolute;top:8px;right:8px;width:40px;height:40px;border:0;border-radius:50%;background:none;color:#8a99ad;font-size:22px;cursor:pointer}
+  #fbDlg .bd{padding:16px 18px;display:grid;gap:10px}
+  #fbDlg .kinds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  #fbDlg .kinds button{border:2px solid #253041;background:#0b0f14;color:#8a99ad;border-radius:10px;padding:9px 6px;font:600 12px/1.25 system-ui,sans-serif;cursor:pointer}
+  #fbDlg .kinds button.on{border-color:#22b8cf;color:#e6edf5;background:#0f2a33}
+  #fbDlg label span{display:block;font-size:12px;font-weight:600;color:#8a99ad;margin-bottom:4px}
+  #fbDlg input,#fbDlg textarea{width:100%;box-sizing:border-box;background:#0b0f14;border:1px solid #253041;border-radius:8px;color:#e6edf5;padding:9px 10px;font:15px system-ui,sans-serif}
+  #fbDlg textarea{min-height:120px;resize:vertical}
+  #fbDlg .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media (max-width:480px){#fbDlg .two{grid-template-columns:1fr}}
+  #fbDlg .go{border:0;border-radius:10px;padding:12px;background:#22b8cf;color:#04161a;font:700 15px system-ui,sans-serif;cursor:pointer}
+  #fbDlg .go:disabled{opacity:.5}
+  #fbDlg .alt{border:2px solid #22b8cf;background:none;color:#22b8cf}
+  #fbDlg .err{color:#f87171;margin:0}
+  #fbDlg .fine{color:#5b6b80;font-size:12px;margin:0}
+  #fbDlg a{color:#22b8cf}
   #betaTip{position:fixed;z-index:4000;background:#121821;border:1px solid #22b8cf;color:#e6edf5;border-radius:10px;padding:10px 12px;max-width:320px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45);display:none}
   #betaOver{position:fixed;inset:0;z-index:5000;background:#0b0f14;color:#e6edf5;display:flex;align-items:center;justify-content:center;padding:20px;font:14px/1.5 system-ui,sans-serif}
   #betaOver .box{max-width:460px;text-align:center;border:1px solid #253041;border-radius:14px;padding:26px 24px;background:#121821}
@@ -3462,16 +3485,66 @@ If you want to offset all timestamps of a track such that the first one is zero,
 
   // ── Beta tag + feedback button in the header, right after the product name
   const hdr = document.querySelector('header'), brand = hdr && hdr.querySelector('.brand');
-  const tag = el('<span class="betaTag' + (daysLeft <= 14 ? ' warn' : '') + '" title="Free beta until ' + endTxt + '">BETA · ' + (daysLeft <= 1 ? 'last day' : daysLeft <= 14 ? daysLeft + ' days left' : 'free until ' + endTxt) + '</span>');
+  const tag = el('<span class="betaTag' + (daysLeft <= 14 ? ' warn' : '') + '" id="betaTag" title="' + (hasEnd ? 'Free beta until ' + endTxt : 'HUD Studio is in beta: free, and still being improved. Tell us what you think.') + '">BETA' + (!hasEnd ? '' : ' · ' + (daysLeft <= 1 ? 'last day' : daysLeft <= 14 ? daysLeft + ' days left' : 'free until ' + endTxt)) + '</span>');
   const fb = el('<button class="btn" id="betaFb" title="Tell us what works, what breaks, what is missing">Feedback</button>');
-  if (brand) { if (hasEnd) { brand.after(tag); tag.after(fb); } else brand.after(fb); }
+  if (brand) { brand.after(tag); tag.after(fb); }
   const tip = el('<div id="betaTip"></div>'); document.body.appendChild(tip);
+  // v1.8: feedback form, like the planner's: bug / idea / general, to the CRP's Enquiries list, and Mike gets an email
+  const FBK = [['bug', 'Something\'s not working', 'What happened, and what did you expect? Which style or step were you on?'],
+    ['idea', 'Feature request', 'What would you like it to do? How would it help your videos?'],
+    ['general', 'General feedback', 'Anything you like, don\'t like, or found confusing.']];
+  const fbWho = () => { try { return JSON.parse(localStorage.getItem('wd_fb_who') || 'null') || {}; } catch (e) { return {}; } };
+  function fbOpen() {
+    const A = B.feedbackApi; let kind = 'bug';
+    const dev = (() => { const ua = navigator.userAgent || ''; return (/iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Other') + ' · ' + (/Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser'); })();
+    const d = el('<div id="fbDlg" role="dialog" aria-modal="true" aria-label="Feedback"><div class="box"><div class="hd"><small>' + esc(B.app) + ' · Beta</small><h3>Feedback, bugs and ideas</h3><button class="x" aria-label="Close" data-fb-close>×</button></div><div class="bd"></div></div></div>');
+    const bd = d.querySelector('.bd'), close = () => d.remove();
+    d.addEventListener('click', (e) => { if (e.target === d || e.target.hasAttribute('data-fb-close')) close(); });
+    document.addEventListener('keydown', function k(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', k); } });
+    const form = () => {
+      const who = fbWho();
+      bd.innerHTML = '<div class="kinds">' + FBK.map(([k, l]) => '<button type="button" data-fb-kind="' + k + '" class="' + (k === kind ? 'on' : '') + '">' + esc(l) + '</button>').join('') + '</div>' +
+        '<label><span id="fbQ"></span><textarea maxlength="1800" data-fb="message"></textarea></label>' +
+        '<div class="two"><label><span>Your name</span><input data-fb="name" autocomplete="name" value="' + esc(who.name || '') + '"></label><label><span>Email</span><input data-fb="email" type="email" inputmode="email" autocomplete="email" value="' + esc(who.email || '') + '"></label></div>' +
+        '<p class="fine">The HUD Studio version and your device type are added to help find bugs. Your logs and videos are not sent. Mike may reply by email.</p>' +
+        '<p class="err" data-fb-err hidden></p><button type="button" class="go" data-fb-send>Send</button>';
+      const q = () => { bd.querySelector('#fbQ').textContent = FBK.find(x => x[0] === kind)[2]; bd.querySelectorAll('[data-fb-kind]').forEach(b => b.classList.toggle('on', b.dataset.fbKind === kind)); };
+      bd.querySelectorAll('[data-fb-kind]').forEach(b => b.onclick = () => { kind = b.dataset.fbKind; q(); }); q();
+      const v = (k) => bd.querySelector('[data-fb="' + k + '"]').value.trim(), errEl = bd.querySelector('[data-fb-err]'), err = (h) => { errEl.innerHTML = h; errEl.hidden = !h; };
+      bd.querySelectorAll('[data-fb]').forEach(i => i.oninput = () => err(''));
+      bd.querySelector('[data-fb-send]').onclick = async (ev) => {
+        const msg = v('message'), name = v('name'), email = v('email');
+        if (!msg) return err('Please write a few words first.');
+        if (!name) return err('Please add your name.');
+        if (!/^\S+@\S+\.\S+$/.test(email)) return err('Please check your email address.');
+        try { localStorage.setItem('wd_fb_who', JSON.stringify({ name, email })); } catch (e) {}
+        const label = FBK.find(x => x[0] === kind)[1], text = ('[' + A.app + ' · ' + label + ']\n' + msg).slice(0, 1900) + '\n\n' + (B.version || A.app) + ' · ' + dev;
+        const btn = ev.currentTarget; btn.disabled = true; btn.textContent = 'Sending…';
+        const H = { 'Content-Type': 'application/json', apikey: A.key, Authorization: 'Bearer ' + A.key };
+        const offline = () => err('It didn\'t send (no signal?). Please try again, or <a href="mailto:mike@wakingdreamfpv.com?subject=' + encodeURIComponent(A.app + ' feedback') + '&body=' + encodeURIComponent(text) + '">email it to Mike</a>.');
+        try {
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 10000);
+          const r = await fetch(A.url + '/rest/v1/rpc/submit_enquiry', { method: 'POST', headers: H, signal: ctl.signal,
+            body: JSON.stringify({ p_name: name, p_email: email, p_company: '', p_phone: '', p_interest: '', p_message: text, p_source: 'feedback-' + kind, p_consent: true }) });
+          clearTimeout(to); const j = await r.json().catch(() => null);
+          if (!r.ok) { btn.disabled = false; btn.textContent = 'Send'; return /too many/i.test(JSON.stringify(j)) ? err('That\'s a lot of reports today, thank you! Please email the rest to <a href="mailto:mike@wakingdreamfpv.com">mike@wakingdreamfpv.com</a>.') : /email not valid/i.test(JSON.stringify(j)) ? err('Please check your email address.') : offline(); }
+          if (typeof j === 'string') fetch(A.url + '/functions/v1/enquiry-alert', { method: 'POST', headers: H, body: JSON.stringify({ id: j }) }).catch(() => {});
+          done();
+        } catch (e) { btn.disabled = false; btn.textContent = 'Send'; offline(); }
+      };
+      setTimeout(() => bd.querySelector('textarea').focus(), 30);
+    };
+    const done = () => { bd.innerHTML = '<p data-fb-done style="margin:0;font-size:15px"><b>Thank you!</b> It\'s on its way to Mike, who builds HUD Studio. If he needs more detail he\'ll reply by email.</p><button type="button" class="go alt" data-fb-again>Send another</button><button type="button" class="go" data-fb-close>Back to HUD Studio</button>';
+      bd.querySelector('[data-fb-again]').onclick = form; };
+    form(); document.body.appendChild(d);
+  }
   fb.onclick = (e) => {
     e.stopPropagation();
     if (B.feedbackEmail) {
       const body = '\n\n— What were you doing?\n— What happened?\n— What did you expect?\n\n(If a log looks wrong, attach the .csv)\n\n' + (B.version || '') + ' · ' + navigator.userAgent;
       location.href = mail(B.app + ' beta feedback', body); return;
     }
+    if (B.feedbackApi) { fbOpen(); return; }
     const r = fb.getBoundingClientRect();
     tip.innerHTML = '<b>Thanks for testing!</b><br>Reply to your invite email with what works, what breaks and what\'s missing. Attach the .csv if a log looks wrong.';
     tip.style.left = Math.max(8, Math.min(r.left, innerWidth - 336)) + 'px'; tip.style.top = (r.bottom + 6) + 'px'; tip.style.display = 'block';
