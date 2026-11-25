@@ -86,7 +86,7 @@ with sync_playwright() as p:
     # open from a path waypoint
     pg.locator('[data-ops-inspector] button:has-text("Path A")').first.click(); pg.wait_for_timeout(500)
     pg.click('[data-ops-dc-from="path"]'); pg.wait_for_timeout(3500)
-    R.check('Drone camera at a path point: its height (20 m) and facing the next point (north)', val(pg, '[data-ops-dc-agl]') == '20' and val(pg, 'input[aria-label="heading"]') == '0' and 'path a point 1' in pg.inner_text('[data-ops-dronepanel]').lower(),
+    R.check('Drone camera at a path point: its height (20 m) and facing the next point (north)', val(pg, '[data-ops-dc-agl]') == '20' and val(pg, 'input[aria-label="heading"]') == '0' and 'path a waypoint 1' in pg.inner_text('[data-ops-dronepanel]').lower(),
             (val(pg, '[data-ops-dc-agl]'), val(pg, 'input[aria-label="heading"]')))
     # your own lens, saved on the fleet card
     pg.click('[data-ops-ownlens] summary'); pg.click('[data-ops-addlens]')

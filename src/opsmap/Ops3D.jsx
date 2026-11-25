@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour, pathHeightTag } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour, pathHeightTag, waypointIdx } from './geo.js';
 import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
 import { viewHfov } from './lenses.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
@@ -15,7 +15,7 @@ const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
 // v7.56: `drone` switches the view to a drone camera (previs): { lat, lng, agl, heading, tilt, hfov, aspect, lensName }.
 // Moving around with the mouse, keys or the buttons moves the drone; each change is sent back through onDrone.
-export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '', labels = true, drone = null, onDrone, maxAgl = 120 }) {
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '', labels = true, overlay = true, drone = null, onDrone, maxAgl = 120 }) {
   const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
   const ownApi = useRef(null), api = apiRef || ownApi;
   const dRef = useRef(null); dRef.current = { drone, onDrone, maxAgl };
@@ -23,8 +23,8 @@ export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings 
   const [err, setErr] = useState('');
   const [tips, setTips] = useState(true);
   // v7.58: labels switch on and off live (no rebuild, so the Google city doesn't reload)
-  const labRef = useRef({ on: labels, req: null }); labRef.current.on = labels;
-  useEffect(() => { if (labRef.current.req) labRef.current.req(); }, [labels]);
+  const labRef = useRef({ on: labels, ar: overlay, req: null }); labRef.current.on = labels; labRef.current.ar = overlay; // v7.59: ar = zones and paths shown
+  useEffect(() => { if (labRef.current.req) labRef.current.req(); }, [labels, overlay]);
   useEffect(() => {
     let alive = true, cleanup = () => {};
     loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, api, buildings, googleKey, labRef.current, dRef); }).catch((e) => setErr(e.message || String(e)));
@@ -91,6 +91,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
   scene.add(new THREE.AmbientLight(0xffffff, 0.75 * Math.PI)); const sun = new THREE.DirectionalLight(0xffffff, 0.6 * Math.PI); sun.position.set(60, 120, 40); scene.add(sun);
   const disposables = [];
   const keep = (o) => { disposables.push(o); return o; };
+  const arList = []; const sceneAr = (o) => { o.userData.ar = 1; arList.push(o); scene.add(o); return o; };
   // v7.51: labels are smaller, can be switched off (Show › Labels), and one that would cover a more important one is
   // hidden while they overlap on screen (exclusions first, then other zones, paths, points)
   const tags = [];
@@ -216,6 +217,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
     clearGroup();
     const G = (x, zz, dflt) => { const g = gAt ? gAt(x, zz) : null; return g == null ? dflt : g; };
     const add = (o) => { onGround.add(o); return o; };
+    const addAr = (o) => { o.userData.ar = 1; arList.push(o); return add(o); }; // v7.59: zones hide with "Hide path & zones"
     const sorted = [...doc.zones].sort((a, b) => (a.kind === 'exclusion') - (b.kind === 'exclusion'));
     sorted.forEach((z) => {
       if (z.shape !== 'circle' && (z.pts || []).length < 3) return;
@@ -226,9 +228,9 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
       let topY = base + lo + h;
       if (!gAt) { // flat: one solid block
         const geo = new THREE.ExtrudeGeometry(shapeOf(z), { depth: h, bevelEnabled: false, curveSegments: 48 }); geo.rotateX(-Math.PI / 2);
-        add(new THREE.Mesh(geo, mat)).position.y = base + lo;
-        add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), line)).position.y = base + lo;
-        if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = add(new THREE.Mesh(new THREE.RingGeometry(z.r, z.r + b, 64), new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, base + 0.03, c.z); } }
+        addAr(new THREE.Mesh(geo, mat)).position.y = base + lo;
+        addAr(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), line)).position.y = base + lo;
+        if (z.kind === 'exclusion') { const b = zoneBuffer(z); if (b > 0 && z.shape === 'circle') { const c = P(z.c); const ring = addAr(new THREE.Mesh(new THREE.RingGeometry(z.r, z.r + b, 64), new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }))); ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, base + 0.03, c.z); } }
       } else { // on the terrain: walls that follow the ground, a top that follows it too (height limit above own ground)
         const { pts: R, corners } = ringOf(z), n = R.length, gy = R.map((p) => G(p.x, p.z, base) + 0.05 + lo);
         const pos = [], idx = [];
@@ -237,16 +239,16 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
         const tri = THREE.ShapeUtils.triangulateShape(R.map((p) => new THREE.Vector2(p.x, p.z)), []);
         tri.forEach(([u, v, w]) => idx.push(2 * u + 1, 2 * v + 1, 2 * w + 1));
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
-        add(new THREE.Mesh(geo, mat));
+        addAr(new THREE.Mesh(geo, mat));
         const lp = []; const seg = (a, b) => lp.push(a.x, a.y, a.z, b.x, b.y, b.z);
         for (let i = 0; i < n; i++) { const j = (i + 1) % n; seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[j].x, y: gy[j], z: R[j].z }); seg({ x: R[i].x, y: gy[i] + h, z: R[i].z }, { x: R[j].x, y: gy[j] + h, z: R[j].z }); }
         (corners.length ? corners : [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4)]).forEach((i) => seg({ x: R[i].x, y: gy[i], z: R[i].z }, { x: R[i].x, y: gy[i] + h, z: R[i].z }));
-        const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); add(new THREE.LineSegments(lg, line));
+        const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); addAr(new THREE.LineSegments(lg, line));
         topY = G(cen.x, cen.z, base) + lo + h;
       }
       // label at the zone's top
       const B = exBand(z), t = z.name + (z.kind === 'exclusion' ? (B.lo > 0 || B.hi != null ? '\n' + (B.lo > 0 ? fmtHt(B.lo, z.exUnit) : 'ground') + ' to ' + (B.hi != null ? fmtHt(B.hi, z.exUnit) : 'no limit') : '') : z.h != null && z.h !== '' ? '\n≤ ' + z.h + ' m' + (z.v != null && z.v !== '' ? ' · ' + fmtSpeed(z.v) : '') : '');
-      const sp = tag(label(THREE, t, { border: k.stroke }), z.kind === 'exclusion' ? 4 : 3); { const hh = (0.03 * t.split('\n').length + 0.012) * LBL; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); add(sp);
+      const sp = tag(label(THREE, t, { border: k.stroke }), z.kind === 'exclusion' ? 4 : 3); { const hh = (0.03 * t.split('\n').length + 0.012) * LBL; sp.scale.set(hh * sp.userData.aspect, hh, 1); } sp.position.set(cen.x, topY + lblScale * 0.3, cen.z); addAr(sp);
     });
     // markers
     doc.points.forEach((p) => {
@@ -282,17 +284,23 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
       const c = legCol(i), curve = new THREE.LineCurve3(V[i], V[i + 1]);
       const core = new THREE.Mesh(keep(new THREE.TubeGeometry(curve, 1, rad * 0.7, 8, false)), keep(new THREE.MeshLambertMaterial({ color: c })));
       const air = new THREE.Mesh(keep(new THREE.TubeGeometry(curve, 1, R, 20, false)), keep(new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: 0.35, depthWrite: false })));
-      core.userData.pathCore = path.id; air.userData.pathTube = path.id; air.userData.radius = R; air.renderOrder = 2; scene.add(core); scene.add(air);
-      if (i > 0) { const j = new THREE.Mesh(keep(new THREE.SphereGeometry(R, 20, 12)), keep(new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: 0.35, depthWrite: false }))); j.position.copy(V[i]); j.renderOrder = 2; scene.add(j); }
+      core.userData.pathCore = path.id; air.userData.pathTube = path.id; air.userData.radius = R; air.renderOrder = 2; sceneAr(core); sceneAr(air);
+      if (i > 0) { const j = new THREE.Mesh(keep(new THREE.SphereGeometry(R, 20, 12)), keep(new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: 0.35, depthWrite: false }))); j.position.copy(V[i]); j.renderOrder = 2; sceneAr(j); }
     }
     if (V.length) {
       [0, V.length - 1].filter((i, k, a) => a.indexOf(i) === k).forEach((i) => {
         const v = V[i], gy = path.pts[i][3] != null ? Number(path.pts[i][3]) : 0;
-        const s = new THREE.Mesh(keep(new THREE.SphereGeometry(Math.max(rad * 2.6, R * 0.6), 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); scene.add(s);
-        const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, gy, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); scene.add(drop);
+        const s = new THREE.Mesh(keep(new THREE.SphereGeometry(Math.max(rad * 2.6, R * 0.6), 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); sceneAr(s);
+        const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, gy, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); sceneAr(drop);
       });
-      const t = (path.name || 'Path') + pathHeightTag(path);
-      const sp = tag(label(THREE, t, { size: 24, border: '#' + col.getHexString() }), 2); sp.scale.set(0.032 * LBL * sp.userData.aspect, 0.032 * LBL, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
+      // v7.59: each waypoint numbered (1, 2, 3…) with its height
+      const wps = waypointIdx(path, doc.mode);
+      if (wps.length > 1 && wps.length <= 60) wps.forEach((j, k) => { if (!V[j]) return;
+        const b = sceneAr(new THREE.Mesh(keep(new THREE.SphereGeometry(Math.max(rad * 1.8, R * 0.45), 14, 10)), keep(new THREE.MeshLambertMaterial({ color: 0xffffff })))); b.position.copy(V[j]);
+        if (k === 0) return; const sp = tag(label(THREE, String(k + 1), { size: 24, border: '#' + col.getHexString() }), 1.5); sp.userData.ar = 1; sp.userData.wp = k + 1;
+        sp.scale.set(0.024 * LBL * sp.userData.aspect, 0.024 * LBL, 1); sp.position.set(V[j].x, V[j].y + lblScale * 0.14, V[j].z); sceneAr(sp); disposables.push(sp.material.map, sp.material); });
+      const t = (wps.length > 1 && wps.length <= 60 ? '1 · ' : '') + (path.name || 'Path') + pathHeightTag(path);
+      const sp = tag(label(THREE, t, { size: 24, border: '#' + col.getHexString() }), 2); sp.scale.set(0.032 * LBL * sp.userData.aspect, 0.032 * LBL, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); sceneAr(sp); disposables.push(sp.material.map, sp.material);
     }
   });
 
@@ -306,8 +314,11 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
   place();
   const sv = new THREE.Vector3();
   const declutter = () => { // hide a label that overlaps a more important one already shown
+    for (let i = arList.length - 1; i >= 0; i--) { const o = arList[i]; if (!o.parent) { arList.splice(i, 1); continue; } if (!o.isSprite) o.visible = lab.ar !== false; }
+    if (window.__WD_3D) window.__WD_3D.arShown = arList.some((o) => !o.isSprite && o.visible);
     if (!lab.on) { tags.forEach((t) => { t.visible = false; }); if (window.__WD_3D) window.__WD_3D.labelsShown = 0; return; } const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)); const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
     [...tags].filter((sp) => sp.parent).sort((a, b) => b.userData.pri - a.userData.pri).forEach((sp) => {
+      if (sp.userData.ar && lab.ar === false) { sp.visible = false; return; }
       sp.getWorldPosition(sv); sv.project(cam); if (sv.z > 1) { sp.visible = false; return; }
       const h = sp.scale.y * k2 * Hp, w = sp.scale.x * k2 * Hp, x = (sv.x + 1) / 2 * Wp - w / 2, y = (1 - sv.y) / 2 * Hp - h / 2;
       const hit = boxes.some((b) => x < b.x + b.w + 4 && b.x < x + w + 4 && y < b.y + b.h + 4 && b.y < y + h + 4);
