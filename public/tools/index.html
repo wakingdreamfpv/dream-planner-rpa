@@ -7,7 +7,7 @@
 <meta name="description" content="HUD Studio, Dream Flight Log and the Dream Flight RPA Planner: free FPV and RPAS tools from Waking Dream FPV. Turn your radio's telemetry log into a HUD overlay, a flight logbook and compliant RPAS records.">
 <meta property="og:title" content="Dream Flight Tools · Waking Dream FPV">
 <meta property="og:description" content="Turn your radio's telemetry log into a HUD overlay, a flight logbook and compliant RPAS records.">
-<meta property="og:image" content="https://planner.wakingdreamfpv.com/tools/img/hud-fighter.jpg">
+<meta property="og:image" content="https://planner.wakingdreamfpv.com/tools/img/planner-3d.jpg">
 <link rel="icon" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=B612+Mono:wght@700&display=swap" rel="stylesheet">
@@ -24,7 +24,7 @@
   nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
   nav a{text-decoration:none;color:var(--dim);font-weight:600;font-size:14px;padding:6px 10px;border-radius:7px}
   nav a:hover{color:var(--text);background:var(--panel2)}
-  .hero{padding-top:56px;padding-bottom:34px}
+  .hero{padding-top:34px;padding-bottom:34px}
   .eyebrow{font:700 12px/1 'B612 Mono',monospace;letter-spacing:.14em;color:var(--cy);text-transform:uppercase}
   h1{font-size:clamp(34px,5.2vw,58px);line-height:1.04;margin:14px 0 14px;letter-spacing:-.01em;font-weight:800;max-width:15ch}
   .lede{color:var(--dim);font-size:19px;max-width:60ch;margin:0 0 24px}
@@ -32,10 +32,26 @@
   .btn{display:inline-flex;align-items:center;gap:8px;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:9px;border:1px solid var(--line);background:var(--panel2)}
   .btn:hover{border-color:#34445a}
   .btn.primary{background:linear-gradient(90deg,#22b8cf,#3b9cff);border:0;color:#04161a}
-  .shot{margin-top:34px;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.55);position:relative;aspect-ratio:1400/788;background:#0b1118}
-  .shot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .8s}
-  .shot img.on{opacity:1}
-  .shot .tag{position:absolute;left:14px;bottom:14px;font:700 11px/1 'B612 Mono',monospace;letter-spacing:.08em;background:rgba(4,8,12,.75);border:1px solid rgba(255,255,255,.12);padding:7px 9px;border-radius:6px;color:#cfe9ef}
+  /* carousel of tool screens at the top of the page */
+  .car{margin-top:22px;position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.55);background:#0b1118;aspect-ratio:16/8}
+  .car .track{display:flex;height:100%;transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+  .car .slide{position:relative;flex:0 0 100%;height:100%;overflow:hidden;text-decoration:none;color:inherit}
+  .car .slide .bg{position:absolute;inset:-30px;background-size:cover;background-position:center;filter:blur(26px) brightness(.45);transform:scale(1.1)}
+  .car .slide img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .car .slide img.fit{object-fit:contain}
+  .car .label{position:absolute;left:18px;bottom:18px;right:18px;display:flex;align-items:flex-end;gap:14px;pointer-events:none}
+  .car .label .txt{background:rgba(4,8,12,.78);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.12);border-left:4px solid var(--c);border-radius:10px;padding:10px 14px;max-width:min(560px,100%)}
+  .car .label .k{font:700 11px/1 'B612 Mono',monospace;letter-spacing:.12em;color:var(--c);text-transform:uppercase}
+  .car .label b{display:block;font-size:clamp(17px,2.2vw,24px);line-height:1.2;margin-top:6px}
+  .car .label span{display:block;color:var(--dim);font-size:14.5px;margin-top:2px}
+  .car .label .open{margin-left:auto;flex:none;font-weight:700;font-size:14px;background:var(--c);color:#04161a;border-radius:8px;padding:9px 14px}
+  .car .nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(4,8,12,.6);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:grid;place-items:center}
+  .car .nav:hover{background:rgba(4,8,12,.85)}
+  .car .prev{left:12px} .car .next{right:12px}
+  .car .dots{position:absolute;top:14px;right:16px;display:flex;gap:6px}
+  .car .dots button{width:9px;height:9px;border-radius:50%;border:0;padding:0;background:rgba(255,255,255,.35);cursor:pointer}
+  .car .dots button.on{background:#fff;width:22px;border-radius:5px}
+  @media (max-width:700px){ .car{aspect-ratio:4/3.4} .car .label{left:10px;right:10px;bottom:10px} .car .label .txt{padding:8px 11px} .car .label .open{display:none} .car .label span{display:none} .car .nav{width:36px;height:36px;font-size:18px} }
   section{padding:46px 0}
   h2{font-size:clamp(26px,3.2vw,36px);line-height:1.1;margin:0 0 8px;font-weight:800}
   .sub{color:var(--dim);margin:0 0 26px;max-width:62ch}
@@ -77,17 +93,26 @@
 </div></header>
 
 <main>
+  <div class="wrap">
+    <div class="car" id="car" aria-roledescription="carousel" aria-label="The tools">
+      <div class="track" id="carTrack">
+        <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: fighter-jet HUD over your own footage"><div class="bg" style="background-image:url(img/hud-catamaran.jpg)"></div><img class="fit" src="img/hud-catamaran.jpg" alt="HUD Studio fighter-jet HUD with heading, speed and altitude tapes over drone footage of a catamaran"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Fighter-jet HUD over your own footage</b><span>Speed, height, heading and battery from your radio log, lined up with the video.</span></div><div class="open">Open HUD Studio ›</div></div></a>
+        <a class="slide" href="/log/" style="--c:#4ade80" aria-label="Dream Flight Log: GPS replay, charts and flagged moments"><img src="img/flight-log.jpg" alt="Dream Flight Log replaying a flight on a satellite map, with the track coloured by speed, flagged moments and charts"><div class="label"><div class="txt"><div class="k">Dream Flight Log</div><b>Replay every flight on the map</b><span>GPS track by speed, height, battery and link charts, and the moments that matter: weakest link, peak current, top speed.</span></div><div class="open">Open Flight Log ›</div></div></a>
+        <a class="slide" href="/" style="--c:#a78bfa" aria-label="RPA Planner: 3D flight plan with buildings and flight zones"><img src="img/planner-3d.jpg" alt="Dream Flight RPA Planner 3D ops map with 3D buildings, an exclusion zone, over-people and near-people zones and two flight paths"><div class="label"><div class="txt"><div class="k">RPA Planner</div><b>Plan the job in 3D</b><span>Exclusion, over-people and clear zones with height limits, flight paths checked against them, and real buildings.</span></div><div class="open">Open the Planner ›</div></div></a>
+        <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: fighter jet cockpit"><img src="img/hud-fighter.jpg" alt="HUD Studio fighter jet cockpit with live screens over a flight"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Fighter jet cockpit</b><span>Photo and 3D cockpits with live screens.</span></div><div class="open">Open HUD Studio ›</div></div></a>
+        <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: race car cockpit"><img src="img/hud-race.jpg" alt="HUD Studio race car cockpit with steering wheel and timing tower"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Race car cockpit</b><span>Steering wheel, timing tower and lap-style readouts.</span></div><div class="open">Open HUD Studio ›</div></div></a>
+        <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: sci-fi HUD"><img src="img/hud-scifi.jpg" alt="HUD Studio sci-fi HUD"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Sci-fi HUD</b><span>Nine styles to choose from, every item movable.</span></div><div class="open">Open HUD Studio ›</div></div></a>
+      </div>
+      <button class="nav prev" type="button" aria-label="Previous">‹</button><button class="nav next" type="button" aria-label="Next">›</button>
+      <div class="dots" id="carDots"></div>
+    </div>
+  </div>
   <div class="wrap hero">
     <div class="eyebrow">For FPV pilots and RPAS operators</div>
     <h1>From radio log to finished video and flight records.</h1>
     <p class="lede">Your radio already records every flight. These three tools turn that log into a HUD overlay for your footage, a proper logbook with battery and pilot hours, and the planning and compliance records your operation needs.</p>
     <div class="cta"><a class="btn primary" href="/hud/">Open HUD Studio</a><a class="btn" href="/log/">Open Flight Log</a><a class="btn" href="/">Open the RPA Planner</a></div>
-    <div class="shot" id="shot">
-      <img class="on" src="img/hud-fighter.jpg" alt="HUD Studio fighter jet cockpit with live screens over a flight">
-      <img src="img/hud-race.jpg" alt="HUD Studio race car cockpit with steering wheel and timing tower">
-      <img src="img/hud-scifi.jpg" alt="HUD Studio sci-fi HUD">
-      <div class="tag" id="shotTag">HUD STUDIO · FIGHTER JET COCKPIT</div>
-    </div>
+
   </div>
 
   <section><div class="wrap">
@@ -159,10 +184,22 @@
 </div></footer>
 
 <script>
-  // Rotate the hero screenshots
-  (function () { const imgs = [...document.querySelectorAll('#shot img')], tag = document.getElementById('shotTag'), names = ['HUD STUDIO · FIGHTER JET COCKPIT', 'HUD STUDIO · RACE CAR COCKPIT', 'HUD STUDIO · SCI-FI HUD']; let k = 0;
-    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    setInterval(() => { imgs[k].classList.remove('on'); k = (k + 1) % imgs.length; imgs[k].classList.add('on'); tag.textContent = names[k]; }, 4500); })();
+  // Carousel: slides every 5 s, arrows, dots and swipe; pauses while the pointer or keyboard focus is on it
+  (function () {
+    const car = document.getElementById('car'), track = document.getElementById('carTrack'), dots = document.getElementById('carDots');
+    const slides = [...track.children], n = slides.length; let k = 0, timer = 0, x0 = null;
+    slides.forEach((s, i) => { const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Show slide ' + (i + 1)); b.onclick = () => go(i, true); dots.appendChild(b); });
+    function go(i, user) { k = (i + n) % n; track.style.transform = 'translateX(' + (-100 * k) + '%)'; [...dots.children].forEach((d, j) => d.classList.toggle('on', j === k));
+      slides.forEach((s, j) => { s.setAttribute('aria-hidden', j === k ? 'false' : 'true'); s.tabIndex = j === k ? 0 : -1; }); car.dataset.slide = k; if (user) restart(); }
+    const still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function restart() { clearInterval(timer); if (!still) timer = setInterval(() => go(k + 1), 5000); }
+    car.querySelector('.prev').onclick = () => go(k - 1, true); car.querySelector('.next').onclick = () => go(k + 1, true);
+    car.addEventListener('mouseenter', () => clearInterval(timer)); car.addEventListener('mouseleave', restart);
+    car.addEventListener('focusin', () => clearInterval(timer)); car.addEventListener('focusout', restart);
+    car.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; clearInterval(timer); }, { passive: true });
+    car.addEventListener('touchend', (e) => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 40) go(k + (dx < 0 ? 1 : -1), true); else restart(); });
+    go(0); restart();
+  })();
 </script>
 </body>
 </html>

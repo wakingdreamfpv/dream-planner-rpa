@@ -3,7 +3,8 @@
 import json, os, re, subprocess, time, urllib.request
 from playwright.sync_api import sync_playwright
 
-URL = 'http://localhost:4173/'
+PORT = os.environ.get('WD_TEST_PORT', '4173')  # set WD_TEST_PORT to test a second checkout side by side
+URL = 'http://localhost:%s/' % PORT
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 JS_INC = "t=>{const b=[...document.querySelectorAll('button')].find(b=>b.innerText.trim().includes(t)&&b.offsetParent);if(b)b.click();return !!b}"
 
@@ -71,7 +72,7 @@ MOCK = r"""
 def ensure_server():
     try: urllib.request.urlopen(URL, timeout=2); return
     except Exception: pass
-    subprocess.Popen('npx vite preview --port 4173 --outDir dist', shell=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen('npx vite preview --strictPort --port %s --outDir dist' % PORT, shell=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(60):
         time.sleep(0.5)
         try: urllib.request.urlopen(URL, timeout=2); return
@@ -87,7 +88,7 @@ class Run:
 
 def ctx_for(b, role, seed=None, start='preliminary', extra=''):
     ctx = b.new_context(viewport={'width': 1400, 'height': 950}, accept_downloads=True)
-    ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost:4173' not in r.request.url) else r.continue_())
+    ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and ('localhost:' + PORT) not in r.request.url) else r.continue_())
     ctx.add_init_script("if(window.top===window){try{localStorage.setItem('wd_welcomed','1');['mike@wakingdreamfpv.com','pilot@test.com','obs@test.com'].forEach(e=>localStorage.setItem('wd_role_welcomed:'+e,'1'));%s}catch(e){};window.__SEED=%s;window.__WD_START_TAB='%s';%s}"
                         % ("localStorage.setItem('mock_role','%s')" % role if role else "localStorage.removeItem('mock_role')", json.dumps(seed or {}), start, extra))
     if role: ctx.add_init_script('if (window.top === window) {' + MOCK + '}')
