@@ -10,6 +10,7 @@ JS_INC = "t=>{const b=[...document.querySelectorAll('button')].find(b=>b.innerTe
 
 MOCK = r"""
 (() => {
+  if (window.__WD_OPS_CHECKS === undefined) window.__WD_OPS_CHECKS = true; // v7.58: ops-map checks are off in the app; the older suites test them on
   window.__WD_START_TAB = window.__WD_START_TAB === undefined ? 'preliminary' : window.__WD_START_TAB;
   try { if (!localStorage.getItem('wd_db_open')) localStorage.setItem('wd_db_open', '{"*":true}'); } catch (e) {}
   const role = localStorage.getItem('mock_role');

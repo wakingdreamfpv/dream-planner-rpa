@@ -48,8 +48,12 @@
   .car .nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(4,8,12,.6);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:grid;place-items:center}
   .car .nav:hover{background:rgba(4,8,12,.85)}
   .car .prev{left:12px} .car .next{right:12px}
-  .car .dots{position:absolute;top:14px;right:16px;display:flex;gap:6px}
+  .car .dots{position:absolute;top:9px;right:12px;display:flex;gap:6px;background:rgba(4,8,12,.6);border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:8px 10px}
   .car .dots button{width:9px;height:9px;border-radius:50%;border:0;padding:0;background:rgba(255,255,255,.35);cursor:pointer}
+  .car .lbltog{position:absolute;top:9px;left:12px;font-family:inherit;font-weight:600;font-size:12px;line-height:1;color:#fff;background:rgba(4,8,12,.6);border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:6px 11px;cursor:pointer}
+  .car .lbltog:hover{background:rgba(4,8,12,.85)}
+  .car.nolabels .label{opacity:0;transform:translateY(8px)}
+  .car .label{transition:opacity .25s,transform .25s}
   .car .dots button.on{background:#fff;width:22px;border-radius:5px}
   @media (max-width:700px){ .car{aspect-ratio:4/3.4} .car .label{left:10px;right:10px;bottom:10px} .car .label .txt{padding:8px 11px} .car .label .open{display:none} .car .label span{display:none} .car .nav{width:36px;height:36px;font-size:18px} }
   section{padding:46px 0}
@@ -99,12 +103,14 @@
         <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: fighter-jet HUD over your own footage"><div class="bg" style="background-image:url(img/hud-catamaran.jpg)"></div><img class="fit" src="img/hud-catamaran.jpg" alt="HUD Studio fighter-jet HUD with heading, speed and altitude tapes over drone footage of a catamaran"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Fighter-jet HUD over your own footage</b><span>Speed, height, heading and battery from your radio log, lined up with the video.</span></div><div class="open">Open HUD Studio ›</div></div></a>
         <a class="slide" href="/log/" style="--c:#4ade80" aria-label="Dream Flight Log: GPS replay, charts and flagged moments"><img src="img/flight-log.jpg" alt="Dream Flight Log replaying a flight on a satellite map, with the track coloured by speed, flagged moments and charts"><div class="label"><div class="txt"><div class="k">Dream Flight Log</div><b>Replay every flight on the map</b><span>GPS track by speed, height, battery and link charts, and the moments that matter: weakest link, peak current, top speed.</span></div><div class="open">Open Flight Log ›</div></div></a>
         <a class="slide" href="/" style="--c:#a78bfa" aria-label="RPA Planner: 3D flight plan with buildings and flight zones"><img src="img/planner-3d.jpg" alt="Dream Flight RPA Planner 3D ops map with 3D buildings, an exclusion zone, over-people and near-people zones and two flight paths"><div class="label"><div class="txt"><div class="k">RPA Planner</div><b>Plan the job in 3D</b><span>Exclusion, over-people and clear zones with height limits, flight paths checked against them, and real buildings.</span></div><div class="open">Open the Planner ›</div></div></a>
+        <a class="slide" href="/" style="--c:#a78bfa" aria-label="RPA Planner: your plan over the real 3D city"><img src="img/planner-google3d.jpg" style="object-position:60% 50%" alt="Dream Flight RPA Planner 3D view over Google's photo-real city: a red flight path weaving between exclusion zones, over-people and near-people zones beside a bridge and high-rises"><div class="label"><div class="txt"><div class="k">RPA Planner</div><b>Your plan over the real city</b><span>Zones and flight paths drawn over Google's photo-real 3D city, so you see exactly what you're flying past.</span></div><div class="open">Open the Planner ›</div></div></a>
         <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: fighter jet cockpit"><img src="img/hud-fighter.jpg" alt="HUD Studio fighter jet cockpit with live screens over a flight"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Fighter jet cockpit</b><span>Photo and 3D cockpits with live screens.</span></div><div class="open">Open HUD Studio ›</div></div></a>
         <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: race car cockpit"><img src="img/hud-race.jpg" alt="HUD Studio race car cockpit with steering wheel and timing tower"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Race car cockpit</b><span>Steering wheel, timing tower and lap-style readouts.</span></div><div class="open">Open HUD Studio ›</div></div></a>
         <a class="slide" href="/hud/" style="--c:#22b8cf" aria-label="HUD Studio: sci-fi HUD"><img src="img/hud-scifi.jpg" alt="HUD Studio sci-fi HUD"><div class="label"><div class="txt"><div class="k">HUD Studio</div><b>Sci-fi HUD</b><span>Nine styles to choose from, every item movable.</span></div><div class="open">Open HUD Studio ›</div></div></a>
       </div>
       <button class="nav prev" type="button" aria-label="Previous">‹</button><button class="nav next" type="button" aria-label="Next">›</button>
       <div class="dots" id="carDots"></div>
+      <button class="lbltog" id="carLabels" type="button" aria-pressed="false">Hide labels</button>
     </div>
   </div>
   <div class="wrap hero">
@@ -198,6 +204,10 @@
     car.addEventListener('focusin', () => clearInterval(timer)); car.addEventListener('focusout', restart);
     car.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; clearInterval(timer); }, { passive: true });
     car.addEventListener('touchend', (e) => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 40) go(k + (dx < 0 ? 1 : -1), true); else restart(); });
+    const lt = document.getElementById('carLabels');
+    function setLabels(off) { car.classList.toggle('nolabels', off); lt.textContent = off ? 'Show labels' : 'Hide labels'; lt.setAttribute('aria-pressed', off ? 'true' : 'false'); try { localStorage.setItem('wdToolsCarNoLabels', off ? '1' : ''); } catch (e) {} }
+    lt.onclick = () => setLabels(!car.classList.contains('nolabels'));
+    try { if (localStorage.getItem('wdToolsCarNoLabels')) setLabels(true); } catch (e) {}
     go(0); restart();
   })();
 </script>

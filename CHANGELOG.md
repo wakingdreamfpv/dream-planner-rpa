@@ -1,5 +1,19 @@
 # Planner changelog
 
+## v7.58 — 25 Nov 2026 — Ops map checks off; flight paths by clicking points, per-point heights, smooth line; Hide labels button
+- **Ops map checks are switched off for now.** No Checks list, nothing to acknowledge, no red or amber on the map, 3D view or profile, and the plan no longer says "to fix". (The red ones needed a note of 5+ characters before OK worked, which blocked planning.) They can come back later; the risk assessment covers safety.
+- **Click points is now the default** for a flight path: click where each point goes, double-click (or Finish) to end. Drawing freehand is still there (Draw), but it now keeps only the handful of points that shape your line instead of hundreds of tiny dots.
+- **Each point has its own height.** The path panel lists your points (1, 2, 3…) with a height box each, e.g. 0 m at take-off, 10 m along the way, then up to 120 m. **Set all** sets points 2 onwards in one go. The map shows each point's height, and you can still drag a point up or down in the side-on profile.
+- **Heights are measured from the ground** (the drone rises and falls with the terrain between points) **or from the take-off** — your choice per path.
+- **Smooth line** bends the path through your points instead of straight lines between them. The fine flown line is worked out underneath, so the checks, 3D view and PDF follow the curve.
+- **Easy editing on the map:** drag a numbered point to move it, drag or click a **+** between two points to add one, right-click a point to delete it. **Fewer points** removes points that hardly change the shape.
+- Drawing with a mouse: the stroke now keeps going even if the pointer slips off the map.
+- Older paths still work; they switch to the new points the first time you edit them.
+- **Hide labels / Show labels button** at the top right of the ops map, in 2D and 3D, so labels are one click away instead of in the Show list. In 3D it switches straight away without reloading the Google city.
+- **The 3D tips box can be closed** with its ×.
+- **Tools page carousel:** a new slide showing a plan over Google's photo-real 3D city (a Brisbane River plan), and a **Hide labels** switch at the top left of the carousel so the pictures can be seen clearly. It remembers your choice.
+- Supabase: nothing to do.
+
 ## v7.57 — 25 Nov 2026 — HUD Studio 1.8: photo fighter cockpits, Beta badge and feedback form
 - **Fighter jet cockpit is now photo-style**, from Mike's images, with the sky cut away so your drone footage shows through. The old drawn cockpit, cartoon legs and the Cold-War style are gone.
 - **Two views** (Cockpit view › View): **Pilot seat** (your legs and hands, live screens in the panel) and **Over shoulder** (behind the pilot's helmet). In Over shoulder the stick tilts with your roll and pitch, the throttle hand slides with throttle, and the head sinks under G, leans with rolls and shakes with speed. On wide videos the cockpit takes at most half the width and the green HUD moves over the open side.

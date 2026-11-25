@@ -2,7 +2,7 @@
 // at their planned heights (coloured by the checks), take-off / emergency landing / caution markers with labels, and
 // the plan overlay as the ground. three.js is loaded from the CDN the first time someone opens this view.
 import React, { useEffect, useRef, useState } from 'react';
-import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour } from './geo.js';
+import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour, pathHeightTag } from './geo.js';
 import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
 import { viewHfov } from './lenses.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
@@ -21,11 +21,15 @@ export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings 
   const dRef = useRef(null); dRef.current = { drone, onDrone, maxAgl };
   const host = useRef(null);
   const [err, setErr] = useState('');
+  const [tips, setTips] = useState(true);
+  // v7.58: labels switch on and off live (no rebuild, so the Google city doesn't reload)
+  const labRef = useRef({ on: labels, req: null }); labRef.current.on = labels;
+  useEffect(() => { if (labRef.current.req) labRef.current.req(); }, [labels]);
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, api, buildings, googleKey, labels, dRef); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, api, buildings, googleKey, labRef.current, dRef); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
-  }, [doc, checks, buildings, googleKey, labels]);
+  }, [doc, checks, buildings, googleKey]);
   useEffect(() => { if (api.current && api.current.setDrone) api.current.setDrone(drone); }, [drone, maxAgl]);
   const nudge = (k) => api.current && api.current.nudge && api.current.nudge(k);
   const cb = 'w-9 h-9 grid place-items-center rounded-lg bg-white/95 border border-slate-300 text-slate-800 text-sm font-bold shadow hover:bg-white';
@@ -34,7 +38,7 @@ export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings 
     <div className={`absolute inset-0 ${drone ? 'bg-slate-900' : 'bg-slate-200'}`} data-ops-3d="1" data-ops-3d-drone={drone ? '1' : undefined}>
       <div ref={host} className="absolute inset-0"></div>
       {err && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-700 p-6 text-center">{err}</div>}
-      {!drone && <div className="absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg px-3 py-2 text-[11px] text-slate-700 max-w-[260px]" data-ops-noprint="1">Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.<span data-ops-3d-ground="1" className="block mt-1 text-slate-500"></span></div>}
+      {!drone && <div className={`absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg pl-3 pr-6 py-2 text-[11px] text-slate-700 max-w-[260px] ${tips ? '' : 'hidden'}`} data-ops-noprint="1" data-ops-3d-tips="1"><button type="button" onClick={() => setTips(false)} data-ops-3d-tipsclose="1" aria-label="Hide these tips" title="Hide" className="absolute top-0.5 right-1 text-slate-500 hover:text-slate-900 text-sm leading-none px-1">×</button>Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.<span data-ops-3d-ground="1" className="block mt-1 text-slate-500"></span></div>}
       {drone && <>
         <div className="absolute top-2 left-2 bg-slate-950/80 text-white rounded-lg px-3 py-2 text-[11px] leading-snug max-w-[300px] font-mono" data-ops-noprint="1" data-ops-dronehud="1">
           <div className="font-sans font-bold text-[12px] text-emerald-300 truncate">{drone.lensName || 'Lens'}</div>
@@ -76,7 +80,7 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   return sp;
 }
 
-function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey, showLabels = true, dRef = { current: {} }) {
+function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey, lab = { on: true }, dRef = { current: {} }) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -90,7 +94,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
   // v7.51: labels are smaller, can be switched off (Show › Labels), and one that would cover a more important one is
   // hidden while they overlap on screen (exclusions first, then other zones, paths, points)
   const tags = [];
-  const tag = (sp, pri) => { sp.userData.pri = pri; sp.visible = showLabels; tags.push(sp); return sp; };
+  const tag = (sp, pri) => { sp.userData.pri = pri; sp.visible = !!lab.on; tags.push(sp); return sp; };
   const LBL = 0.66; // label size compared with before v7.51
 
   // extent
@@ -287,7 +291,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
         const s = new THREE.Mesh(keep(new THREE.SphereGeometry(Math.max(rad * 2.6, R * 0.6), 16, 12)), keep(new THREE.MeshLambertMaterial({ color: i === 0 ? 0x16a34a : 0xffffff }))); s.position.copy(v); scene.add(s);
         const drop = new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints([v, new THREE.Vector3(v.x, gy, v.z)])), keep(new THREE.LineDashedMaterial({ color: 0x334155, dashSize: span / 120, gapSize: span / 160 }))); drop.computeLineDistances(); scene.add(drop);
       });
-      const t = (path.name || 'Path') + (path.follow ? ' · ' + (Number(path.agl) || 0) + ' m above ground' : '');
+      const t = (path.name || 'Path') + pathHeightTag(path);
       const sp = tag(label(THREE, t, { size: 24, border: '#' + col.getHexString() }), 2); sp.scale.set(0.032 * LBL * sp.userData.aspect, 0.032 * LBL, 1); sp.position.set(V[0].x, V[0].y + lblScale * 0.25, V[0].z); scene.add(sp); disposables.push(sp.material.map, sp.material);
     }
   });
@@ -302,7 +306,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
   place();
   const sv = new THREE.Vector3();
   const declutter = () => { // hide a label that overlaps a more important one already shown
-    if (!showLabels) return; const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)); const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
+    if (!lab.on) { tags.forEach((t) => { t.visible = false; }); if (window.__WD_3D) window.__WD_3D.labelsShown = 0; return; } const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)); const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
     [...tags].filter((sp) => sp.parent).sort((a, b) => b.userData.pri - a.userData.pri).forEach((sp) => {
       sp.getWorldPosition(sv); sv.project(cam); if (sv.z > 1) { sp.visible = false; return; }
       const h = sp.scale.y * k2 * Hp, w = sp.scale.x * k2 * Hp, x = (sv.x + 1) / 2 * Wp - w / 2, y = (1 - sv.y) / 2 * Hp - h / 2;
@@ -311,7 +315,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
     });
     if (window.__WD_3D) window.__WD_3D.labelsShown = tags.filter((t) => t.visible && t.parent).length;
   };
-  let raf = 0, surfT = 0; const draw = () => { raf = 0; if (D && Date.now() - surfT > 400) { surfT = Date.now(); applyDrone(); } if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } cam.updateMatrixWorld(); declutter(); renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
+  let raf = 0, surfT = 0; const draw = () => { raf = 0; if (D && Date.now() - surfT > 400) { surfT = Date.now(); applyDrone(); } if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } cam.updateMatrixWorld(); declutter(); renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); }; lab.req = req;
   const cv = renderer.domElement; cv.style.touchAction = 'none';
   let drag = null; const ptrs = new Map(); let pinch = 0;
   const down = (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, look: e.button === 2 || e.shiftKey || e.ctrlKey }; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); } };
@@ -482,6 +486,7 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
     cv.removeEventListener('dblclick', dbl); window.removeEventListener('keydown', key); if (nT) cancelAnimationFrame(nT);
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
+    if (lab.req === req) lab.req = null;
     if (gTiles) { scene.remove(gTiles.root || gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }
     if (lvT) clearTimeout(lvT);
     alive = false; clearGroup(); bGroup.children.forEach((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); }); disposables.forEach((d) => { try { d.dispose(); } catch (e) {} }); grid.geometry.dispose(); renderer.dispose(); if (cv.parentNode) cv.parentNode.removeChild(cv);
