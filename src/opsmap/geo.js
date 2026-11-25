@@ -176,7 +176,7 @@ export const checkOps = (m, keFor) => {
         // v7.27: a path that follows the ground carries the ground height (m above take-off) as each point's 4th value
         const terr = A[3] != null && B[3] != null ? Number(A[3]) + t * (Number(B[3]) - Number(A[3])) : null;
         let ceil = null, ground = terr != null ? terr : 0, inFly = false, inExcl = false;
-        if (terr != null && path.follow && !path.ctrl) { // v7.57: points with their own heights replace the one height band
+        if (terr != null && path.follow && !path.ctrl) { // v7.58: points with their own heights replace the one height band
           const agl = alt - terr, lo = path.aglMin != null ? Number(path.aglMin) : 1, hi = path.aglMax != null ? Number(path.aglMax) : 5;
           if (agl < lo - 0.05 || agl > hi + 0.05) add('warn', 'band', 'is ' + agl.toFixed(1) + ' m above the ground (planned ' + lo + '–' + hi + ' m)');
         }
@@ -210,7 +210,7 @@ export const checkOps = (m, keFor) => {
       res.legs.push({ i, status, msgs: list, len });
       list.forEach((q) => { const g = grouped.get(q.key); if (g) { g.legs.push(i); if (q.lvl === 'stop') g.lvl = 'stop'; } else grouped.set(q.key, { ...q, legs: [i] }); });
     });
-    const seg = path.ctrl ? legToCtrl(path) : null; // v7.57: legs between the path's own points
+    const seg = path.ctrl ? legToCtrl(path) : null; // v7.58: legs between the path's own points
     const nLegs = seg ? path.ctrl.length - 1 : res.legs.length;
     grouped.forEach((q) => {
       const ls = seg ? [...new Set(q.legs.map((i) => seg[i]).filter((v) => v != null))].sort((a, b) => a - b) : q.legs;
@@ -236,8 +236,15 @@ export const checkOps = (m, keFor) => {
   // (a grouped path check also counts as acknowledged if every leg was acknowledged before v7.53)
   out.issues.forEach((q) => { const a = (q.key && acks[q.key]) || (q.legKeys && q.legKeys.every((k) => acks[k]) && acks[q.legKeys[0]]); if (a) q.ack = a; else out.counts[q.lvl]++; });
   out.counts.acked = out.issues.filter((q) => q.ack).length;
+  // v7.58: checks are switched off for now (Mike: too much noise, red ones blocked planning). The workings stay for
+  // the profile and for later; nothing is flagged, coloured or listed. window.__WD_OPS_CHECKS = true turns them on.
+  if (!opsChecksOn()) {
+    out.issues = []; out.counts = { stop: 0, warn: 0, acked: 0 }; out.off = true;
+    Object.values(out.paths).forEach((r) => { r.legs.forEach((l) => { l.status = 'ok'; l.msgs = []; }); r.profile.forEach((q) => { q.excl = false; }); });
+  }
   return out;
 };
+export const opsChecksOn = () => typeof window !== 'undefined' && window.__WD_OPS_CHECKS === true;
 
 // one-line summary for Section 1 and the PDF
 export const opsSummary = (m, chk) => {
@@ -247,7 +254,7 @@ export const opsSummary = (m, chk) => {
   const bits = [n(z, 'zone'), n(p, 'path'), n(pts, 'marker')];
   if (m.overlay) bits.push('plan overlay');
   if ((m.views || []).length) bits.push(n(m.views, 'view') + ' for the PDF');
-  if (chk) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
+  if (chk && !chk.off) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
   return bits.join(' · ');
 };
 
@@ -334,7 +341,7 @@ export const followGround = (pts, elev, ref, agl, surfaces, proj) => {
     i = j + 1;
   }
   const r1 = (v) => Math.round(v * 10) / 10;
-  return pts.map((q, k) => [q[0], q[1], r1(g[k] + (agl == null ? Number(q[2]) || 0 : agl)), r1(g[k])]); // v7.57: agl null = each point's own height above the ground
+  return pts.map((q, k) => [q[0], q[1], r1(g[k] + (agl == null ? Number(q[2]) || 0 : agl)), r1(g[k])]); // v7.58: agl null = each point's own height above the ground
 };
 // where heights are measured from: the first take-off (TLZ) marker, else the start of the first path
 export const terrainRefPoint = (m) => {
@@ -357,7 +364,7 @@ export function legRanges(legs) {
   return r.length > 1 ? r.slice(0, -1).join(', ') + ' and ' + r[r.length - 1] : r[0];
 }
 
-// ── v7.57: a path is the points you place (ctrl), each with its own height; the flown line (pts) is worked out ──
+// ── v7.58: a path is the points you place (ctrl), each with its own height; the flown line (pts) is worked out ──
 // ctrl: [[lat, lng, h]], h = height above the ground (follow) or above the take-off (not following). curve: the line
 // bends smoothly through the points instead of running straight between them. pts stays the flown line every check,
 // the profile, the 3D view and the PDF use, so older plans (no ctrl) keep working unchanged.

@@ -1,4 +1,4 @@
-# v7.57: flight paths are the points you click (Click points is the default), each with its own height (e.g. 0 m at
+# v7.58: flight paths are the points you click (Click points is the default), each with its own height (e.g. 0 m at
 # take-off, 10 m along the way, then up to 120 m). Smooth line bends the line through them; the fine flown line is
 # worked out underneath, so there are no hundreds of dots. Points move by dragging, + adds one, Set all sets heights.
 # Drawing freehand keeps only a handful of points.

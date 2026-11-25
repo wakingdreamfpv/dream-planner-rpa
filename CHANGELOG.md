@@ -1,6 +1,7 @@
 # Planner changelog
 
-## v7.57 — 25 Nov 2026 — Flight paths: click your points, set each height, smooth the line
+## v7.58 — 25 Nov 2026 — Ops map checks off; flight paths by clicking points, per-point heights, smooth line; Hide labels button
+- **Ops map checks are switched off for now.** No Checks list, nothing to acknowledge, no red or amber on the map, 3D view or profile, and the plan no longer says "to fix". (The red ones needed a note of 5+ characters before OK worked, which blocked planning.) They can come back later; the risk assessment covers safety.
 - **Click points is now the default** for a flight path: click where each point goes, double-click (or Finish) to end. Drawing freehand is still there (Draw), but it now keeps only the handful of points that shape your line instead of hundreds of tiny dots.
 - **Each point has its own height.** The path panel lists your points (1, 2, 3…) with a height box each, e.g. 0 m at take-off, 10 m along the way, then up to 120 m. **Set all** sets points 2 onwards in one go. The map shows each point's height, and you can still drag a point up or down in the side-on profile.
 - **Heights are measured from the ground** (the drone rises and falls with the terrain between points) **or from the take-off** — your choice per path.
@@ -8,12 +9,28 @@
 - **Easy editing on the map:** drag a numbered point to move it, drag or click a **+** between two points to add one, right-click a point to delete it. **Fewer points** removes points that hardly change the shape.
 - Drawing with a mouse: the stroke now keeps going even if the pointer slips off the map.
 - Older paths still work; they switch to the new points the first time you edit them.
-- Supabase: nothing to do.
-
-## v7.56 — 25 Nov 2026 — Hide labels button on the map; new Tools page picture
 - **Hide labels / Show labels button** at the top right of the ops map, in 2D and 3D, so labels are one click away instead of in the Show list. In 3D it switches straight away without reloading the Google city.
 - **The 3D tips box can be closed** with its ×.
 - **Tools page carousel:** a new slide showing a plan over Google's photo-real 3D city (a Brisbane River plan), and a **Hide labels** switch at the top left of the carousel so the pictures can be seen clearly. It remembers your choice.
+- Supabase: nothing to do.
+
+## v7.57 — 25 Nov 2026 — HUD Studio 1.8: photo fighter cockpits, Beta badge and feedback form
+- **Fighter jet cockpit is now photo-style**, from Mike's images, with the sky cut away so your drone footage shows through. The old drawn cockpit, cartoon legs and the Cold-War style are gone.
+- **Two views** (Cockpit view › View): **Pilot seat** (your legs and hands, live screens in the panel) and **Over shoulder** (behind the pilot's helmet). In Over shoulder the stick tilts with your roll and pitch, the throttle hand slides with throttle, and the head sinks under G, leans with rolls and shakes with speed. On wide videos the cockpit takes at most half the width and the green HUD moves over the open side.
+- **HUD Studio has a BETA badge and a Feedback form** like the planner's: Something's not working / Feature request / General feedback. It goes to your Enquiries list and emails you, marked "HUD Studio". With no signal it offers an email instead.
+- Supabase: nothing to do.
+
+## v7.56 — 25 Nov 2026 — Drone camera: plan your shots in the 3D view
+- **Drone camera** (ops map › 3D view): put a virtual drone at the take-off point, any marker (**Drone camera from here**) or any path point (**Drone camera at point N**) and see what its camera would see, in Google's 3D city.
+  - Sliders (and boxes) for **height above ground** (stops at the job's max height from the JSA, else 120 m), **heading** (0° = north) and **gimbal tilt** (+20° to −90°), plus latitude / longitude.
+  - Move it like Google Earth: drag to move, right-drag or Shift-drag to look around, scroll or pinch to fly where it's looking, double-click to fly towards a spot. Keys: arrows move, Q / E or Page Up / Down climb and descend, A / D turn. Buttons on the view: face north, level, straight down, forward / back, up / down. **Point the camera at** turns it towards a marker, zone or path start.
+  - It can't go below the ground, and if Google shows a roof or tree higher than the drone it's lifted just above it (the readout says so).
+- **Lenses**: built-in sets for DJI O4 Air Unit / Pro (155° wide), ultra-wide FPV, GoPro Wide / Linear / Narrow, Mavic 4 Pro (28 / 70 / 168 mm), Mavic 3 Pro (24 / 70 / 166 mm), Mini 4 / 5 Pro (24 mm and 2×), Inspire 3 with the X9 DL 18 / 24 / 35 / 50 mm, and typical 14–135 mm lenses. The drone's own lenses come first (from its name) with quick buttons. The view is boxed to the picture shape (16:9, 4:3, 3:2, 17:9, 9:16) and the field of view is worked out from the lens. Fisheye cameras are shown as a straight wide lens (noted on screen).
+  - **Your own lenses**: add one (sensor size and real focal length) and it's saved on that drone's fleet card for every job.
+- **Capture this shot** saves the picture (JPEG, at most 1280 wide, so jobs stay light) with its settings; up to 12 per job. Rename, reorder, show again, retake or remove them. The picture size of the job's views is shown.
+- **PDF: new "Planned perspectives" page**: each shot with its title and a settings table (from, position, height, heading, tilt, drone, lens, field of view, time, imagery credit), and a note that the imagery is indicative only and may be out of date.
+- Google's name and data credits are now printed on every 3D picture taken while Google's 3D city shows (shots and ordinary 3D views), as Google requires.
+- Uses your existing Google 3D city key; moving the drone camera doesn't add Google charges (only opening the 3D view does).
 - Supabase: nothing to do.
 
 ## v7.55 — 25 Nov 2026 — Tools page: big picture carousel at the top

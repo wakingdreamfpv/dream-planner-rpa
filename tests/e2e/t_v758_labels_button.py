@@ -1,4 +1,4 @@
-# v7.56: a Hide labels / Show labels button on the ops map itself (2D and 3D); in 3D it switches live without
+# v7.58: a Hide labels / Show labels button on the ops map itself (2D and 3D); in 3D it switches live without
 # rebuilding the view, and the tips box can be closed. The Tools page carousel gains the Planner-over-Google-3D slide
 # and its own Hide labels switch, remembered next visit.
 import sys, os, json, math; sys.path.insert(0, os.path.dirname(__file__))
