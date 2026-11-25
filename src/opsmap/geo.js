@@ -176,7 +176,7 @@ export const checkOps = (m, keFor) => {
         // v7.27: a path that follows the ground carries the ground height (m above take-off) as each point's 4th value
         const terr = A[3] != null && B[3] != null ? Number(A[3]) + t * (Number(B[3]) - Number(A[3])) : null;
         let ceil = null, ground = terr != null ? terr : 0, inFly = false, inExcl = false;
-        if (terr != null && path.follow) {
+        if (terr != null && path.follow && !path.ctrl) { // v7.58: points with their own heights replace the one height band
           const agl = alt - terr, lo = path.aglMin != null ? Number(path.aglMin) : 1, hi = path.aglMax != null ? Number(path.aglMax) : 5;
           if (agl < lo - 0.05 || agl > hi + 0.05) add('warn', 'band', 'is ' + agl.toFixed(1) + ' m above the ground (planned ' + lo + '–' + hi + ' m)');
         }
@@ -210,9 +210,11 @@ export const checkOps = (m, keFor) => {
       res.legs.push({ i, status, msgs: list, len });
       list.forEach((q) => { const g = grouped.get(q.key); if (g) { g.legs.push(i); if (q.lvl === 'stop') g.lvl = 'stop'; } else grouped.set(q.key, { ...q, legs: [i] }); });
     });
-    const nLegs = res.legs.length;
+    const seg = path.ctrl ? legToCtrl(path) : null; // v7.58: legs between the path's own points
+    const nLegs = seg ? path.ctrl.length - 1 : res.legs.length;
     grouped.forEach((q) => {
-      const where = q.legs.length === nLegs && nLegs > 1 ? 'the whole way' : (q.legs.length === 1 ? 'leg ' : 'legs ') + legRanges(q.legs);
+      const ls = seg ? [...new Set(q.legs.map((i) => seg[i]).filter((v) => v != null))].sort((a, b) => a - b) : q.legs;
+      const where = ls.length === nLegs && nLegs > 1 ? 'the whole way' : (ls.length === 1 ? 'leg ' : 'legs ') + legRanges(ls);
       out.issues.push({ lvl: q.lvl, path: path.id, leg: q.legs[0], legs: q.legs, key: path.id + ':' + q.key, legKeys: q.legs.map((i) => path.id + ':' + i + ':' + q.key),
         fixSpeed: q.fixSpeed, text: (path.name || 'Path') + ' ' + q.text + ' (' + where + ')' });
     });
@@ -234,8 +236,15 @@ export const checkOps = (m, keFor) => {
   // (a grouped path check also counts as acknowledged if every leg was acknowledged before v7.53)
   out.issues.forEach((q) => { const a = (q.key && acks[q.key]) || (q.legKeys && q.legKeys.every((k) => acks[k]) && acks[q.legKeys[0]]); if (a) q.ack = a; else out.counts[q.lvl]++; });
   out.counts.acked = out.issues.filter((q) => q.ack).length;
+  // v7.58: checks are switched off for now (Mike: too much noise, red ones blocked planning). The workings stay for
+  // the profile and for later; nothing is flagged, coloured or listed. window.__WD_OPS_CHECKS = true turns them on.
+  if (!opsChecksOn()) {
+    out.issues = []; out.counts = { stop: 0, warn: 0, acked: 0 }; out.off = true;
+    Object.values(out.paths).forEach((r) => { r.legs.forEach((l) => { l.status = 'ok'; l.msgs = []; }); r.profile.forEach((q) => { q.excl = false; }); });
+  }
   return out;
 };
+export const opsChecksOn = () => typeof window !== 'undefined' && window.__WD_OPS_CHECKS === true;
 
 // one-line summary for Section 1 and the PDF
 export const opsSummary = (m, chk) => {
@@ -245,7 +254,7 @@ export const opsSummary = (m, chk) => {
   const bits = [n(z, 'zone'), n(p, 'path'), n(pts, 'marker')];
   if (m.overlay) bits.push('plan overlay');
   if ((m.views || []).length) bits.push(n(m.views, 'view') + ' for the PDF');
-  if (chk) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
+  if (chk && !chk.off) bits.push(chk.counts.stop ? chk.counts.stop + ' to fix' : chk.counts.warn ? chk.counts.warn + ' to check' : 'checks clear');
   return bits.join(' · ');
 };
 
@@ -254,7 +263,7 @@ export const opsSignable = (m) => {
   if (!hasOpsContent(m)) return undefined;
   const { overlay, terrain, ...rest } = m;
   // v7.27: when the ground was last checked doesn't change what was signed; the heights themselves are in the paths
-  return { ...rest, paths: (rest.paths || []).map(({ followKey: fk, terrainSrc: ts, followErr: fe, ...p }) => p), overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
+  return { ...rest, paths: (rest.paths || []).map(({ followKey: fk, terrainSrc: ts, followErr: fe, lineKey: lk, ...p }) => p), overlay: overlay ? { name: overlay.name, page: overlay.page, center: overlay.center, widthM: overlay.widthM, rot: overlay.rot, size: (overlay.src || '').length } : null };
 };
 
 // ── v7.12: freehand flight paths ──
@@ -303,7 +312,7 @@ export const densify = (pts, proj, step = 5) => {
     const A = pts[i]; out.push([A[0], A[1], A[2]]);
     if (i === pts.length - 1) break;
     const B = pts[i + 1], a = proj.to(A), b = proj.to(B), len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.floor(len / step);
-    for (let k = 1; k < n; k++) { if (len - (k * len) / n < step * 0.5) break; const t = k / n; const ll = proj.from({ x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }); out.push([ll[0], ll[1], A[2]]); }
+    for (let k = 1; k < n; k++) { if (len - (k * len) / n < step * 0.5) break; const t = k / n; const ll = proj.from({ x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }); out.push([ll[0], ll[1], (Number(A[2]) || 0) + t * ((Number(B[2]) || 0) - (Number(A[2]) || 0))]); }
   }
   return out;
 };
@@ -332,7 +341,7 @@ export const followGround = (pts, elev, ref, agl, surfaces, proj) => {
     i = j + 1;
   }
   const r1 = (v) => Math.round(v * 10) / 10;
-  return pts.map((q, k) => [q[0], q[1], r1(g[k] + agl), r1(g[k])]);
+  return pts.map((q, k) => [q[0], q[1], r1(g[k] + (agl == null ? Number(q[2]) || 0 : agl)), r1(g[k])]); // v7.58: agl null = each point's own height above the ground
 };
 // where heights are measured from: the first take-off (TLZ) marker, else the start of the first path
 export const terrainRefPoint = (m) => {
@@ -340,7 +349,7 @@ export const terrainRefPoint = (m) => {
   const p = (m.paths || []).find((q) => (q.pts || []).length); return p ? [p.pts[0][0], p.pts[0][1]] : null;
 };
 // what a ground-following path's heights depend on (when this changes, they're worked out again)
-export const followKey = (path, m) => JSON.stringify([Number(path.agl) || 0, (path.pts || []).map((q) => [Math.round(q[0] * 1e6), Math.round(q[1] * 1e6)]),
+export const followKey = (path, m) => JSON.stringify([path.ctrl ? ['c', !!path.curve] : Number(path.agl) || 0, (path.ctrl || path.pts || []).map((q) => [Math.round(q[0] * 1e6), Math.round(q[1] * 1e6)]),
   (m.zones || []).filter((z) => z.kind === 'surface').map((z) => [z.pts, z.c, z.r, z.deck, z.raise]), terrainRefPoint(m)]);
 
 // v7.51: each flight path has its own colour (problem legs keep an amber / red outline on the map)
@@ -354,3 +363,88 @@ export function legRanges(legs) {
   for (let k = 1; k <= legs.length; k++) { const x = legs[k]; if (x === b + 1) { b = x; continue; } r.push(a === b ? (a + 1) + '→' + (a + 2) : (a + 1) + '→' + (b + 2)); a = b = x; }
   return r.length > 1 ? r.slice(0, -1).join(', ') + ' and ' + r[r.length - 1] : r[0];
 }
+
+// ── v7.58: a path is the points you place (ctrl), each with its own height; the flown line (pts) is worked out ──
+// ctrl: [[lat, lng, h]], h = height above the ground (follow) or above the take-off (not following). curve: the line
+// bends smoothly through the points instead of running straight between them. pts stays the flown line every check,
+// the profile, the 3D view and the PDF use, so older plans (no ctrl) keep working unchanged.
+const rnd = (v) => Math.round(v * 10) / 10;
+export const ctrlOf = (path, mode) => {
+  if (path.ctrl && path.ctrl.length) return path.ctrl;
+  const pts = path.pts || [];
+  const base = pts.map((q) => [q[0], q[1], path.follow ? (q[3] != null ? rnd(Number(q[2]) - Number(q[3])) : Number(path.agl) || 0) : Number(q[2]) || 0]);
+  if (base.length <= 30) return base;
+  const prj = makeProj(mode, base[0]); // an older drawn or ground-following path: keep just the points that shape it
+  const keep = rdp(base.map((q, i) => ({ ...prj.to(q), i })), 2.5).map((v) => v.i);
+  return keep.map((i) => base[i]);
+};
+// centripetal Catmull-Rom through the points, every ~`step` m; the points themselves stay exactly on the line
+export const curveLine = (ctrl, proj, step = 4) => {
+  const n = ctrl.length; if (n < 3) return ctrl.map((q) => [q[0], q[1], Number(q[2]) || 0]);
+  const P = ctrl.map((q) => proj.to(q)), out = [];
+  const at = (i) => (i < 0 ? { x: 2 * P[0].x - P[1].x, y: 2 * P[0].y - P[1].y } : i >= n ? { x: 2 * P[n - 1].x - P[n - 2].x, y: 2 * P[n - 1].y - P[n - 2].y } : P[i]);
+  for (let i = 0; i < n - 1; i++) {
+    out.push([ctrl[i][0], ctrl[i][1], Number(ctrl[i][2]) || 0]);
+    const p0 = at(i - 1), p1 = P[i], p2 = P[i + 1], p3 = at(i + 2);
+    const d = (a, b) => Math.max(1e-6, Math.sqrt(Math.hypot(b.x - a.x, b.y - a.y)));
+    const t0 = 0, t1 = t0 + d(p0, p1), t2 = t1 + d(p1, p2), t3 = t2 + d(p2, p3);
+    const len = Math.hypot(p2.x - p1.x, p2.y - p1.y), m = Math.max(1, Math.min(200, Math.round(len / step)));
+    const h1 = Number(ctrl[i][2]) || 0, h2 = Number(ctrl[i + 1][2]) || 0;
+    for (let k = 1; k < m; k++) {
+      const t = t1 + ((t2 - t1) * k) / m;
+      const L = (a, b, ta, tb) => ({ x: ((tb - t) * a.x + (t - ta) * b.x) / (tb - ta), y: ((tb - t) * a.y + (t - ta) * b.y) / (tb - ta) });
+      const A1 = L(p0, p1, t0, t1), A2 = L(p1, p2, t1, t2), A3 = L(p2, p3, t2, t3), B1 = L(A1, A2, t0, t2), B2 = L(A2, A3, t1, t3), C = L(B1, B2, t1, t2);
+      const ll = proj.from(C); out.push([ll[0], ll[1], h1 + ((h2 - h1) * k) / m]);
+    }
+  }
+  out.push([ctrl[n - 1][0], ctrl[n - 1][1], Number(ctrl[n - 1][2]) || 0]);
+  return out;
+};
+// the line through the points (straight or curved), heights still as planned per point (not yet on the ground)
+export const lineOf = (path, mode) => {
+  const c = ctrlOf(path, mode); if (c.length < 2) return c.map((q) => [q[0], q[1], Number(q[2]) || 0]);
+  return path.curve ? curveLine(c, makeProj(mode, c[0])) : c.map((q) => [q[0], q[1], Number(q[2]) || 0]);
+};
+// where each of the path's own points sits in the flown line (null if the line is out of date)
+export const ctrlIdx = (path) => {
+  const c = path.ctrl, pts = path.pts || []; if (!c || !c.length) return null;
+  const out = []; let j = 0;
+  for (let k = 0; k < c.length; k++) {
+    while (j < pts.length && !(Math.abs(pts[j][0] - c[k][0]) < 1e-9 && Math.abs(pts[j][1] - c[k][1]) < 1e-9)) j++;
+    if (j >= pts.length) return null; out.push(j); if (k < c.length - 1) j++;
+  }
+  return out;
+};
+// heights along the flown line from the points' heights (ground + height when following), without moving the line
+const reheight = (path, mode, idx) => {
+  const c = path.ctrl, pts = path.pts, prj = makeProj(mode, c[0]);
+  const out = pts.map((q) => q.slice());
+  for (let k = 0; k < c.length - 1; k++) {
+    const a = idx[k], b = idx[k + 1], h1 = Number(c[k][2]) || 0, h2 = Number(c[k + 1][2]) || 0;
+    const ds = [0]; for (let i = a + 1; i <= b; i++) ds.push(ds[ds.length - 1] + prj.dist(pts[i - 1], pts[i]));
+    const tot = ds[ds.length - 1] || 1;
+    for (let i = a; i <= b; i++) { const h = h1 + ((h2 - h1) * ds[i - a]) / tot, g = path.follow && pts[i][3] != null ? Number(pts[i][3]) : null;
+      out[i] = g != null ? [pts[i][0], pts[i][1], rnd(g + h), g] : [pts[i][0], pts[i][1], rnd(h)]; }
+  }
+  return out;
+};
+// bring a path's flown line up to date after its points, heights, curve or follow setting change
+export const rebuildPath = (path, mode) => {
+  if (!path.ctrl || !path.ctrl.length) return path;
+  const geo = JSON.stringify([path.ctrl.map((q) => [q[0], q[1]]), !!path.curve, !!path.follow]);
+  const idx = path.lineKey === geo ? ctrlIdx(path) : null;
+  if (idx) return { ...path, pts: reheight(path, mode, idx) };
+  return { ...path, pts: lineOf(path, mode), lineKey: geo }; // a ground-following path gets its ground heights next
+};
+// "legs 3→9" in checks names the path's own points, not the line's fine steps
+export const legToCtrl = (path) => {
+  const idx = ctrlIdx(path); if (!idx) return null;
+  const seg = []; for (let k = 0; k < idx.length - 1; k++) for (let i = idx[k]; i < idx[k + 1]; i++) seg[i] = k;
+  return seg;
+};
+// "· 3 m above ground" / "· 0–120 m above ground" after a path's name (blank when heights are above the take-off)
+export const pathHeightTag = (p) => {
+  if (!p.follow) return '';
+  if (p.ctrl && p.ctrl.length) { const h = p.ctrl.map((q) => Number(q[2]) || 0), lo = Math.min(...h), hi = Math.max(...h); return ' · ' + (lo === hi ? lo : lo + '–' + hi) + ' m above ground'; }
+  return ' · ' + (Number(p.agl) || 0) + ' m above ground';
+};

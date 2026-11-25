@@ -37,7 +37,7 @@ with sync_playwright() as p:
     R.check('each path has one start flag with its name (and height when following the ground)', pg.locator('[data-ops-path-tag]').count() == 2 and 'Path A · 3 m above ground' in pg.inner_text('body'))
     pg.locator('label:has-text("Path point numbers") input').check(); pg.wait_for_timeout(600)
     nums2 = pg.evaluate("()=>[...document.querySelectorAll('.leaflet-marker-icon')].filter(m=>/^\\d+$/.test(m.innerText.trim().split('\\n')[0])).length")
-    R.check('"Path point numbers" turns them back on', nums2 > 5, nums2)
+    R.check('"Path point numbers" turns them back on (v7.58: on the points that shape the path, not every 5 m step)', 3 <= nums2 <= 20, nums2)
     ops = saved_ops(pg)
     pa = [x for x in ops['paths'] if x['id'] == 'pa'][0]; pb = [x for x in ops['paths'] if x['id'] == 'pb'][0]
     pts = pa['pts']

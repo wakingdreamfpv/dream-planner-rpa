@@ -16,7 +16,7 @@ with sync_playwright() as p:
                 if mode['v'] == 'many': return r.fulfill(status=400, content_type='application/json', body='{"message":"enquiry: too many from this email"}')
                 return r.fulfill(status=200, content_type='application/json', body='"11111111-2222-3333-4444-555555555555"')
             return r.fulfill(status=200, content_type='application/json', body='{"ok":true,"sent":1}')
-        if u.startswith('http') and 'localhost:4173' not in u: return r.abort()
+        if u.startswith('http') and ('localhost:' + PORT) not in u: return r.abort()
         return r.continue_()
     ctx = b.new_context(viewport={'width': 1400, 'height': 950}); ctx.route('**/*', route)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
