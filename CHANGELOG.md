@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.55 — 25 Nov 2026 — Tools page: big picture carousel at the top
+- **The Tools page (planner.wakingdreamfpv.com/tools/) opens with a big sliding carousel**, one picture per tool with a label and an Open button: HUD Studio's fighter-jet HUD over the catamaran footage, the Flight Log replaying a flight on the map with its flagged moments, the Planner's 3D ops map (Surfers Paradise buildings, exclusion, over-people, near-people and clear zones, two flight paths), then the other HUD styles.
+- It slides on its own every 5 seconds, stops while you hover or tap, and has arrows, dots and swipe. Works on phones.
+- Supabase: nothing to do.
+
 ## v7.53 — 24 Nov 2026 — Ops map checks: one line per problem
 - **Far fewer warnings.** The ops map's Checks list used to repeat the same problem for every leg of a path (a drawn path has dozens of legs). Now each problem shows once per path, with where it applies, e.g. "Path A speed 5 m/s is over 1.5 m/s in Over people (direct) 1 (the whole way)" or "(legs 3→9)".
 - **Speed too high for a zone?** The check has a **Set the path to 1.5 m/s** button (the zone's limit). Each new path starts at 5 m/s, so over-people zones with a slow energy-table limit flag it until you set the speed.
