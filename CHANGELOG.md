@@ -1,5 +1,18 @@
 # Planner changelog
 
+## v7.56 — 25 Nov 2026 — Drone camera: plan your shots in the 3D view
+- **Drone camera** (ops map › 3D view): put a virtual drone at the take-off point, any marker (**Drone camera from here**) or any path point (**Drone camera at point N**) and see what its camera would see, in Google's 3D city.
+  - Sliders (and boxes) for **height above ground** (stops at the job's max height from the JSA, else 120 m), **heading** (0° = north) and **gimbal tilt** (+20° to −90°), plus latitude / longitude.
+  - Move it like Google Earth: drag to move, right-drag or Shift-drag to look around, scroll or pinch to fly where it's looking, double-click to fly towards a spot. Keys: arrows move, Q / E or Page Up / Down climb and descend, A / D turn. Buttons on the view: face north, level, straight down, forward / back, up / down. **Point the camera at** turns it towards a marker, zone or path start.
+  - It can't go below the ground, and if Google shows a roof or tree higher than the drone it's lifted just above it (the readout says so).
+- **Lenses**: built-in sets for DJI O4 Air Unit / Pro (155° wide), ultra-wide FPV, GoPro Wide / Linear / Narrow, Mavic 4 Pro (28 / 70 / 168 mm), Mavic 3 Pro (24 / 70 / 166 mm), Mini 4 / 5 Pro (24 mm and 2×), Inspire 3 with the X9 DL 18 / 24 / 35 / 50 mm, and typical 14–135 mm lenses. The drone's own lenses come first (from its name) with quick buttons. The view is boxed to the picture shape (16:9, 4:3, 3:2, 17:9, 9:16) and the field of view is worked out from the lens. Fisheye cameras are shown as a straight wide lens (noted on screen).
+  - **Your own lenses**: add one (sensor size and real focal length) and it's saved on that drone's fleet card for every job.
+- **Capture this shot** saves the picture (JPEG, at most 1280 wide, so jobs stay light) with its settings; up to 12 per job. Rename, reorder, show again, retake or remove them. The picture size of the job's views is shown.
+- **PDF: new "Planned perspectives" page**: each shot with its title and a settings table (from, position, height, heading, tilt, drone, lens, field of view, time, imagery credit), and a note that the imagery is indicative only and may be out of date.
+- Google's name and data credits are now printed on every 3D picture taken while Google's 3D city shows (shots and ordinary 3D views), as Google requires.
+- Uses your existing Google 3D city key; moving the drone camera doesn't add Google charges (only opening the 3D view does).
+- Supabase: nothing to do.
+
 ## v7.55 — 25 Nov 2026 — Tools page: big picture carousel at the top
 - **The Tools page (planner.wakingdreamfpv.com/tools/) opens with a big sliding carousel**, one picture per tool with a label and an Open button: HUD Studio's fighter-jet HUD over the catamaran footage, the Flight Log replaying a flight on the map with its flagged moments, the Planner's 3D ops map (Surfers Paradise buildings, exclusion, over-people, near-people and clear zones, two flight paths), then the other HUD styles.
 - It slides on its own every 5 seconds, stops while you hover or tap, and has arrows, dots and swipe. Works on phones.

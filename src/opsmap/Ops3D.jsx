@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { makeProj, refOf, kindStyle, zoneBuffer, fmtSpeed, terrainRefPoint, exBand, fmtHt, pathColour } from './geo.js';
 import { elevations, satelliteCanvas, lngToX, latToY } from './terrain.js';
+import { viewHfov } from './lenses.js';
 // v7.27: outdoors, the ground is satellite imagery draped over the real terrain (heights relative to the take-off),
 // with the site plan overlay blended on top; paths are clean lines with a start flag instead of a label on every point.
 
@@ -12,20 +13,48 @@ let threeP = null;
 const loadThree = () => threeP || (threeP = import('three').catch((e) => { threeP = null; throw new Error('The 3D view couldn\'t load: ' + (e.message || e)); }));
 const STATUS = { ok: 0x0f172a, warn: 0xd97706, stop: 0xdc2626 };
 
-export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '', labels = true }) {
+// v7.56: `drone` switches the view to a drone camera (previs): { lat, lng, agl, heading, tilt, hfov, aspect, lensName }.
+// Moving around with the mouse, keys or the buttons moves the drone; each change is sent back through onDrone.
+export default function Ops3D({ doc, checks, apiRef, camRef: camProp, buildings = true, googleKey = '', labels = true, drone = null, onDrone, maxAgl = 120 }) {
   const ownCam = useRef(null), camRef = camProp || ownCam; // the view survives the scene being rebuilt
+  const ownApi = useRef(null), api = apiRef || ownApi;
+  const dRef = useRef(null); dRef.current = { drone, onDrone, maxAgl };
   const host = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true, cleanup = () => {};
-    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, apiRef, buildings, googleKey, labels); }).catch((e) => setErr(e.message || String(e)));
+    loadThree().then((THREE) => { if (!alive || !host.current) return; cleanup = build(THREE, host.current, doc, checks, camRef, api, buildings, googleKey, labels, dRef); }).catch((e) => setErr(e.message || String(e)));
     return () => { alive = false; cleanup(); };
   }, [doc, checks, buildings, googleKey, labels]);
+  useEffect(() => { if (api.current && api.current.setDrone) api.current.setDrone(drone); }, [drone, maxAgl]);
+  const nudge = (k) => api.current && api.current.nudge && api.current.nudge(k);
+  const cb = 'w-9 h-9 grid place-items-center rounded-lg bg-white/95 border border-slate-300 text-slate-800 text-sm font-bold shadow hover:bg-white';
+  const r0 = (v) => Math.round(Number(v) || 0);
   return (
-    <div className="absolute inset-0 bg-slate-200" data-ops-3d="1">
+    <div className={`absolute inset-0 ${drone ? 'bg-slate-900' : 'bg-slate-200'}`} data-ops-3d="1" data-ops-3d-drone={drone ? '1' : undefined}>
       <div ref={host} className="absolute inset-0"></div>
       {err && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-700 p-6 text-center">{err}</div>}
-      <div className="absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg px-3 py-2 text-[11px] text-slate-700 max-w-[260px]" data-ops-noprint="1">Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.<span data-ops-3d-ground="1" className="block mt-1 text-slate-500"></span></div>
+      {!drone && <div className="absolute top-2 left-2 bg-white/95 border border-slate-300 rounded-lg px-3 py-2 text-[11px] text-slate-700 max-w-[260px]" data-ops-noprint="1">Drag to turn · right-drag or Shift-drag to pan · scroll or pinch to zoom. Zones rise to their height limit above their own ground.<span data-ops-3d-ground="1" className="block mt-1 text-slate-500"></span></div>}
+      {drone && <>
+        <div className="absolute top-2 left-2 bg-slate-950/80 text-white rounded-lg px-3 py-2 text-[11px] leading-snug max-w-[300px] font-mono" data-ops-noprint="1" data-ops-dronehud="1">
+          <div className="font-sans font-bold text-[12px] text-emerald-300 truncate">{drone.lensName || 'Lens'}</div>
+          <div>FOV {r0(drone.hfov)}° · {r0(drone.agl * 10) / 10} m AGL</div>
+          <div>Heading {r0(drone.heading)}° · tilt {r0(drone.tilt)}°</div>
+          {drone.raised > 0 && <div className="font-sans text-amber-300">Lifted {Math.round(drone.raised * 10) / 10} m to clear a roof or tree here</div>}
+          {drone.fisheye && <div className="font-sans text-slate-300">Shown as a straight lens: the real fisheye bends lines near the edges.</div>}
+          <div className="font-sans text-slate-400 mt-1">Drag to move · right/Shift-drag to look · scroll to fly · double-click to fly to · arrows, Q/E up/down, A/D turn</div>
+          <span data-ops-3d-ground="1" className="block mt-1 font-sans text-slate-400"></span>
+        </div>
+        <div className="absolute top-2 right-2 flex flex-col gap-1.5" data-ops-noprint="1" data-ops-dronectl="1">
+          <button type="button" className={cb} title="Face north" aria-label="Face north" data-ops-dc="north" onClick={() => nudge('north')}><svg width="18" height="22" viewBox="0 0 18 22" style={{ transform: `rotate(${-(Number(drone.heading) || 0)}deg)` }}><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#dc2626"></path></svg></button>
+          <button type="button" className={cb} title="Level the camera (tilt 0°)" aria-label="Level the camera" data-ops-dc="level" onClick={() => nudge('level')}>0°</button>
+          <button type="button" className={cb} title="Point straight down (−90°)" aria-label="Point straight down" data-ops-dc="nadir" onClick={() => nudge('nadir')}><i className="fa-solid fa-arrow-down"></i></button>
+          <button type="button" className={cb} title="Fly forward" aria-label="Fly forward" data-ops-dc="fwd" onClick={() => nudge('fwd')}>+</button>
+          <button type="button" className={cb} title="Fly back" aria-label="Fly back" data-ops-dc="back" onClick={() => nudge('back')}>−</button>
+          <button type="button" className={cb} title="Climb" aria-label="Climb" data-ops-dc="up" onClick={() => nudge('up')}><i className="fa-solid fa-caret-up"></i></button>
+          <button type="button" className={cb} title="Descend" aria-label="Descend" data-ops-dc="down" onClick={() => nudge('down')}><i className="fa-solid fa-caret-down"></i></button>
+        </div>
+      </>}
     </div>
   );
 }
@@ -47,7 +76,7 @@ function label(THREE, text, { bg = 'rgba(255,255,255,0.94)', fg = '#0f172a', bor
   return sp;
 }
 
-function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey, showLabels = true) {
+function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey, showLabels = true, dRef = { current: {} }) {
   const ref = refOf(doc) || [0, 0], prj = makeProj(doc.mode, ref);
   const P = (ll) => { const p = prj.to(ll); return { x: p.x, z: -p.y }; };
   const W = el.clientWidth || 800, H = el.clientHeight || 500;
@@ -271,9 +300,9 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
   if (saved && isFinite(saved.dist)) { theta = saved.theta; phi = saved.phi; dist = saved.dist; target.set(saved.tx, saved.ty, saved.tz); }
   const place = () => { cam.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta)); cam.lookAt(target); if (camRef) camRef.current = { theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }; };
   place();
-  const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)), sv = new THREE.Vector3();
+  const sv = new THREE.Vector3();
   const declutter = () => { // hide a label that overlaps a more important one already shown
-    if (!showLabels) return; const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
+    if (!showLabels) return; const k2 = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360)); const Wp = renderer.domElement.clientWidth || W, Hp = renderer.domElement.clientHeight || H, boxes = [];
     [...tags].filter((sp) => sp.parent).sort((a, b) => b.userData.pri - a.userData.pri).forEach((sp) => {
       sp.getWorldPosition(sv); sv.project(cam); if (sv.z > 1) { sp.visible = false; return; }
       const h = sp.scale.y * k2 * Hp, w = sp.scale.x * k2 * Hp, x = (sv.x + 1) / 2 * Wp - w / 2, y = (1 - sv.y) / 2 * Hp - h / 2;
@@ -282,12 +311,13 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
     });
     if (window.__WD_3D) window.__WD_3D.labelsShown = tags.filter((t) => t.visible && t.parent).length;
   };
-  let raf = 0; const draw = () => { raf = 0; if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } cam.updateMatrixWorld(); declutter(); renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
+  let raf = 0, surfT = 0; const draw = () => { raf = 0; if (D && Date.now() - surfT > 400) { surfT = Date.now(); applyDrone(); } if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } cam.updateMatrixWorld(); declutter(); renderer.render(scene, cam); }; const req = () => { if (!raf) raf = requestAnimationFrame(draw); };
   const cv = renderer.domElement; cv.style.touchAction = 'none';
   let drag = null; const ptrs = new Map(); let pinch = 0;
-  const down = (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); } };
+  const down = (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, look: e.button === 2 || e.shiftKey || e.ctrlKey }; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); } };
   const move = (e) => {
     if (!drag) return; const prev = ptrs.get(e.pointerId); if (prev) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (D) return droneMove(e);
     if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch) { dist = Math.max(span * 0.05, Math.min(span * 8, dist * (pinch / d))); } pinch = d; place(); req(); return; }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
     if (drag.pan) { const s = dist / 600; const right = new THREE.Vector3(Math.cos(theta), 0, -Math.sin(theta)), fwd = new THREE.Vector3(Math.sin(theta), 0, Math.cos(theta)); target.addScaledVector(right, -dx * s).addScaledVector(fwd, -dy * s); }
@@ -295,10 +325,11 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
     place(); req();
   };
   const up = (e) => { ptrs.delete(e.pointerId); if (!ptrs.size) drag = null; pinch = 0; };
-  const wheel = (e) => { e.preventDefault(); dist = Math.max(span * 0.05, Math.min(span * 8, dist * (e.deltaY > 0 ? 1.12 : 0.89))); place(); req(); };
+  const wheel = (e) => { e.preventDefault(); if (D) { droneFly(e.deltaY < 0 ? 1 : -1); return; } dist = Math.max(span * 0.05, Math.min(span * 8, dist * (e.deltaY > 0 ? 1.12 : 0.89))); place(); req(); };
   const ctx = (e) => e.preventDefault();
+  cv.addEventListener('dblclick', dbl); window.addEventListener('keydown', key);
   cv.addEventListener('pointerdown', down); cv.addEventListener('pointermove', move); cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up); cv.addEventListener('wheel', wheel, { passive: false }); cv.addEventListener('contextmenu', ctx);
-  const ro = new ResizeObserver(() => { const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return; renderer.setSize(w, h); cam.aspect = w / h; cam.updateProjectionMatrix(); req(); });
+  const ro = new ResizeObserver(() => { const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return; layout(); if (D) applyDrone(); req(); });
   ro.observe(el);
   // textures load asynchronously: redraw a few times
   req(); const t1 = setTimeout(req, 300), t2 = setTimeout(req, 1200);
@@ -341,16 +372,114 @@ function build(THREE, el, doc, checks, camRef, apiRef, showBuildings, googleKey,
       setTimeout(() => { if (alive && gState === 'loading') fail(g.err || 'no reply from Google after 30 seconds.'); }, 30000);
     }).catch((e) => fail(String((e && e.message) || e)));
   }
+  // ── v7.56: drone camera (previs). The camera sits at the drone: lat/lng, a height above the ground under it (our
+  // terrain; lifted if Google's surface there, e.g. a roof, is higher), facing `heading` (0 = north) with the gimbal at
+  // `tilt` (+20 up to −90 straight down), and the lens's field of view and picture shape (the canvas is boxed to it).
+  const DR = Math.PI / 180;
+  let D = null, raised = 0, nT = 0;
+  const box = { w: W, h: H };
+  function layout() {
+    const w0 = el.clientWidth || W, h0 = el.clientHeight || H; let w = w0, h = h0;
+    if (D) { const a = D.aspect || 16 / 9; if (w0 / h0 > a) w = Math.max(2, Math.round(h0 * a)); else h = Math.max(2, Math.round(w0 / a)); }
+    box.w = w; box.h = h; renderer.setSize(w, h);
+    cv.style.position = 'absolute'; cv.style.left = Math.round((w0 - w) / 2) + 'px'; cv.style.top = Math.round((h0 - h) / 2) + 'px';
+    cam.aspect = w / h;
+    cam.fov = D ? (2 * Math.atan(Math.tan((viewHfov(D.hfov) * DR) / 2) / cam.aspect)) / DR : 45;
+    cam.near = D ? 0.3 : 0.1; cam.far = D ? Math.max(span * 40, 30000) : span * 40; cam.updateProjectionMatrix();
+    if (gTiles) { try { gTiles.tiles.setResolutionFromRenderer(cam, renderer); } catch (e) {} }
+  }
+  const surfRay = new THREE.Raycaster(), downV = new THREE.Vector3(0, -1, 0);
+  const terrainAt = (x, z) => { const g = groundAt ? groundAt(x, z) : null; return g == null ? 0 : g; };
+  let sC = null; // the last surface reading, reused while the drone stays within half a metre (raycasts are slow)
+  const surfaceAt = (x, z) => { // Google's surface (roofs, trees) under the drone, while Google's city shows
+    if (!gTiles || gState !== 'ok') return null;
+    if (sC && Math.abs(sC.x - x) < 0.5 && Math.abs(sC.z - z) < 0.5 && Date.now() - sC.t < 400) return sC.v;
+    surfRay.set(new THREE.Vector3(x, 30000, z), downV); surfRay.far = 60000;
+    const hit = surfRay.intersectObject(gTiles.tiles.group, true)[0]; sC = { x, z, t: Date.now(), v: hit ? hit.point.y : null }; return sC.v; };
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const clampD = (d) => { const mx = Math.max(1, Number(dRef.current.maxAgl) || 120); let hd = r1((((Number(d.heading) || 0) % 360) + 360) % 360); if (hd >= 360) hd = 0;
+    return { ...d, lat: Number(d.lat) || 0, lng: Number(d.lng) || 0, agl: r1(Math.max(0.5, Math.min(mx, Number(d.agl) || 0))), heading: hd, tilt: r1(Math.max(-90, Math.min(20, Number(d.tilt) || 0))), hfov: Number(d.hfov) || 60, aspect: Number(d.aspect) || 16 / 9 }; };
+  function applyDrone() {
+    if (!D) return; const p = P([D.lat, D.lng]), g = terrainAt(p.x, p.z); let y = g + D.agl;
+    const s = surfaceAt(p.x, p.z), was = raised; raised = 0; if (s != null && y < s + 0.5) { raised = r1(s + 0.5 - y); y = s + 0.5; }
+    cam.position.set(p.x, y, p.z); cam.rotation.order = 'YXZ'; cam.rotation.set(D.tilt * DR, -D.heading * DR, 0); cam.updateMatrixWorld();
+    if (window.__WD_3D) window.__WD_3D.drone = { x: p.x, y, z: p.z, ground: g, raised, fov: cam.fov, aspect: cam.aspect, w: box.w, h: box.h, heading: D.heading, tilt: D.tilt, agl: D.agl };
+    if (Math.abs(was - raised) > 0.05) notify();
+  }
+  function notify() { const f = dRef.current.onDrone; if (!f || nT) return; nT = requestAnimationFrame(() => { nT = 0; if (D) f({ lat: D.lat, lng: D.lng, agl: D.agl, heading: D.heading, tilt: D.tilt, raised }); }); }
+  const setD = (ch) => { if (!D) return; D = clampD({ ...D, ...ch }); applyDrone(); req(); notify(); };
+  const same = (a, b) => a && b && ['lat', 'lng', 'agl', 'heading', 'tilt', 'hfov', 'aspect'].every((k) => Math.abs((Number(a[k]) || 0) - (Number(b[k]) || 0)) < 1e-7);
+  function setDrone(d) {
+    if (!d) { if (!D) return; D = null; layout(); place(); req(); return; }
+    const n = clampD(d), relayout = !D || D.hfov !== n.hfov || D.aspect !== n.aspect;
+    if (D && same(D, n)) return;
+    D = n; if (relayout) layout(); applyDrone(); req();
+    if (!same(n, { ...d, hfov: n.hfov, aspect: n.aspect })) notify(); // clamped (e.g. above the height cap): tell the panel
+  }
+  const fwdV = () => ({ x: Math.sin(D.heading * DR), z: -Math.cos(D.heading * DR) }), rightV = () => ({ x: Math.cos(D.heading * DR), z: Math.sin(D.heading * DR) });
+  const movedLL = (f, r) => { const p = P([D.lat, D.lng]), F = fwdV(), R = rightV(); const ll = prj.from({ x: p.x + F.x * f + R.x * r, y: -(p.z + F.z * f + R.z * r) }); return { lat: ll[0], lng: ll[1] }; };
+  const stepM = () => Math.max(1, (D.agl + 2) * 0.12);
+  // fly along where the camera looks (forward and down when tilted down)
+  const droneFly = (dir, k = 2) => { const s = dir * stepM() * k, t = D.tilt * DR; setD({ ...movedLL(s * Math.cos(t), 0), agl: D.agl + s * Math.sin(t) }); };
+  const aim = (t) => { const dx = t.x - cam.position.x, dz = t.z - cam.position.z, dy = t.y - cam.position.y;
+    setD({ heading: Math.atan2(dx, -dz) / DR, tilt: Math.atan2(dy, Math.max(0.01, Math.hypot(dx, dz))) / DR }); };
+  function droneMove(e) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch) droneFly(Math.sign(d - pinch), Math.min(3, Math.abs(d - pinch) / 12)); pinch = d; return; }
+    if (drag.look) { setD({ heading: D.heading - dx * (viewHfov(D.hfov) / box.w), tilt: D.tilt + dy * (cam.fov / box.h) }); return; }
+    // move the drone so the ground follows the hand
+    const down = Math.max(0.15, Math.sin(-D.tilt * DR)), far = Math.min(D.agl * 6 + 20, Math.max(2, D.agl) / down);
+    const mpp = (far * 2 * Math.tan((cam.fov * DR) / 2)) / box.h;
+    setD(movedLL(dy * mpp, -dx * mpp));
+  }
+  const pickRay = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function dbl(e) {
+    if (!D) return; const r = cv.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    pickRay.setFromCamera(ndc, cam); const hit = pickRay.intersectObjects(scene.children, true).find((h) => h.object.visible && !h.object.isSprite && !h.object.isLine);
+    if (!hit) return; const t = hit.point, p = P([D.lat, D.lng]);
+    const ll = prj.from({ x: p.x + (t.x - p.x) * 0.5, y: -(p.z + (t.z - p.z) * 0.5) }); D = clampD({ ...D, lat: ll[0], lng: ll[1] }); applyDrone(); aim(t);
+  }
+  function nudge(k) {
+    if (!D) return; const s = stepM() * 3;
+    if (k === 'north') setD({ heading: 0 }); else if (k === 'level') setD({ tilt: 0 }); else if (k === 'nadir') setD({ tilt: -90 });
+    else if (k === 'fwd') setD(movedLL(s, 0)); else if (k === 'back') setD(movedLL(-s, 0));
+    else if (k === 'up') setD({ agl: D.agl + Math.max(1, s / 2) }); else if (k === 'down') setD({ agl: D.agl - Math.max(1, s / 2) });
+  }
+  function key(e) {
+    if (!D || !el.isConnected || e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target, tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+    const s = stepM() * (e.shiftKey ? 5 : 1), turn = e.shiftKey ? 10 : 3, k = e.key;
+    const act = { ArrowUp: () => setD(movedLL(s, 0)), ArrowDown: () => setD(movedLL(-s, 0)), ArrowLeft: () => setD(movedLL(0, -s)), ArrowRight: () => setD(movedLL(0, s)),
+      PageUp: () => setD({ agl: D.agl + s }), PageDown: () => setD({ agl: D.agl - s }), q: () => setD({ agl: D.agl + s }), e: () => setD({ agl: D.agl - s }),
+      a: () => setD({ heading: D.heading - turn }), d: () => setD({ heading: D.heading + turn }) }[k.length === 1 ? k.toLowerCase() : k];
+    if (act) { e.preventDefault(); act(); }
+  }
+  const googleCredit = () => { const at = []; try { gTiles.tiles.getAttributions(at); } catch (e) {} return at.filter((a) => a.type === 'string').map((a) => a.value).join(' · '); };
+  // Google's terms: its logo and the data credits stay on every picture taken of its 3D city
+  const stamp = (x, w, h) => {
+    if (!(gTiles && gState === 'ok')) return; const txt = googleCredit(), fs = Math.max(11, Math.round(w / 95));
+    x.save(); x.textBaseline = 'bottom'; x.shadowColor = 'rgba(0,0,0,0.85)'; x.shadowBlur = 3; x.fillStyle = '#ffffff';
+    x.font = `700 ${Math.round(fs * 1.6)}px Arial, Helvetica, sans-serif`; x.fillText('Google', Math.round(fs * 0.7), h - Math.round(fs * 0.5));
+    if (txt) { x.font = `500 ${fs}px Arial, Helvetica, sans-serif`; x.textAlign = 'right'; x.fillText(txt.slice(0, 180), w - Math.round(fs * 0.6), h - Math.round(fs * 0.55)); }
+    x.restore();
+  };
+  layout();
+  if (dRef.current.drone) setDrone(dRef.current.drone);
   // v7.12: the planner takes a picture of this view for the plan and the PDF
   if (apiRef) apiRef.current = {
-    capture: (maxW = 1800) => { renderer.render(scene, cam); const src = renderer.domElement; const k = Math.min(1, maxW / src.width);
+    capture: (maxW = 1800, q = 0.85) => { if (D) applyDrone(); if (gTiles) { cam.updateMatrixWorld(); gTiles.tiles.update(); } renderer.render(scene, cam); const src = renderer.domElement; const k = Math.min(1, maxW / src.width);
       const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
-      const x = c.getContext('2d'); x.fillStyle = '#e2e8f0'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.85); },
+      const x = c.getContext('2d'); x.fillStyle = '#e2e8f0'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src, 0, 0, c.width, c.height); stamp(x, c.width, c.height); return c.toDataURL('image/jpeg', q); },
+    attribution: () => (gTiles && gState === 'ok' ? googleCredit() : ''),
+    setDrone: (d) => setDrone(d),
+    nudge: (k) => nudge(k),
+    aimAt: (ll, hAboveGround = 1.5) => { if (!D) return; const p = P(ll); aim(new THREE.Vector3(p.x, terrainAt(p.x, p.z) + hAboveGround, p.z)); },
     camera: () => ({ theta, phi, dist, tx: target.x, ty: target.y, tz: target.z }),
     setCamera: (cv) => { if (!cv) return; theta = cv.theta; phi = cv.phi; dist = cv.dist; target.set(cv.tx, cv.ty, cv.tz); place(); req(); },
   };
   return () => {
     clearTimeout(t1); clearTimeout(t2); if (raf) cancelAnimationFrame(raf); ro.disconnect();
+    cv.removeEventListener('dblclick', dbl); window.removeEventListener('keydown', key); if (nT) cancelAnimationFrame(nT);
     cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up); cv.removeEventListener('pointercancel', up); cv.removeEventListener('wheel', wheel); cv.removeEventListener('contextmenu', ctx);
     if (apiRef) apiRef.current = null;
     if (gTiles) { scene.remove(gTiles.root || gTiles.tiles.group); try { gTiles.tiles.deleteCamera(cam); } catch (e) {} gTiles.onChange = null; }

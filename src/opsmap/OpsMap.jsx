@@ -11,6 +11,7 @@ import {
 import { elevations } from './terrain.js';
 import { PATH_COLOURS, pathColour, PATH_WIDTHS } from './geo.js';
 import { loadPdfJs } from '../cloud/Manual.jsx';
+import { ASPECTS, aspectOf, hfovOf, lensesFor, findLens, defaultLens } from './lenses.js';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const r1 = (x) => Math.round(x * 10) / 10;
@@ -192,7 +193,7 @@ function Profile({ path, res, readOnly, onAlt, onPick, onStart, selPt }) {
   );
 }
 
-export default function OpsMap({ value, onChange, onClose, center, googleKey = '', fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace, viewImages = {}, onViewImage, plannedHeightM = 0, reviewer = '' }) {
+export default function OpsMap({ value, onChange, onClose, center, googleKey = '', fleet = {}, jobDrones = [], keFor: keForProp, onSaveDroneLimits, readOnly, title, airspace, viewImages = {}, onViewImage, plannedHeightM = 0, reviewer = '', onSaveDroneCamera }) {
   const [toast, setToast] = useState('');
   const [ackOpen, setAckOpen] = useState(null); // { key, note }
   const api3d = useRef(null), cam3d = useRef(null);
@@ -308,6 +309,59 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
   const mode = doc ? doc.mode : 'geo';
   const settings = (doc && doc.settings) || {};
 
+  // ── v7.56: drone camera (previs): put a virtual drone at a point, set its height, heading, gimbal tilt and lens,
+  // look through it in the 3D view and capture shots for the PDF's "Planned perspectives" ──
+  const [dcam, setDcam] = useState(null); // { lat, lng, agl, heading, tilt, drone, lensId, aspectKey, from, raised }
+  const lastDcam = useRef(null);
+  const [lensForm, setLensForm] = useState(null);
+  const maxAgl = plannedHeightM > 0 ? Math.round(plannedHeightM * 10) / 10 : 120;
+  const camDrone = dcam ? dcam.drone || '' : '';
+  const lensGroups = useMemo(() => lensesFor(camDrone, ((fleet || {})[camDrone] || {}).cameras), [camDrone, fleet]);
+  const camLens = dcam ? findLens(lensGroups, dcam.lensId) || defaultLens(lensGroups) : null;
+  const camAspect = camLens ? aspectOf(dcam.aspectKey || camLens.aspect) : 16 / 9;
+  const camHfov = camLens ? hfovOf(camLens, camAspect) : 60;
+  const droneProp = useMemo(() => (dcam ? { lat: dcam.lat, lng: dcam.lng, agl: dcam.agl, heading: dcam.heading, tilt: dcam.tilt, raised: dcam.raised || 0, hfov: camHfov, aspect: camAspect, lensName: camLens.name, fisheye: !!camLens.fisheye } : null),
+    [dcam && dcam.lat, dcam && dcam.lng, dcam && dcam.agl, dcam && dcam.heading, dcam && dcam.tilt, dcam && dcam.raised, camHfov, camAspect, camLens && camLens.name]); // eslint-disable-line
+  const onDrone = useCallback((p) => setDcam((d) => (d ? { ...d, ...p } : d)), []);
+  const bearingTo = (a, b) => { const q = makeProj(mode, a).to(b); return (((Math.atan2(q.x, q.y) * 180) / Math.PI) + 360) % 360; };
+  const startDrone = (from) => {
+    const cur = docRef.current; if (!cur) return;
+    const ref = refOf(cur) || (center ? [center.lat, center.lng] : [0, 0]);
+    const tlz = (cur.points || []).find((p) => p.kind === 'tlz');
+    const base = from || (lastDcam.current && { ...lastDcam.current }) || (tlz ? { lat: tlz.lat, lng: tlz.lng, from: tlz.title || 'Take-off' } : { lat: ref[0], lng: ref[1] });
+    const at = [base.lat, base.lng], far = makeProj(cur.mode, ref).dist(at, ref) > 3;
+    const drone = base.drone || (lastDcam.current && lastDcam.current.drone) || drones[0] || '';
+    setSel(null); setSelPt(null); setDraft(null); setTool('select');
+    setDcam({ agl: Math.min(maxAgl, 30), heading: far ? Math.round(bearingTo(at, ref)) : 0, tilt: -20, ...base, drone });
+    setView('3d');
+  };
+  const stopDrone = () => { if (dcam) lastDcam.current = dcam; setDcam(null); };
+  const setCam = (ch) => setDcam((d) => (d ? { ...d, ...ch } : d));
+  const shotsOf = (d) => ((d && d.views) || []).filter((v) => v.shot);
+  const MAX_SHOTS = 12;
+  const captureShot = () => {
+    const cur = docRef.current, api = api3d.current; if (!cur || readOnly || !dcam) return;
+    if (!api) { setViewMsg('The 3D view is still loading.'); return; }
+    const shots = shotsOf(cur); if (shots.length >= MAX_SHOTS) { setViewMsg('Up to ' + MAX_SHOTS + ' shots per job. Remove one to add another.'); return; }
+    const id = 'v' + uid(), src = api.capture(1280, 0.8);
+    if (onViewImage) onViewImage(id, src);
+    const shot = { lat: dcam.lat, lng: dcam.lng, agl: dcam.agl, heading: dcam.heading, tilt: dcam.tilt, raised: dcam.raised || 0, drone: dcam.drone || '', lensId: camLens.id, lens: camLens.name, aspect: dcam.aspectKey || camLens.aspect, hfov: Math.round(camHfov * 10) / 10, from: dcam.from || '', credit: (api.attribution && api.attribution()) || '' };
+    commit({ ...cur, views: [...(cur.views || []), { id, kind: '3d', title: (dcam.from ? dcam.from + ' · ' : '') + 'Shot ' + (shots.length + 1), shot, at: new Date().toISOString() }] });
+    setViewMsg('Shot captured. It prints in the PDF under Planned perspectives.');
+  };
+  const shotPose = (sh) => ({ lat: sh.lat, lng: sh.lng, agl: sh.agl, heading: sh.heading, tilt: sh.tilt, drone: sh.drone, lensId: sh.lensId, aspectKey: sh.aspect, from: sh.from });
+  const picBytes = (doc && doc.views ? doc.views : []).reduce((t, v) => t + (viewImages[v.id] ? viewImages[v.id].length * 0.75 : 0), 0);
+  const aimTargets = useMemo(() => {
+    if (!doc) return []; const pr = makeProj(doc.mode, refOf(doc) || [0, 0]);
+    const cen = (z) => (z.shape === 'circle' ? z.c : (() => { const q = z.pts.map(pr.to); return pr.from({ x: q.reduce((t, p) => t + p.x, 0) / q.length, y: q.reduce((t, p) => t + p.y, 0) / q.length }); })());
+    return [...doc.points.map((p) => ({ k: 'p' + p.id, label: (POINT_KINDS[p.kind] || {}).label + ': ' + (p.title || ''), ll: [p.lat, p.lng], h: 1.5 })),
+      ...doc.zones.filter((z) => z.shape === 'circle' || (z.pts || []).length >= 3).map((z) => ({ k: 'z' + z.id, label: 'Zone: ' + z.name, ll: cen(z), h: 0 })),
+      ...doc.paths.filter((p) => p.pts.length).map((p) => ({ k: 'a' + p.id, label: 'Path start: ' + p.name, ll: [p.pts[0][0], p.pts[0][1]], h: (Number(p.pts[0][2]) || 0) - (Number(p.pts[0][3]) || 0) }))];
+  }, [doc]);
+  const droneFromPath = (p, i) => { const q = p.pts[i], nx = p.pts[i + 1] || p.pts[i - 1];
+    const hd = nx ? bearingTo([q[0], q[1]], [nx[0], nx[1]]) + (p.pts[i + 1] ? 0 : 180) : 0;
+    startDrone({ lat: q[0], lng: q[1], agl: Math.max(0.5, (Number(q[2]) || 0) - (Number(q[3]) || 0)), heading: Math.round(hd % 360), tilt: -15, drone: p.drone || undefined, from: (p.name || 'Path') + ' point ' + (i + 1) }); };
+
   useEffect(() => { const k = (e) => {
     if (e.key === 'Escape' && !/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) { if (draftRef.current) setDraft(null); else if (toolRef.current !== 'select') setTool('select'); else { setSel(null); setSelPt(null); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) { e.preventDefault(); undo(); }
@@ -348,12 +402,13 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
   // 2D: the map area on screen (re-drawn sharp in the PDF); 3D: a picture of the scene from this angle.
   const addView = () => {
     const cur = docRef.current; if (!cur || readOnly) return;
-    const views = cur.views || [], id = 'v' + uid(), n = views.filter((v) => v.kind === view).length + 1;
+    const views = cur.views || [], id = 'v' + uid(), n = views.filter((v) => v.kind === view && !v.shot).length + 1;
     if (view === '2d') {
       const m = mapRef.current; if (!m) return; const bb = m.getBounds();
       commit({ ...cur, views: [...views, { id, kind: '2d', title: (cur.mode === 'plan' ? 'Floor plan view ' : 'Map view ') + n, bounds: [[bb.getSouth(), bb.getWest()], [bb.getNorth(), bb.getEast()]], at: new Date().toISOString() }] });
     } else {
       const api = api3d.current; if (!api) { setViewMsg('The 3D view is still loading.'); return; }
+      if (dcam) { captureShot(); return; }
       const src = api.capture();
       if (onViewImage) onViewImage(id, src);
       commit({ ...cur, views: [...views, { id, kind: '3d', title: '3D view ' + n, camera: api.camera(), at: new Date().toISOString() }] });
@@ -362,10 +417,15 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
   };
   const showView = (v) => {
     if (v.kind === '2d') { if (view !== '2d') { setView('2d'); setTimeout(() => { const m = mapRef.current; if (m) m.fitBounds(v.bounds, { animate: false }); }, 250); } else if (mapRef.current) mapRef.current.fitBounds(v.bounds); }
-    else { cam3d.current = v.camera; if (view !== '3d') setView('3d'); else if (api3d.current) api3d.current.setCamera(v.camera); }
+    else if (v.shot) startDrone(shotPose(v.shot));
+    else { stopDrone(); cam3d.current = v.camera; if (view !== '3d') setView('3d'); else if (api3d.current) api3d.current.setCamera(v.camera); }
   };
   const retakeView = (v) => {
     const cur = docRef.current;
+    if (v.shot) { const api = api3d.current; if (!api || !dcam || view !== '3d') { setViewMsg('Press Show, adjust the drone camera, then press Retake.'); return; }
+      if (onViewImage) onViewImage(v.id, api.capture(1280, 0.8));
+      commit({ ...cur, views: cur.views.map((x) => x.id === v.id ? { ...x, shot: { ...x.shot, lat: dcam.lat, lng: dcam.lng, agl: dcam.agl, heading: dcam.heading, tilt: dcam.tilt, raised: dcam.raised || 0, drone: dcam.drone || '', lensId: camLens.id, lens: camLens.name, aspect: dcam.aspectKey || camLens.aspect, hfov: Math.round(camHfov * 10) / 10, credit: (api.attribution && api.attribution()) || '' }, at: new Date().toISOString() } : x) });
+      setViewMsg('Shot updated.'); return; }
     if (v.kind === '2d') { const m = mapRef.current; if (!m || view !== '2d') { setViewMsg('Switch to 2D, frame the map, then press Retake.'); return; } const bb = m.getBounds(); commit({ ...cur, views: cur.views.map((x) => x.id === v.id ? { ...x, bounds: [[bb.getSouth(), bb.getWest()], [bb.getNorth(), bb.getEast()]], at: new Date().toISOString() } : x) }); }
     else { const api = api3d.current; if (!api || view !== '3d') { setViewMsg('Switch to 3D, turn it to the angle you want, then press Retake.'); return; } if (onViewImage) onViewImage(v.id, api.capture()); commit({ ...cur, views: cur.views.map((x) => x.id === v.id ? { ...x, camera: api.camera(), at: new Date().toISOString() } : x) }); }
     setViewMsg('View updated.');
@@ -724,10 +784,11 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 text-white" style={{ background: '#1e0b45' }} data-ops-noprint="1">
         <div className="flex-1 min-w-[200px]"><div className="text-[10px] uppercase tracking-widest text-violet-300">Advanced ops map · {doc.mode === 'plan' ? 'indoor / floor plan' : 'outdoor'}</div><div className="font-semibold truncate">{title || 'This job'}</div></div>
         <div className="flex bg-white/10 rounded-lg p-0.5" role="group" aria-label="View">
-          {['2d', '3d'].map((v) => <button key={v} type="button" data-ops-view={v} onClick={() => { setView(v); setDraft(null); }} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === v ? 'bg-violet-300 text-violet-950' : 'text-violet-100'}`}>{v === '2d' ? '2D plan' : '3D view'}</button>)}
+          {['2d', '3d'].map((v) => <button key={v} type="button" data-ops-view={v} onClick={() => { if (v === '2d') stopDrone(); setView(v); setDraft(null); }} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === v ? 'bg-violet-300 text-violet-950' : 'text-violet-100'}`}>{v === '2d' ? '2D plan' : '3D view'}</button>)}
         </div>
         <div className="flex lg:hidden gap-1">{[['tools', 'fa-pen-ruler', 'Tools'], ['details', 'fa-sliders', 'Details']].map(([k, ic, l]) => <button key={k} type="button" data-ops-mob={k} onClick={() => setMob((m) => (m === k ? null : k))} className={`${btn} ${mob === k ? 'bg-violet-300 text-violet-950 border-violet-300' : 'border-white/30 text-white'} ${k === 'tools' ? 'md:hidden' : ''}`}><i className={`fa-solid ${ic}`}></i>{l}</button>)}</div>
-        {!readOnly && <button type="button" data-ops-addview="1" onClick={addView} disabled={(doc.views || []).length >= 8} className={`${btn} border-emerald-300 bg-emerald-500 text-white disabled:opacity-40`} title="Keep this view (2D or 3D) in the plan and the PDF"><i className="fa-solid fa-camera"></i> Add this view to the plan</button>}
+        <button type="button" data-ops-dronecam="1" onClick={() => (dcam ? stopDrone() : startDrone())} className={`${btn} ${dcam ? 'border-amber-300 bg-amber-300 text-amber-950' : 'border-white/30 text-white'}`} title="Look through a virtual drone camera and capture planned shots"><i className="fa-solid fa-video"></i> {dcam ? 'Leave drone camera' : 'Drone camera'}</button>
+        {!readOnly && <button type="button" data-ops-addview="1" onClick={addView} disabled={dcam ? shotsOf(doc).length >= MAX_SHOTS : (doc.views || []).filter((v) => !v.shot).length >= 8} className={`${btn} border-emerald-300 bg-emerald-500 text-white disabled:opacity-40`} title="Keep this view (2D or 3D) in the plan and the PDF"><i className="fa-solid fa-camera"></i> {dcam ? 'Capture this shot' : 'Add this view to the plan'}</button>}
         {!readOnly && <button type="button" onClick={undo} disabled={!hist.current.length} className={`${btn} border-white/30 text-white disabled:opacity-40`} title="Undo (Ctrl+Z)"><i className="fa-solid fa-rotate-left"></i> Undo</button>}
         <button type="button" onClick={() => window.print()} className={`${btn} border-white/30 text-white`}><i className="fa-solid fa-print"></i> Print / PDF</button>
         <button type="button" data-ops-close="1" onClick={onClose} className={`${btn} border-violet-300 bg-violet-300 text-violet-950`}><i className="fa-solid fa-check"></i> {readOnly ? 'Close' : 'Done'}</button>
@@ -766,7 +827,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} labels={show.labels !== false} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} labels={show.labels !== false} drone={droneProp} onDrone={onDrone} maxAgl={maxAgl} />}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
               <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? <>Drawing <b>{((doc.paths.find((p) => p.id === draft.extend) || {}).name) || 'the path'}</b>: press and drag again to add to it</> : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>
@@ -853,6 +914,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
           {selPathO && <div className="space-y-3" data-ops-path={selPathO.id}>
             <div className="flex items-center gap-2"><i className="fa-solid fa-route text-slate-600"></i><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">Flight path</span>{!readOnly && <button type="button" onClick={delSel} className="text-xs text-red-600"><i className="fa-solid fa-trash-can mr-1"></i>Delete</button>}</div>
             <div><label className={lbl} htmlFor="op-name">Name</label><input id="op-name" className={inp} disabled={readOnly} value={selPathO.name || ''} onChange={(e) => setPath(selPathO.id, { name: e.target.value })} /></div>
+            {selPathO.pts.length > 0 && <button type="button" data-ops-dc-from="path" onClick={() => droneFromPath(selPathO, selPt != null && selPathO.pts[selPt] ? selPt : 0)} className={`${btn} w-full justify-center border-amber-400 bg-amber-50 text-amber-900`}><i className="fa-solid fa-video"></i>Drone camera at {selPt != null && selPathO.pts[selPt] ? 'point ' + (selPt + 1) : 'the start'}</button>}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <div className="flex items-center gap-1" data-ops-path-colours="1"><span className={lbl + ' mb-0 mr-1'}>Colour</span>{PATH_COLOURS.map((c) => <button key={c} type="button" disabled={readOnly} aria-label={'Colour ' + c} data-ops-path-colour={c} onClick={() => setPath(selPathO.id, { color: c })} className="w-5 h-5 rounded-full" style={{ background: c, boxShadow: pathColour(selPathO, doc.paths) === c ? '0 0 0 2px #fff, 0 0 0 4px ' + c : 'none' }}></button>)}</div>
               {doc.mode !== 'plan' && <div className="flex items-center gap-1" data-ops-path-width="1" title="In the 3D view the path is drawn as a tube of airspace this wide, to allow some room either side"><span className={lbl + ' mb-0 mr-1'}>3D width</span>{PATH_WIDTHS.map((w) => <button key={w} type="button" disabled={readOnly} data-ops-path-w={w} onClick={() => setPath(selPathO.id, { w3d: w })} className={`${btn} px-2 py-0.5 ${(Number(selPathO.w3d) || 1) === w ? 'border-violet-600 bg-violet-50 text-violet-900' : 'border-slate-300 text-slate-600'}`}>{w}×{w} m</button>)}</div>}
@@ -901,6 +963,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
           </div>}
 
           {selPoint && <div className="space-y-3" data-ops-point={selPoint.id}>
+            <button type="button" data-ops-dc-from="point" onClick={() => startDrone({ lat: selPoint.lat, lng: selPoint.lng, from: selPoint.title || (POINT_KINDS[selPoint.kind] || {}).label })} className={`${btn} w-full justify-center border-amber-400 bg-amber-50 text-amber-900`}><i className="fa-solid fa-video"></i>Drone camera from here</button>
             <div className="flex items-center gap-2"><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">{POINT_KINDS[selPoint.kind].label}</span>{!readOnly && <button type="button" onClick={delSel} className="text-xs text-red-600"><i className="fa-solid fa-trash-can mr-1"></i>Delete</button>}</div>
             <div><label className={lbl} htmlFor="opt-kind">Type</label><select id="opt-kind" className={inp} disabled={readOnly} value={selPoint.kind} onChange={(e) => setPoint(selPoint.id, { kind: e.target.value })}>{Object.keys(POINT_KINDS).map((k) => <option key={k} value={k}>{POINT_KINDS[k].label}</option>)}</select></div>
             <div><label className={lbl} htmlFor="opt-title">Label</label><input id="opt-title" className={inp} disabled={readOnly} value={selPoint.title || ''} onChange={(e) => setPoint(selPoint.id, { title: e.target.value })} /></div>
@@ -937,7 +1000,70 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
             </div>}
           </div>}
 
-          {!sel && <div className="space-y-3">
+          {dcam && view === '3d' && (() => {
+            const shots = shotsOf(doc), sl = 'w-full accent-amber-500';
+            const num = (k, v, min, max, step) => <input type="number" aria-label={k} className="w-20 px-1.5 py-0.5 border border-slate-300 rounded text-xs text-right" min={min} max={max} step={step} value={v} onChange={(e) => { const n = parseFloat(e.target.value); if (isFinite(n)) setCam({ [k]: Math.max(min, Math.min(max, n)) }); }} />;
+            const own = ((fleet || {})[camDrone] || {}).cameras || [];
+            return <div className="space-y-3" data-ops-dronepanel="1">
+              <div className="flex items-center gap-2"><i className="fa-solid fa-video text-amber-600"></i><span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-1">Drone camera{dcam.from ? ' · ' + dcam.from : ''}</span>
+                <button type="button" onClick={stopDrone} className="text-xs font-semibold text-violet-700">Leave</button></div>
+              <div><label className={lbl} htmlFor="dc-drone">Drone</label><select id="dc-drone" className={inp} value={camDrone} onChange={(e) => { const g = lensesFor(e.target.value, ((fleet || {})[e.target.value] || {}).cameras); setCam({ drone: e.target.value, lensId: defaultLens(g).id, aspectKey: null }); }}>
+                <option value="">(any drone)</option>{drones.map((d) => <option key={d} value={d}>{d}</option>)}{camDrone && !drones.includes(camDrone) && <option value={camDrone}>{camDrone}</option>}</select></div>
+              <div><label className={lbl} htmlFor="dc-lens">Lens</label>
+                <select id="dc-lens" data-ops-dc-lens="1" className={inp} value={camLens.id} onChange={(e) => setCam({ lensId: e.target.value, aspectKey: null })}>
+                  {lensGroups.map((g) => <optgroup key={g.id} label={g.name + (g.suggested ? ' ★' : '')}>{g.lenses.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</optgroup>)}</select>
+                <div className="flex flex-wrap gap-1 mt-1.5" data-ops-dc-quick="1">{(lensGroups.filter((g) => g.suggested).flatMap((g) => g.lenses).concat(lensGroups.find((g) => g.id === 'generic').lenses.filter((l) => ['eq-24', 'eq-50', 'eq-135'].includes(l.id)))).slice(0, 8).map((l) =>
+                  <button key={l.id} type="button" data-ops-dc-lensbtn={l.id} onClick={() => setCam({ lensId: l.id, aspectKey: null })} className={`px-2 py-0.5 rounded-full border text-[11px] font-semibold ${camLens.id === l.id ? 'border-amber-500 bg-amber-100 text-amber-950' : 'border-slate-300 text-slate-600'}`}>{l.group === 'generic' ? l.eq + ' mm' : l.name.replace(/^.*· /, '')}</button>)}</div></div>
+              <div className="grid grid-cols-2 gap-2 items-end">
+                <div><label className={lbl} htmlFor="dc-aspect">Picture shape</label><select id="dc-aspect" className={inp} value={dcam.aspectKey || camLens.aspect} onChange={(e) => setCam({ aspectKey: e.target.value })}>{ASPECTS.map(([k]) => <option key={k} value={k}>{k}</option>)}</select></div>
+                <div className="text-xs text-slate-600 pb-1.5" data-ops-dc-fov={Math.round(camHfov)}>Field of view <b>{Math.round(camHfov)}°</b> across{camLens.fisheye ? ' (fisheye)' : ''}</div>
+              </div>
+              <label className="block text-[11px] font-semibold text-slate-600"><span className="flex items-center justify-between">Height above ground (max {maxAgl} m){num('agl', dcam.agl, 0.5, maxAgl, 0.5)}</span>
+                <input type="range" data-ops-dc-agl="1" className={sl} min="0.5" max={maxAgl} step="0.5" value={dcam.agl} onChange={(e) => setCam({ agl: Number(e.target.value) })} /></label>
+              <label className="block text-[11px] font-semibold text-slate-600"><span className="flex items-center justify-between">Heading (0° = north){num('heading', dcam.heading, 0, 359.9, 1)}</span>
+                <input type="range" data-ops-dc-heading="1" className={sl} min="0" max="359" step="1" value={Math.round(dcam.heading)} onChange={(e) => setCam({ heading: Number(e.target.value) })} /></label>
+              <label className="block text-[11px] font-semibold text-slate-600"><span className="flex items-center justify-between">Gimbal tilt (0° level, −90° down){num('tilt', dcam.tilt, -90, 20, 1)}</span>
+                <input type="range" data-ops-dc-tilt="1" className={sl} min="-90" max="20" step="1" value={Math.round(dcam.tilt)} onChange={(e) => setCam({ tilt: Number(e.target.value) })} /></label>
+              {doc.mode !== 'plan' && <div className="grid grid-cols-2 gap-2">
+                <div><label className={lbl} htmlFor="dc-lat">Latitude</label><input id="dc-lat" type="number" step="0.00001" className={inp} value={Math.round(dcam.lat * 1e6) / 1e6} onChange={(e) => { const n = parseFloat(e.target.value); if (isFinite(n) && Math.abs(n) <= 90) setCam({ lat: n, from: '' }); }} /></div>
+                <div><label className={lbl} htmlFor="dc-lng">Longitude</label><input id="dc-lng" type="number" step="0.00001" className={inp} value={Math.round(dcam.lng * 1e6) / 1e6} onChange={(e) => { const n = parseFloat(e.target.value); if (isFinite(n) && Math.abs(n) <= 180) setCam({ lng: n, from: '' }); }} /></div>
+              </div>}
+              {aimTargets.length > 0 && <div><label className={lbl} htmlFor="dc-aim">Point the camera at</label><select id="dc-aim" data-ops-dc-aim="1" className={inp} value="" onChange={(e) => { const t = aimTargets.find((x) => x.k === e.target.value); if (t && api3d.current && api3d.current.aimAt) api3d.current.aimAt(t.ll, t.h); }}>
+                <option value="">Choose a point, zone or path…</option>{aimTargets.map((t) => <option key={t.k} value={t.k}>{t.label}</option>)}</select></div>}
+              {!readOnly && <button type="button" data-ops-dc-capture="1" disabled={shots.length >= MAX_SHOTS} onClick={captureShot} className={`${btn} w-full justify-center border-emerald-600 bg-emerald-600 text-white disabled:opacity-40 py-2`}><i className="fa-solid fa-camera"></i>Capture this shot ({shots.length}/{MAX_SHOTS})</button>}
+              {viewMsg && <p className="text-xs text-emerald-700" data-ops-viewmsg="1">{viewMsg}</p>}
+              <div data-ops-shots="1" className="space-y-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex">Planned perspectives<span className="ml-auto font-normal normal-case tracking-normal" data-ops-picsize="1">pictures {picBytes < 1048576 ? Math.round(picBytes / 1024) + ' kB' : (picBytes / 1048576).toFixed(1) + ' MB'}</span></div>
+                {!shots.length && <p className="text-xs text-slate-500">Set up the shot, then press <b>Capture this shot</b>.</p>}
+                {shots.map((v) => { const i = doc.views.indexOf(v), prevShot = shots[shots.indexOf(v) - 1]; return (
+                  <div key={v.id} data-ops-shotrow="1" className="border border-slate-200 rounded-lg p-2 flex gap-2 items-start">
+                    {viewImages[v.id] ? <img src={viewImages[v.id]} alt="" className="w-20 h-12 object-cover rounded border border-slate-200 shrink-0" /> : <span className="w-20 h-12 rounded border border-slate-200 bg-slate-50 grid place-items-center text-slate-400 shrink-0"><i className="fa-solid fa-video"></i></span>}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <input aria-label="Shot title" value={v.title} disabled={readOnly} onChange={(e) => setViews((vs) => vs.map((x) => x.id === v.id ? { ...x, title: e.target.value } : x))} className="w-full px-1.5 py-0.5 text-xs font-semibold border border-slate-200 rounded" />
+                      <div className="text-[10px] text-slate-500 truncate">{v.shot.lens} · {Math.round(v.shot.agl)} m · {Math.round(v.shot.heading)}° · {Math.round(v.shot.tilt)}°</div>
+                      <div className="flex flex-wrap gap-x-2 text-[11px]">
+                        <button type="button" className="underline text-violet-700" onClick={() => showView(v)}>Show</button>
+                        {!readOnly && <button type="button" className="underline text-violet-700" onClick={() => retakeView(v)}>Retake</button>}
+                        {!readOnly && prevShot && <button type="button" className="underline text-slate-600" onClick={() => setViews((vs) => { const n = [...vs], j = n.indexOf(n.find((x) => x.id === prevShot.id)); n.splice(i, 1); n.splice(j, 0, v); return n; })}>Up</button>}
+                        {!readOnly && <button type="button" data-ops-shotdel="1" className="underline text-red-600" onClick={() => { setViews((vs) => vs.filter((x) => x.id !== v.id)); if (onViewImage) onViewImage(v.id, null); }}>Remove</button>}
+                      </div></div></div>); })}
+              </div>
+              <details className="text-xs" data-ops-ownlens="1"><summary className="cursor-pointer font-semibold text-slate-600">Your own lenses{camDrone ? ' for ' + camDrone : ''}</summary>
+                {!camDrone || !(fleet || {})[camDrone] ? <p className="mt-1 text-slate-500">{camDrone ? camDrone + ' isn\'t in your fleet yet. Add it in Database & Settings › Fleet to save lenses on its card.' : 'Pick a drone above to save lenses on its fleet card.'}</p> : <div className="mt-2 space-y-2">
+                  {own.map((c, i) => <div key={i} className="flex items-center gap-2"><span className="flex-1 truncate">{c.name} · {c.focal} mm on {c.sensorW} mm sensor</span>{!readOnly && onSaveDroneCamera && <button type="button" className="text-red-600 underline" onClick={() => onSaveDroneCamera(camDrone, own.filter((_, j) => j !== i))}>Remove</button>}</div>)}
+                  {!lensForm ? (onSaveDroneCamera && <button type="button" data-ops-addlens="1" className={`${btn} border-slate-300`} onClick={() => setLensForm({ name: '', sensorW: '', sensorH: '', focal: '', aspect: '16:9' })}><i className="fa-solid fa-plus"></i>Add a lens</button>)
+                    : <div className="space-y-1.5 border border-slate-200 rounded-lg p-2" data-ops-lensform="1">
+                      <input aria-label="Lens name" placeholder="Name, e.g. Main camera 24 mm" className={inp} value={lensForm.name} onChange={(e) => setLensForm({ ...lensForm, name: e.target.value })} />
+                      <div className="grid grid-cols-3 gap-1.5">{[['sensorW', 'Sensor width mm'], ['sensorH', 'Sensor height mm'], ['focal', 'Focal length mm']].map(([k, l]) => <label key={k} className="text-[10px] text-slate-500">{l}<input type="number" step="0.01" min="0" aria-label={l} className={inp} value={lensForm[k]} onChange={(e) => setLensForm({ ...lensForm, [k]: e.target.value })} /></label>)}</div>
+                      <label className="text-[10px] text-slate-500 block">Picture shape<select className={inp} value={lensForm.aspect} onChange={(e) => setLensForm({ ...lensForm, aspect: e.target.value })}>{ASPECTS.map(([k]) => <option key={k} value={k}>{k}</option>)}</select></label>
+                      <p className="text-[10px] text-slate-500">Use the real focal length, not the 35 mm equivalent (e.g. a 1″ sensor is 13.2 × 8.8 mm).</p>
+                      <div className="flex gap-2"><button type="button" data-ops-savelens="1" disabled={!(parseFloat(lensForm.sensorW) > 0 && parseFloat(lensForm.focal) > 0)} className={`${btn} border-violet-700 bg-violet-700 text-white disabled:opacity-40`} onClick={() => { const c = { name: lensForm.name.trim() || (lensForm.focal + ' mm'), sensorW: parseFloat(lensForm.sensorW), sensorH: parseFloat(lensForm.sensorH) || 0, focal: parseFloat(lensForm.focal), aspect: lensForm.aspect };
+                        onSaveDroneCamera(camDrone, [...own, c]); setCam({ lensId: 'own-' + own.length, aspectKey: null }); setLensForm(null); }}>Save to {camDrone}</button>
+                        <button type="button" className="underline" onClick={() => setLensForm(null)}>Cancel</button></div></div>}
+                </div>}</details>
+              <p className="text-[10px] text-slate-500">Heights are above the ground under the drone. Google's 3D imagery is indicative only and may be out of date (no stages, crowds or temporary structures).</p>
+            </div>; })()}
+          {!sel && !(dcam && view === '3d') && <div className="space-y-3">
             <div data-ops-views="1">
               <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Views in the plan &amp; PDF</div>
               {viewMsg && <p className="text-xs text-emerald-700 mb-1" data-ops-viewmsg="1">{viewMsg}</p>}
@@ -948,7 +1074,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
                   <div className="flex-1 min-w-0 space-y-1">
                     <input aria-label="View title" value={v.title} disabled={readOnly} onChange={(e) => setViews((vs) => vs.map((x) => x.id === v.id ? { ...x, title: e.target.value } : x))} className="w-full px-1.5 py-0.5 text-xs font-semibold border border-slate-200 rounded" />
                     <div className="flex flex-wrap gap-x-2 text-[11px]">
-                      <span className="text-slate-500">{v.kind === '3d' ? '3D' : '2D'}</span>
+                      <span className="text-slate-500">{v.shot ? 'Drone camera' : v.kind === '3d' ? '3D' : '2D'}</span>
                       <button type="button" className="underline text-violet-700" onClick={() => showView(v)}>Show</button>
                       {!readOnly && <button type="button" className="underline text-violet-700" onClick={() => retakeView(v)}>Retake</button>}
                       {!readOnly && i > 0 && <button type="button" className="underline text-slate-600" onClick={() => setViews((vs) => { const n = [...vs]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n; })}>Up</button>}
