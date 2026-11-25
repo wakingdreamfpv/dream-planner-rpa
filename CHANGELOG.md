@@ -1,5 +1,11 @@
 # Planner changelog
 
+## v7.59 — 25 Nov 2026 — Waypoint numbers, jump between waypoints in the drone camera, hide path & zones
+- **Waypoints are numbered on the map** (1, 2, 3…) with their height, in 2D and in 3D, without having to select the path. Untick Show › Path point numbers to hide them; Hide labels hides the 3D numbers too.
+- **Drone camera: ◀ Waypoint / Waypoint ▶** at the bottom of the view jump the camera from waypoint to waypoint (at that waypoint's height, looking towards the next one), and on to the next path at the end. Your lens and tilt stay as set.
+- **Hide path & zones** (in the same bar) clears the flight paths, zones and their labels off the view so you see the shot clean; press again to bring them back.
+- Supabase: nothing to do.
+
 ## v7.58 — 25 Nov 2026 — Ops map checks off; flight paths by clicking points, per-point heights, smooth line; Hide labels button
 - **Ops map checks are switched off for now.** No Checks list, nothing to acknowledge, no red or amber on the map, 3D view or profile, and the plan no longer says "to fix". (The red ones needed a note of 5+ characters before OK worked, which blocked planning.) They can come back later; the risk assessment covers safety.
 - **Click points is now the default** for a flight path: click where each point goes, double-click (or Finish) to end. Drawing freehand is still there (Draw), but it now keeps only the handful of points that shape your line instead of hundreds of tiny dots.

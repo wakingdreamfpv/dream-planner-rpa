@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   KINDS, POINT_KINDS, kindStyle, emptyOpsMap, makeProj, refOf, zoneTag, zoneBuffer, zoneArea, checkOps,
   presetLimits, speedAt, keAt, simpleKe, DEFAULT_BUFFER, hasOpsContent, smoothStroke, chaikin, rdp, toKph, fromKph, fmtSpeed, autoZoneLimit,
-  densify, surfacesOf, followGround, terrainRefPoint, followKey, ctrlOf, lineOf, ctrlIdx, rebuildPath, pathHeightTag,
+  densify, surfacesOf, followGround, terrainRefPoint, followKey, ctrlOf, lineOf, ctrlIdx, rebuildPath, pathHeightTag, waypointIdx,
 } from './geo.js';
 import { elevations } from './terrain.js';
 import { PATH_COLOURS, pathColour, PATH_WIDTHS } from './geo.js';
@@ -214,7 +214,7 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
   const [selPt, setSelPt] = useState(null);
   const [allH, setAllH] = useState(''); // v7.58: "Set all" heights box
   const [view, setView] = useState('2d');
-  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: false, buildings: true, google: true, labels: true, key: false });
+  const [show, setShow] = useState({ zones: true, buffers: true, points: true, paths: true, overlay: true, airspace: true, ptNums: true, buildings: true, google: true, labels: true, key: false });
   const showRef = useRef(show); showRef.current = show;
   const [busy, setBusy] = useState('');
   const [scaleAsk, setScaleAsk] = useState(null);
@@ -365,10 +365,22 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
       ...doc.zones.filter((z) => z.shape === 'circle' || (z.pts || []).length >= 3).map((z) => ({ k: 'z' + z.id, label: 'Zone: ' + z.name, ll: cen(z), h: 0 })),
       ...doc.paths.filter((p) => p.pts.length).map((p) => ({ k: 'a' + p.id, label: 'Path start: ' + p.name, ll: [p.pts[0][0], p.pts[0][1]], h: (Number(p.pts[0][2]) || 0) - (Number(p.pts[0][3]) || 0) }))];
   }, [doc]);
-  const droneFromPath = (p, i) => { const k = i; if (p.ctrl) { const ix = ctrlIdx(p); i = ix && ix[i] != null ? ix[i] : 0; } // v7.58: point N = the path's own point N
-    const q = p.pts[i], nx = p.pts[i + 1] || p.pts[i - 1];
-    const hd = nx ? bearingTo([q[0], q[1]], [nx[0], nx[1]]) + (p.pts[i + 1] ? 0 : 180) : 0;
-    startDrone({ lat: q[0], lng: q[1], agl: Math.max(0.5, (Number(q[2]) || 0) - (Number(q[3]) || 0)), heading: Math.round(hd % 360), tilt: -15, drone: p.drone || undefined, from: (p.name || 'Path') + ' point ' + (k + 1) }); };
+  // v7.59: the drone camera at a path's waypoint (the points you placed), looking towards the next one; ◀ ▶ step through them
+  const wpPose = (p, k) => { const cur = docRef.current, wi = waypointIdx(p, cur.mode), kk = Math.max(0, Math.min(wi.length - 1, k)), q = p.pts[wi[kk]];
+    const nx = wi[kk + 1] != null ? p.pts[wi[kk + 1]] : null, pv = wi[kk - 1] != null ? p.pts[wi[kk - 1]] : null;
+    const hd = nx ? bearingTo([q[0], q[1]], [nx[0], nx[1]]) : pv ? bearingTo([pv[0], pv[1]], [q[0], q[1]]) : 0;
+    return { lat: q[0], lng: q[1], agl: Math.min(maxAgl, Math.max(0.5, Math.round(((Number(q[2]) || 0) - (Number(q[3]) || 0)) * 2) / 2)), heading: Math.round(((hd % 360) + 360) % 360), from: (p.name || 'Path') + ' waypoint ' + (kk + 1), pathId: p.id, wp: kk, wpN: wi.length, raised: 0 }; };
+  const droneFromPath = (p, k) => startDrone({ ...wpPose(p, k), tilt: -15, drone: p.drone || undefined });
+  const goWp = (dir) => {
+    const cur = docRef.current, ps = (cur.paths || []).filter((q) => (q.pts || []).length > 1); if (!ps.length) return;
+    let p = dcam && ps.find((q) => q.id === dcam.pathId), k;
+    if (!p) { p = ps[0]; k = dir > 0 ? 0 : waypointIdx(p, cur.mode).length - 1; }
+    else { k = (dcam.wp == null ? -1 : dcam.wp) + dir; const n = waypointIdx(p, cur.mode).length;
+      if (k >= n || k < 0) { p = ps[(ps.indexOf(p) + (dir > 0 ? 1 : -1) + ps.length) % ps.length]; k = dir > 0 ? 0 : waypointIdx(p, cur.mode).length - 1; } }
+    const pose = wpPose(p, k); if (!dcam) { droneFromPath(p, k); return; }
+    setDcam((d) => (d ? { ...d, ...pose } : d));
+  };
+  const [arOn, setArOn] = useState(true); // v7.59: zones and paths shown in 3D (Hide path & zones)
 
   useEffect(() => { const k = (e) => {
     if (e.key === 'Escape' && !/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) { if (draftRef.current) setDraft(null); else if (toolRef.current !== 'select') setTool('select'); else { setSel(null); setSelPt(null); } }
@@ -855,8 +867,16 @@ export default function OpsMap({ value, onChange, onClose, center, googleKey = '
 
         <main className="flex-1 min-w-0 flex flex-col">
           <div className={`relative flex-1 min-h-[260px] ${doc.mode === 'plan' ? 'wd-ops-plan' : ''}`}>
-            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} labels={show.labels !== false} drone={droneProp} onDrone={onDrone} maxAgl={maxAgl} />}
+            {view === '2d' ? <div ref={mapEl} className="absolute inset-0" data-ops-map="1"></div> : <Ops3DLazy doc={doc} checks={checks} apiRef={api3d} camRef={cam3d} buildings={show.buildings !== false} googleKey={show.google ? googleKey : ''} labels={show.labels !== false} overlay={arOn} drone={droneProp} onDrone={onDrone} maxAgl={maxAgl} />}
             {<button type="button" data-ops-labels-btn="1" data-ops-noprint="1" onClick={() => setShow((s) => ({ ...s, labels: !(s.labels !== false) }))} aria-pressed={show.labels !== false} title={show.labels !== false ? 'Hide the labels on the map' : 'Show the labels on the map'} className={`absolute top-2 ${view === '2d' || droneProp ? 'right-14' : 'right-2'} z-[500] bg-white/95 border border-slate-300 rounded-md px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-white flex items-center gap-1.5`}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 7h14l4 5-4 5H3z"></path>{show.labels !== false ? null : <path d="M2 2l20 20"></path>}</svg>{show.labels !== false ? 'Hide labels' : 'Show labels'}</button>}
+            {dcam && view === '3d' && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[500] flex items-center gap-1.5 bg-slate-950/85 text-white rounded-xl px-2 py-1.5 shadow-lg text-xs" data-ops-noprint="1" data-ops-wpbar="1">
+              {doc.paths.some((p) => (p.pts || []).length > 1) && <>
+                <button type="button" data-ops-wp="prev" onClick={() => goWp(-1)} title="Previous waypoint" className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 font-bold">◀ Waypoint</button>
+                <span className="px-1.5 min-w-[110px] text-center font-semibold" data-ops-wp-at={dcam.wp != null ? dcam.wp + 1 : ''}>{dcam.pathId && dcam.wp != null ? (((doc.paths.find((p) => p.id === dcam.pathId) || {}).name) || 'Path') + ' · ' + (dcam.wp + 1) + ' of ' + (dcam.wpN || '?') : 'Jump to the path'}</span>
+                <button type="button" data-ops-wp="next" onClick={() => goWp(1)} title="Next waypoint" className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 font-bold">Waypoint ▶</button>
+                <span className="w-px h-5 bg-white/25 mx-0.5"></span></>}
+              <button type="button" data-ops-ar="1" aria-pressed={!arOn} onClick={() => setArOn((v) => !v)} title="Hide or show the flight paths and zones drawn over the view" className={`px-2.5 py-1.5 rounded-lg font-semibold ${arOn ? 'bg-white/10 hover:bg-white/20' : 'bg-amber-300 text-amber-950'}`}>{arOn ? 'Hide path & zones' : 'Show path & zones'}</button>
+            </div>}
             {view === '2d' && <div className="absolute top-2 right-2 z-[500] bg-white/95 border border-slate-300 rounded-md px-1.5 py-1 flex flex-col items-center" aria-hidden="true"><svg width="16" height="20" viewBox="0 0 18 22"><path d="M9 1 L16 20 L9 15 L2 20 Z" fill="#0f172a"></path></svg><span className="text-[10px] font-bold">N</span></div>}
             {draft && <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[600] bg-slate-900 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2 shadow-lg" data-ops-noprint="1" data-ops-drawing="1">
               <span>{draft.type === 'zone' ? (draft.shape === 'circle' ? (draft.c ? 'Click the edge to set the radius' : 'Click the centre') : 'Click each corner · click the first point or double-click to finish') : draft.type === 'path' ? (pathMode === 'draw' && draft.extend ? <>Drawing <b>{((doc.paths.find((p) => p.id === draft.extend) || {}).name) || 'the path'}</b>: press and drag again to add to it</> : 'Click each point · double-click or Finish to end') : 'Click the second point'}</span>

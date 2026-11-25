@@ -448,3 +448,11 @@ export const pathHeightTag = (p) => {
   if (p.ctrl && p.ctrl.length) { const h = p.ctrl.map((q) => Number(q[2]) || 0), lo = Math.min(...h), hi = Math.max(...h); return ' · ' + (lo === hi ? lo : lo + '–' + hi) + ' m above ground'; }
   return ' · ' + (Number(p.agl) || 0) + ' m above ground';
 };
+// v7.59: a path's waypoints as positions in its flown line (pts): the points you placed, or for an older path the
+// points that shape it
+export const waypointIdx = (path, mode) => {
+  const ix = ctrlIdx(path); if (ix) return ix;
+  const pts = path.pts || [], c = ctrlOf(path, mode), out = []; let j = 0;
+  c.forEach((q) => { while (j < pts.length && !(Math.abs(pts[j][0] - q[0]) < 1e-9 && Math.abs(pts[j][1] - q[1]) < 1e-9)) j++; if (j < pts.length) out.push(j); });
+  return out.length ? out : pts.map((q, i) => i);
+};
