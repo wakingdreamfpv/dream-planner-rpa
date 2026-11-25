@@ -6,6 +6,10 @@
 - **Pilot seat:** the HUD glass is fully clear, with two clean metal posts. No more sky showing through.
 - **Race car:** the halo now carries on up out of the picture instead of stopping in a straight line. The driver's boots show in the footwell: the right foot presses with throttle and the left foot moves with yaw.
 - **Easier syncing:** under "Sync the log to the footage" there's a strip showing your video's sound as a wave, with the log's throttle and stick moves underneath. Drag the bottom part sideways until the throttle lines up with the motor sound, or click the top part to jump the video there. "Around arming" zooms in, and "Whole video" shows it all.
+## v7.59 — 25 Nov 2026 — Waypoint numbers, jump between waypoints in the drone camera, hide path & zones
+- **Waypoints are numbered on the map** (1, 2, 3…) with their height, in 2D and in 3D, without having to select the path. Untick Show › Path point numbers to hide them; Hide labels hides the 3D numbers too.
+- **Drone camera: ◀ Waypoint / Waypoint ▶** at the bottom of the view jump the camera from waypoint to waypoint (at that waypoint's height, looking towards the next one), and on to the next path at the end. Your lens and tilt stay as set.
+- **Hide path & zones** (in the same bar) clears the flight paths, zones and their labels off the view so you see the shot clean; press again to bring them back.
 - Supabase: nothing to do.
 
 ## v7.58 — 25 Nov 2026 — Ops map checks off; flight paths by clicking points, per-point heights, smooth line; Hide labels button

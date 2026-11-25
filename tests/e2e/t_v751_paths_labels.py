@@ -59,7 +59,7 @@ with sync_playwright() as p:
     pg.click('[data-ops-view="3d"]'); pg.wait_for_timeout(7000)
     tubes = pg.evaluate("()=>{const out={}; window.__WD_3D.scene.traverse(o=>{ if(o.userData&&o.userData.pathTube) out[o.userData.pathTube]=o.userData.radius; }); return Object.values(out).sort();}")
     R.check('3D: paths are tubes 1 m and 3 m across', tubes == [0.5, 1.5], tubes)
-    shown = pg.evaluate("()=>window.__WD_3D.labelsShown")
+    shown = pg.evaluate("()=>{let n=0; window.__WD_3D.scene.traverse(o=>{ if(o.isSprite&&o.visible&&!o.userData.wp) n++; }); return n;}")  # v7.59: waypoint numbers not counted
     R.check('3D: overlapping labels are thinned out (Exclusion 1 and 2 sit on top of each other: one hides)', shown is not None and shown <= 4, shown)
     lv = pg.evaluate("()=>window.__WD_3D.googleLevel")
     R.check('3D: Google\'s city is levelled against the terrain (its ground brought down to ours)', lv and lv['n'] > 3 and abs(lv['y'] + 45) < 1, lv)
