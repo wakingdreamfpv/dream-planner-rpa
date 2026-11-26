@@ -22,7 +22,7 @@ only by you.
 ## Things to know
 - Changes are saved to your account; each device picks them up the next time it opens the job list. A device that has
   unsaved changes to that same job keeps its own version, so save or close the job on your devices first.
-- Flights added through the connector don't carry the height/speed chart trace. For charts, use **Add flight logs** on
-  the planner's Home screen instead.
+- Flights added through the connector carry the height/speed chart readings (from v7.64). Adding a log again fills in
+  the readings on flights that were added before without them; nothing else on those flights changes.
 - Radio clock: logs are read as UTC (the planner's default). If your radio clock is set to local time, change
   `WD_TLM_CLOCK` to `local` in the Claude config.

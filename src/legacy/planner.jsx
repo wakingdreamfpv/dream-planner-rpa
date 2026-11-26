@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.64';
+        const APP_VERSION = '7.65';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10414,7 +10414,7 @@ View in the Database & Settings tab.`);
             if (d.error || !d.plan) { alert('Couldn\'t open the job from the cloud: ' + (d.error || 'no plan saved')); return false; }
             handleLoadPlan({ ...d.plan, title: d.job.title, status: d.job.status === 'completed' ? 'completed' : 'draft' }, { silent: true });
             setTimeout(() => { then && then(); }, 500);
-            setTimeout(() => alert(`“${d.job.title}” was opened from the cloud (it wasn't saved on this device). Save it here when you're done, so this device keeps a copy.\n\nTelemetry traces and site attachments stay on the device the job was made on.`), 900);
+            setTimeout(() => alert(`“${d.job.title}” was opened from the cloud (it wasn't saved on this device). Save it here when you're done, so this device keeps a copy.\n\nSite attachments stay on the device the job was made on.`), 900);
             return true;
           };
           // v7.5.7: "Open" on a job in a crew member's profile
