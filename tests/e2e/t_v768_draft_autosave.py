@@ -1,4 +1,4 @@
-# v7.66: (1) "New Operation" saves the new job as a draft straight away (and to the account for the CRP). Leaving it before
+# v7.68: (1) "New Operation" saves the new job as a draft straight away (and to the account for the CRP). Leaving it before
 # it's saved on purpose asks: keep the draft, or discard it (discard = removed here, marked cancelled in the account).
 # A draft left without being asked (tab closed) is asked about with a banner next time. A draft saved on purpose is never asked about.
 # (2) As soon as the plan has both signatures (or the CRP override) and Approved for Flight is switched on, it's saved into

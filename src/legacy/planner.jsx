@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.66';
+        const APP_VERSION = '7.68';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -5079,7 +5079,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
           const [opOpen, setOpOpen] = useState(false);
           const [gsHidden, setGsHidden] = useState(() => !!lsGet('wd_gs_hidden'));
           // company printed on this job: the profile, overridden by any per-job operator fields that are filled in
-          const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...((isCrewRole && typeof window !== 'undefined' && window.wdCrew && window.wdCrew.company) || db.companyProfile || {}) }; delete out.at;
+          const companyFor = (ov) => { const op = (ov && ov.operatorProfile) || {}; const out = { ...((isCrewRole && typeof window !== 'undefined' && window.wdCrew && window.wdCrew.company) || db.companyProfile || {}) }; delete out.at; delete out.aircraft;
             Object.keys(op).forEach(k => { if (String(op[k] || '').trim()) out[k] = op[k]; }); return out; };
           // v7.2.1: the company name goes into crew invite emails
           useEffect(() => { window.wdCompany = (db.companyProfile && db.companyProfile.name) || ''; }, [db.companyProfile && db.companyProfile.name]); // eslint-disable-line
@@ -5201,6 +5201,27 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
 
           // ── Log dump: many radio logs from several aircraft at once (v5.29) ──
           const [logDump, setLogDump] = useState(null); // { items:[{key,file,model,t,g,rpa,include}], dupes, empty }
+          // v7.67: the aircraft a radio log can go to. A company account never offers the planner's built-in starter list
+          // (DJI, Autel, Skydio…) unless the CRP actually uses that aircraft. Crew don't hold the company fleet on their device,
+          // so theirs comes from what the CRP publishes (company.aircraft, plus the fleet area if they were given access).
+          const logFleet = () => {
+            if (isCrewRole) {
+              const cc = (typeof crewCloud !== 'undefined' && crewCloud) || window.wdCrew || {}, co = cc.company || {}, out = {};
+              (Array.isArray(co.aircraft) ? co.aircraft : []).forEach(a => { if (a && a.name) out[a.name] = { cells: a.cells || '', radioModel: a.radioModel || '' }; });
+              ((((cc.shared || {}).fleet) || {}).rows || []).forEach(r => { if (r && r.name && !out[r.name]) out[r.name] = {}; });
+              return out;
+            }
+            const fl = db.fleet || {};
+            if (isFree) return fl;
+            const used = new Set([...(db.draftPlans || []), ...(db.savedPlans || []), ...(db.completedFlights || [])].flatMap(p => (p && p.overview && p.overview.rpaTypes) || []));
+            const out = {}; Object.entries(fl).forEach(([k, f]) => { if (!f || f.sample || f.suggested) return;
+              const touched = !defaultFleet[k] || used.has(k) || f.registrationNo || f.serial || f.cells || f.radioModel || Number(f.totalFlightTime) > 0 || Number(f.priorMinutes) > 0;
+              if (touched) out[k] = f; });
+            return out;
+          };
+          // the job's aircraft (approved types first), always offered even if they're not in the fleet list
+          const logJobRpas = () => [...new Set([...(approval.approvedTypes || []), ...(overview.rpaTypes || [])])].filter(r => r && r !== 'Custom');
+          const logDumpFleet = () => { const f = { ...logFleet() }; logJobRpas().forEach(r => { if (!f[r]) f[r] = {}; }); return f; };
           const openLogDump = () => {
             const inp = document.createElement('input');
             inp.type = 'file'; inp.accept = '.csv,text/csv'; inp.multiple = true;
@@ -5220,13 +5241,13 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
               })().then(results => {
                 const have = new Set();
                 Object.values(log.rpaLogs || {}).forEach(rl => (rl.flights || []).forEach(f => { if (f.telemetry) have.add(f.telemetry.startMs); }));
-                const items = [], empty = []; let dupes = 0;
+                const items = [], empty = []; let dupes = 0; const dumpFl = logDumpFleet();
                 results.forEach(r => {
                   if (!r.flights.length) { empty.push(r.name + (r.error ? ' (' + r.error + ')' : '')); return; }
                   r.flights.forEach((t, i) => {
                     if (have.has(t.startMs)) { dupes++; return; }
                     have.add(t.startMs);
-                    const g = guessAircraft(t, r.name, db.fleet, overview.rpaTypes);
+                    const g = guessAircraft(t, r.name, dumpFl, logJobRpas());
                     items.push({ key: r.name + '#' + i, file: r.name, model: g.model, t, g, rpa: g.rpa, include: true });
                   });
                 });
@@ -5235,7 +5256,7 @@ $('share').onclick=function(){try{var f=new File([blob()],fname(),{type:'applica
                 if (!items.length) { alert('No new flights found.' + (dupes ? `
 ${dupes} already in Section 4.` : '') + (empty.length ? `
 No armed flights in: ${empty.join(', ')}` : '')); return; }
-                setLogDump({ items, dupes, empty, clock });
+                setLogDump({ items, dupes, empty, clock, fleet: dumpFl, job: logJobRpas() });
               });
             };
             inp.click();
@@ -5258,7 +5279,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           const bulkHave = (job) => { const h = new Set(); Object.values(((job.p.log || {}).rpaLogs) || {}).forEach(rl => (rl.flights || []).forEach(f => { if (f.telemetry) h.add(f.telemetry.startMs); })); return h; };
           const bulkMatch = (it, jobs) => {
             const day = bulkLocalDay(it.t.startMs), on = jobs.filter(j => j.from && j.from <= day && day <= j.to);
-            const tryJob = (j) => guessAircraft(it.t, it.file, db.fleet, j ? j.rpas : []);
+            const tryJob = (j) => guessAircraft(it.t, it.file, logFleet(), j ? j.rpas : []);
             if (!on.length) return { job: '', jobWhy: 'no job on ' + new Date(it.t.startMs).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), g: tryJob(null) };
             const scored = on.map(j => ({ j, g: tryJob(j) })), withAc = scored.filter(x => x.g.rpa && x.j.rpas.includes(x.g.rpa));
             const best = withAc.length === 1 ? withAc[0] : on.length === 1 ? scored[0] : null;
@@ -5363,7 +5384,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             }
             Object.entries(byRpa).forEach(([rpa, list]) => {
               if (!rpaTypes.includes(rpa)) rpaTypes.push(rpa);
-              const cells = parseInt(((db.fleet || {})[rpa] || {}).cells) || 0;
+              const cells = parseInt(((d.fleet || db.fleet || {})[rpa] || {}).cells) || 0;
               const rl = { duration: '', batteries: '', fpvEnabled: false, flights: [], ...(rpaLogs[rpa] || {}) };
               const add = list.map(it => flightFromTelemetry(cells ? { ...it.t, cells } : it.t));
               rpaLogs[rpa] = { ...rl, flights: [...(rl.flights || []).filter(f => !blank(f)), ...add].sort((a, b) => ((a.telemetry && a.telemetry.startMs) || 0) - ((b.telemetry && b.telemetry.startMs) || 0)) };
@@ -5371,7 +5392,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             // Learn radio model names: a log assigned by hand teaches its aircraft the model name, if that's free
             const fleet = { ...(db.fleet || {}) }, learned = [];
             // hand-picked first, then battery matches; logs already matched by name teach nothing new
-            const teach = chosen.filter(it => it.rpa !== it.g.rpa || /S /.test(it.g.why || ''))
+            const teach = isCrewRole ? [] : chosen.filter(it => it.rpa !== it.g.rpa || /S /.test(it.g.why || ''))
               .sort((a, b) => (a.rpa !== a.g.rpa ? 0 : 1) - (b.rpa !== b.g.rpa ? 0 : 1));
             teach.forEach(it => {
               const m = it.model, mN = dumpNorm(m); if (mN.length < 3 || !fleet[it.rpa]) return;
@@ -6450,7 +6471,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
           // Start a new job from an existing plan: keeps the site, map, risks, OONP set-up and crew;
           // clears everything that belongs to one particular day.
           const handleCopyPlan = (p, guarded) => {
-            if (!guarded && !guardAutoDraft(() => latestRef.current.handleCopyPlan(p, true))) return; // v7.66
+            if (!guarded && !guardAutoDraft(() => latestRef.current.handleCopyPlan(p, true))) return; // v7.68
             const srcOv = p.overview || {};
             const d0 = cParse(srcOv.operationDate), d1 = cParse(srcOv.operationEndDate);
             const span = d0 && d1 && d1 > d0 ? cDiff(d1, d0) : 0;
@@ -6470,12 +6491,12 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (!window.confirm(`This replaces the current form with a new job ${newId} (${c.title}). Anything unsaved in the form will be lost.\n\nContinue?`)) return;
             handleLoadPlan(c, { silent: true });
             autoIdRef.current = null;
-            newOpPendingRef.current = autoDraftAllowed(); // v7.66: saved as a draft straight away
+            newOpPendingRef.current = autoDraftAllowed(); // v7.68: saved as a draft straight away
             setTimeout(() => alert(`New job ${newId} started from "${p.title}".\n\n${newOpPendingRef.current || autoDraftAllowed() ? 'It is saved as a draft. ' : 'It isn\'t saved yet. '}Check the details, risks and NOTAMs for the new date, then Save Draft.`), 450);
           };
 
           const handleLoadPlan = (plan, opts = {}) => {
-            if (!opts._guarded && !opts.silent && ((plan.overview || {}).uid || null) !== (overview.uid || null) && !guardAutoDraft(() => latestRef.current.handleLoadPlan(plan, { ...opts, _guarded: true }))) return; // v7.66
+            if (!opts._guarded && !opts.silent && ((plan.overview || {}).uid || null) !== (overview.uid || null) && !guardAutoDraft(() => latestRef.current.handleLoadPlan(plan, { ...opts, _guarded: true }))) return; // v7.68
             if (!opts.silent && plan.status !== 'draft') {
               const newer = (db.draftPlans || []).find(p => p.id === plan.id && Date.parse(p.savedAt || 0) > Date.parse(plan.savedAt || 0));
               if (newer && window.confirm(`There is a NEWER DRAFT of this job (saved ${new Date(newer.savedAt).toLocaleString('en-AU')}).\n\nOK: open the newer draft\nCancel: open this ${plan.status || 'saved'} copy`)) { plan = newer; }
@@ -8282,7 +8303,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const problem = await verifySaved('draftPlans', draft);
             if (problem) { alert(`⚠ Draft saved, but the check after saving failed: ${problem}.\n\nDon't close the planner. Export a backup from Database & Settings and tell Claude what you were editing.`); return; }
             markSaved();
-            if (!opts.autoDraft && autoDraft && autoDraft.uid === (ov.uid || '')) setAutoDraft(null); // v7.66: saved on purpose, so it's kept
+            if (!opts.autoDraft && autoDraft && autoDraft.uid === (ov.uid || '')) setAutoDraft(null); // v7.68: saved on purpose, so it's kept
             if (opts.quiet) return draft;
             if (isFree) { alert(`Saved on this device: "${title}"\n\nFree mode keeps this one job until you start a new one. Come back any time to finish the flight log, and keep your exported PDFs.`); return; }
             const hasApproved = (db.savedPlans || []).some(p => sameJob(p, draft));
@@ -8290,7 +8311,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               + (hasApproved ? `\n\nNote: this job also has an APPROVED plan. That copy hasn't changed; open the draft (or save it as approved again) to see these edits.` : ''));
           };
 
-          // ── v7.66: a new operation is saved straight away as a draft ─────────────────────────────────────
+          // ── v7.68: a new operation is saved straight away as a draft ─────────────────────────────────────
           // It is remembered as "not kept yet" until the user saves it on purpose (Save Draft, approval, …). Leaving it before
           // then asks: keep it, or discard it. If it was left without being asked (tab closed, a job opened from a link), a
           // banner asks instead. Discard only ever removes that one draft; an approved plan or completed record is never touched.
@@ -8367,7 +8388,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
               </div>);
             return a.left ? box : <div className="print:hidden fixed inset-0 z-[5000] bg-black/40 flex items-center justify-center p-4">{box}</div>;
           };
-          // ── v7.66: approved with both signatures (or the CRP override) → saved to Saved approved plans by itself ──
+          // ── v7.68: approved with both signatures (or the CRP override) → saved to Saved approved plans by itself ──
           const approvedReady = !!(approval.flightAuthApproved && approval.crpSigned && (approval.rpSigned || approval.rpOverride));
           const apprSeenRef = useRef({ uid: null, ok: false });
           const saveApprovedRef = useRef(null); saveApprovedRef.current = handleSaveApprovedPlan;
@@ -9856,7 +9877,7 @@ View in the Database & Settings tab.`);
           };
           const handleResetForm = () => {
               if (isFree) { if (window.confirm('Start a new job?\n\nFree mode keeps one job at a time, so this replaces the job that\'s open now' + (dirty ? ' (it has unsaved changes)' : '') + '.\n\nExport its PDF first if you haven\'t (and use Settings › Export this job if you want to come back to it).')) { handleResetFormQuiet(); setDb(prev => ({ ...prev, draftPlans: [], savedPlans: [] })); } return; }
-              if (!guardAutoDraft(() => latestRef.current.startNewOperation())) return; // v7.66: the open job is a new draft not kept yet
+              if (!guardAutoDraft(() => latestRef.current.startNewOperation())) return; // v7.68: the open job is a new draft not kept yet
               if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Start a new operation?\n\nThe form is cleared and the new job is saved as a draft straight away. Your saved jobs and Database are kept."))
                   startNewOperation();
           };
@@ -9991,6 +10012,27 @@ View in the Database & Settings tab.`);
               title = 'Company'; preview = <span>{co.name || 'Loading…'} · managed by the CRP</span>;
               body = <div data-crew-company="1" className="text-sm">{rows.length ? <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1">{rows.map(([k, v]) => <React.Fragment key={k}><dt className="text-slate-500">{k}</dt><dd className="text-slate-800 font-medium">{v}</dd></React.Fragment>)}</dl> : <p className="text-slate-500">The CRP hasn't shared the company details yet.</p>}
                 <p className="text-xs text-slate-500 mt-2"><i className="fa-solid fa-lock mr-1"></i>Company details, fleet, batteries, crew lists, libraries and data settings are managed by the Chief Remote Pilot.</p></div>;
+            }
+            // v7.67: crew see the approved plans for the jobs they're on (from the company account; RLS only returns their jobs).
+            // Open only: approving, signing as CRP and deleting stay with the CRP.
+            if (isCrewRole && id === 'dbsec-approved') {
+              const aj = ((crewCloud && crewCloud.jobs) || []).filter(j => j.status === 'approved');
+              const fmtJ = (d) => { try { return d ? new Date(d + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; } catch (e) { return d || ''; } };
+              const ROLE_N = { rpic: 'RPIC', pilot: 'Pilot', observer: 'Observer' };
+              preview = !crewCloud ? <span>Loading…</span> : !aj.length ? <span>None yet</span> : <span className="inline-flex items-center gap-1.5 flex-wrap whitespace-normal"><b className="text-slate-700">{aj.length}</b>
+                {aj.slice(0, 3).map(j => <button key={j.id} type="button" data-crew-approved-chip={j.id} onClick={e => { e.stopPropagation(); openCloudJob(j); }} className="inline-flex items-center gap-1 max-w-[17rem] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 text-slate-700"><span className="truncate">{j.title || j.op_id || 'Untitled job'}</span><span className="text-indigo-600 font-semibold shrink-0">Open</span></button>)}
+                {aj.length > 3 && <span>+{aj.length - 3} more</span>}</span>;
+              body = <div className="rounded-xl border border-emerald-200 overflow-hidden" data-crew-approved="1">
+                <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center gap-2"><i className="fa-solid fa-folder-open text-emerald-600"></i><h3 className="font-semibold text-emerald-900 text-sm">Approved plans for your jobs</h3><span className="text-xs bg-emerald-200 text-emerald-800 font-bold px-2 py-0.5 rounded-full" data-crew-approved-count={aj.length}>{aj.length}</span></div>
+                {!crewCloud ? <div className="p-4 text-sm text-slate-400 italic text-center">Loading your jobs…</div>
+                  : !aj.length ? <div className="p-4 text-sm text-slate-400 italic text-center">No approved plans for your jobs yet. When the CRP approves a job you're on, it shows here.</div>
+                  : <div className="divide-y divide-slate-100">{aj.map(j => (
+                    <div key={j.id} className="px-4 py-2.5 flex items-center gap-3" data-crew-approved-row={j.id}>
+                      <div className="flex-1 min-w-0"><div className="text-sm font-medium text-slate-800 truncate">{j.title || j.op_id || 'Untitled job'}</div>
+                        <div className="text-xs text-slate-500 truncate">{[fmtJ(j.start_date), j.op_id, j.myRole ? 'You: ' + (ROLE_N[j.myRole] || j.myRole) : ''].filter(Boolean).join(' · ')}</div></div>
+                      <button type="button" data-crew-approved-open={j.id} onClick={() => openCloudJob(j)} className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white"><i className="fa-solid fa-folder-open mr-1"></i>Open</button>
+                    </div>))}</div>}
+                <p className="text-xs text-slate-500 px-4 py-2 border-t border-slate-100"><i className="fa-solid fa-lock mr-1"></i>Only the jobs you're on. Approvals are made by the Chief Remote Pilot.</p></div>;
             }
             if (isCrewRole && id === 'dbsec-logged') {
               const hrs = ((crewCloud && crewCloud.hours) || []).filter(h => h.seconds > 0), tot = hrs.reduce((t, h) => t + h.seconds, 0);
@@ -10458,6 +10500,8 @@ View in the Database & Settings tab.`);
             const at = new Date().toISOString().slice(0, 10), cp = db.companyProfile || {};
             const company = {}; Object.keys(cp).forEach(k => { const v = cp[k]; if ((typeof v === 'string' && v.length < 300 && !/^data:/.test(v)) || typeof v === 'number') company[k] = v; });
             if (openAipKey) company.openAipKey = openAipKey; // v7.10: one airspace key for the whole company
+            // v7.67: aircraft names (with battery cells and radio model) so crew can pick the right aircraft for their radio logs
+            company.aircraft = Object.entries(logFleet()).map(([name, f]) => ({ name, cells: (f && f.cells) || '', radioModel: (f && f.radioModel) || '' }));
             if (Array.isArray(db.pdfViews) && db.pdfViews.length) company.pdfViews = db.pdfViews; // v7.17: the company's PDF views
             const all = loggedTimeStats(db.completedFlights);
             const fleet = Object.entries(db.fleet || {}).filter(([, f]) => f && !f.sample && !f.suggested).map(([name, f]) => { const x = all.acft[name] || { flights: 0, sec: 0 };
@@ -10518,7 +10562,7 @@ View in the Database & Settings tab.`);
             const h = (e) => { const d = e.detail || {}; window.dispatchEvent(new Event('wd-close-account'));
               const local = cloudJobsList().find(j => j.uid === d.uid);
               if (overview.uid && overview.uid === d.uid) { setActiveTab('preliminary'); return; }
-              if (!d._guarded && !guardAutoDraft(() => window.dispatchEvent(new CustomEvent('wd-open-company-job', { detail: { ...d, _guarded: true } })))) return; // v7.66
+              if (!d._guarded && !guardAutoDraft(() => window.dispatchEvent(new CustomEvent('wd-open-company-job', { detail: { ...d, _guarded: true } })))) return; // v7.68
               if (!d._guarded && dirty && !window.confirm(`Open “${d.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
               if (local) { handleLoadPlan(local.p, { silent: true }); setTimeout(() => setActiveTab('preliminary'), 60); }
               else openJobFromCloud(d.id, d.uid, () => setActiveTab('preliminary')); };
@@ -10564,6 +10608,7 @@ View in the Database & Settings tab.`);
             const inc = { rpaLogs: {} };
             [...grp.flights].sort((x, y) => String(x.created_at || '').localeCompare(String(y.created_at || ''))).forEach(f => {
               if (f.flight && f.flight.kind === 'post_flight') { Object.assign(inc, f.flight.fields || {}); return; }
+              if (f.flight && f.flight.kind) return; // v7.67: the "log complete" note carries no flight
               const r = f.rpa || 'RPA'; (inc.rpaLogs[r] = inc.rpaLogs[r] || { flights: [] }).flights.push({ ...(f.flight || {}), crewBy: f.who }); });
             const finish = () => { let changes = []; setLog(prev => { const m = mergeCrewLog(prev, inc); changes = m.changes; return m.log; });
               const ids = [...new Set([...importedFl, ...grp.flights.map(f => f.id)])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); setActiveTab('log');
@@ -10584,9 +10629,13 @@ View in the Database & Settings tab.`);
             (crewFlights || []).filter(f => !importedFl.includes(f.id) && f.flight && f.flight.kind === 'rpic_signature' && !sigSettled(f))
               .sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || ''))).filter(f => { const k = f.job_id + '|' + f.person_id; if (sigSeen.has(k)) return false; sigSeen.add(k); return true; }).forEach(f => aw.push({ kind: 'rpic-signed', icon: 'fa-signature', color: 'text-emerald-600',
               label: `${f.who} signed as RPIC: ${(f.job && f.job.title) || 'a job'}`, sub: 'Add their signature, then sign as CRP and approve', cta: 'Review & sign', act: () => applyCloudSignature(f) }));
-            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id) && !(f.flight && f.flight.kind && f.flight.kind !== 'post_flight')).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
-            Object.values(byJob).forEach(g => aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: (() => { const n = g.flights.filter(f => !(f.flight && f.flight.kind)).length, pf = g.flights.some(f => f.flight && f.flight.kind === 'post_flight');
-              return [n ? `${n} flight${n === 1 ? '' : 's'}` : '', pf ? 'post-flight answers' : ''].filter(Boolean).join(' and ') + ` from ${g.who}`; })(), sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }));
+            const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id) && !(f.flight && f.flight.kind && !['post_flight', 'log_complete'].includes(f.flight.kind))).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
+            Object.values(byJob).forEach(g => { const n = g.flights.filter(f => !(f.flight && f.flight.kind)).length, pf = g.flights.some(f => f.flight && f.flight.kind === 'post_flight');
+              const what = [n ? `${n} flight${n === 1 ? '' : 's'}` : '', pf ? 'post-flight answers' : ''].filter(Boolean).join(' and ');
+              // v7.67: the pilot pressed "Log completed flight": their log is complete and ready for final review
+              if (g.flights.some(f => f.flight && f.flight.kind === 'log_complete')) aw.push({ kind: 'crew-log-complete', icon: 'fa-flag-checkered', color: 'text-emerald-600', label: `${g.who}'s log is complete: ready for final review`,
+                sub: g.name + (what ? ' · ' + what : ''), cta: 'Review log', act: () => importCloudFlights(g) });
+              else aw.push({ kind: 'crew-flights', icon: 'fa-cloud-arrow-down', color: 'text-sky-600', label: what + ` from ${g.who}`, sub: g.name, cta: 'Add to log', act: () => importCloudFlights(g) }); });
             (obsWaiting || []).forEach(r => aw.push({ kind: 'obs-signed', icon: 'fa-binoculars', color: 'text-violet-600', label: `${(r.people && r.people.full_name) || (r.answers && r.answers.name) || 'An observer'} signed as EVLOS observer${r.job ? ': ' + r.job.title : ''}`,
               sub: r.answers && r.answers.via === 'login' ? 'Reviewed the plan in the planner' : 'Signed on their phone', cta: 'Countersign', act: () => setObsReview({ ...r, job_title: r.job && r.job.title }) }));
             // v7.18: open comments and suggested edits, per job
@@ -10615,7 +10664,7 @@ View in the Database & Settings tab.`);
           const flightKey = (rpa, f) => rpa + '|' + (f.id != null ? f.id : [String(f.label || ''), String(f.duration == null ? '' : f.duration), String(f.batteries || ''), (f.telemetry && f.telemetry.startMs) || ''].join('|'));
           const cloudLogFlights = (lg) => { const out = []; Object.entries((lg && lg.rpaLogs) || {}).forEach(([rpa, rl]) => ((rl && rl.flights) || []).forEach(f => { if (!crewBlankFlight(f)) out.push({ key: flightKey(rpa, f), rpa, f }); })); return out; };
           const openCloudJob = (j, guarded) => {
-            if (!guarded && !guardAutoDraft(() => latestRef.current.openCloudJob(j, true))) return; // v7.66
+            if (!guarded && !guardAutoDraft(() => latestRef.current.openCloudJob(j, true))) return; // v7.68
             if (!guarded && dirty && !window.confirm(`Open “${j.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
             window.dispatchEvent(new CustomEvent('wd-open-cloud-job', { detail: { id: j.id } }));
           };
@@ -10733,17 +10782,37 @@ View in the Database & Settings tab.`);
           const logUnsent = onCloudJob && Object.keys(logFieldsOf(log)).length > 0 && logSig(log) !== (cloudJob.sentLogSig || cloudJob.baseLogSig);
           const unsentFlights = onCloudJob ? cloudLogFlights(log).filter(x => !(cloudJob.base || []).includes(x.key) && !(cloudJob.sent || []).includes(x.key)) : [];
           const [pushing, setPushing] = useState(false);
-          const pushCloudFlights = () => {
-            if (!unsentFlights.length && !logUnsent) return; setPushing(true);
+          // v7.67: complete = the pilot pressed "Log completed flight": everything goes in one send, with a "log complete" note
+          // for the CRP (Awaiting action: ready for final review, plus an email)
+          const pushCloudFlights = (complete) => {
+            const done = complete === true;
+            if (!unsentFlights.length && !logUnsent && !done) return; setPushing(true);
             const extra = logUnsent ? [{ key: 'log:' + logSig(log), rpa: null, flight: { kind: 'post_flight', fields: logFieldsOf(log) } }] : [];
-            window.dispatchEvent(new CustomEvent('wd-push-flights', { detail: { jobId: cloudJob.id, flights: [...extra, ...unsentFlights.map(x => ({ key: x.key, rpa: x.rpa, flight: (() => { const c = JSON.parse(JSON.stringify(x.f)); if (c.telemetry) { delete c.telemetry.altRaw; delete c.telemetry.spdRaw; } return c; })() }))] } }));
+            const all = cloudLogFlights(log), mins = all.reduce((s, x) => s + (parseInt(x.f.duration) || 0), 0);
+            const marker = done ? [{ key: 'done:' + Date.now(), rpa: null, flight: { kind: 'log_complete', at: new Date().toISOString(), title: getOpTitle(overview), opId: overview.identifier || '',
+              flights: all.length, minutes: mins, aircraft: [...new Set(all.map(x => x.rpa))], answers: Object.keys(logFieldsOf(log)).length > 0 } }] : [];
+            window.dispatchEvent(new CustomEvent('wd-push-flights', { detail: { jobId: cloudJob.id, complete: done, flights: [...extra, ...unsentFlights.map(x => ({ key: x.key, rpa: x.rpa, flight: (() => { const c = JSON.parse(JSON.stringify(x.f)); if (c.telemetry) { delete c.telemetry.altRaw; delete c.telemetry.spdRaw; } return c; })() })), ...marker] } }));
+          };
+          const crewLogComplete = () => {
+            if (pushing) return;
+            const all = cloudLogFlights(log).filter(x => parseInt(x.f.duration) > 0), answers = Object.keys(logFieldsOf(log)).length > 0;
+            if (!all.length && !answers) { alert('Fill in your flights (or at least the post-flight questions) before logging the completed flight.'); return; }
+            if (cloudJob.completedAt && !unsentFlights.length && !logUnsent) { alert('Your log for this job was already sent to the CRP for final review on ' + new Date(cloudJob.completedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + '. Nothing has changed since.'); return; }
+            const mins = all.reduce((s, x) => s + (parseInt(x.f.duration) || 0), 0), by = {}; all.forEach(x => { by[x.rpa] = (by[x.rpa] || 0) + 1; });
+            const crpN = (crewCloud && crewCloud.company && crewCloud.company.crp_name) || '', crpFirst = crpN ? crpN.split(' ')[0] : 'the CRP';
+            if (!window.confirm(`Log completed flight?\n\nThis sends your whole log for this job to ${crpFirst} for final review:\n`
+              + (all.length ? Object.entries(by).map(([r, n]) => `• ${r}: ${n} flight${n === 1 ? '' : 's'}`).join('\n') + `\n• ${mins} min in total\n` : '• no flights\n')
+              + (answers ? '• your post-flight answers\n' : '• no post-flight answers yet\n') + `\n${crpFirst} gets an email that your log is ready.`)) return;
+            pushCloudFlights(true);
           };
           useEffect(() => {
             const h = (e) => { const d = e.detail || {}; setPushing(false);
-              if (!d.ok) { alert('Couldn\'t send your flights: ' + (d.error || 'unknown error') + '\n\nThey are still in your log. Try again when you have signal.'); return; }
-              const lk = (d.keys || []).find(k => String(k).startsWith('log:')), fk = (d.keys || []).filter(k => !String(k).startsWith('log:'));
-              const cj = lsJson(cjKey, null); if (cj) setCloudJob({ ...cj, sent: [...new Set([...(cj.sent || []), ...fk])], sentLogSig: lk ? lk.slice(4) : cj.sentLogSig });
-              alert([fk.length ? `${fk.length} flight${fk.length === 1 ? '' : 's'}` : '', lk ? 'your post-flight answers' : ''].filter(Boolean).join(' and ') + ' sent to the CRP. They\'ll add them to the job record.'); };
+              if (!d.ok) { alert('Couldn\'t send your log: ' + (d.error || 'unknown error') + '\n\nIt is still on this device. Try again when you have signal.'); return; }
+              const lk = (d.keys || []).find(k => String(k).startsWith('log:')), fk = (d.keys || []).filter(k => !/^(log|done):/.test(String(k)));
+              const cj = lsJson(cjKey, null); if (cj) setCloudJob({ ...cj, sent: [...new Set([...(cj.sent || []), ...fk])], sentLogSig: lk ? lk.slice(4) : cj.sentLogSig, ...(d.complete ? { completedAt: new Date().toISOString() } : {}) });
+              const what = [fk.length ? `${fk.length} flight${fk.length === 1 ? '' : 's'}` : '', lk ? 'your post-flight answers' : ''].filter(Boolean).join(' and ');
+              if (d.complete) alert('✅ Log completed. ' + (what ? what.charAt(0).toUpperCase() + what.slice(1) + ' sent to the CRP' : 'The CRP has been told') + ', ready for final review' + (d.emailed ? ' (they\'ve been emailed)' : '') + '.');
+              else alert(what + ' sent to the CRP. They\'ll add them to the job record.'); };
             window.addEventListener('wd-push-result', h); return () => window.removeEventListener('wd-push-result', h);
           }); // eslint-disable-line
           // v7.5.2: a crew member's RPIC signature on a company job goes to the CRP (in the cloud, with an email)
@@ -10948,7 +11017,7 @@ View in the Database & Settings tab.`);
             };
           };
           const openDashJob = (j, guarded) => {
-            if (!(j.current || j.id === overview.identifier) && !guarded && !guardAutoDraft(() => latestRef.current.openDashJob(j, true))) return; // v7.66
+            if (!(j.current || j.id === overview.identifier) && !guarded && !guardAutoDraft(() => latestRef.current.openDashJob(j, true))) return; // v7.68
             if (j.cloudJob) { if (!guarded && dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return; openJobFromCloud(j.cloudJob.id, j.cloudJob.plan_uid, () => setActiveTab('preliminary')); return; }
             if (j.current || j.id === overview.identifier) { setActiveTab('preliminary'); return; }
             if (!guarded && dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return;
@@ -10965,7 +11034,7 @@ View in the Database & Settings tab.`);
             openCloudJob, signCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
             bulkLogs: (files) => openBulkLogs(files),
           };
-          latestRef.current = { handleLoadPlan, openDashJob, openCloudJob, startNewOperation, handleCopyPlan }; // v7.66: what runs after Keep / Discard
+          latestRef.current = { handleLoadPlan, openDashJob, openCloudJob, startNewOperation, handleCopyPlan }; // v7.68: what runs after Keep / Discard
           const jumpToDbSection = (id) => {
             const fe = document.querySelector(`[data-dbfold="${id}"]`);
             if (fe && fe.dataset.open !== '1' && !jumpToDbSection.busy) { jumpToDbSection.busy = true; setFold(id, true); setTimeout(() => { jumpToDbSection.busy = false; jumpToDbSection(id); }, 90); return; }
@@ -11704,7 +11773,7 @@ View in the Database & Settings tab.`);
                   </div>);
               })()}
               {bulkLogs && (() => {
-                const d = bulkLogs, fleetNames = Object.keys(db.fleet || {}).sort((a, b) => a.localeCompare(b));
+                const d = bulkLogs, fleetNames = Object.keys(logFleet()).sort((a, b) => a.localeCompare(b));
                 const setItem = (key, patch) => setBulkLogs(prev => ({ ...prev, items: prev.items.map(it => it.key === key ? { ...it, ...patch } : it) }));
                 const jobsBy = {}; d.jobs.forEach(j => { jobsBy[j.key] = j; });
                 const nReady = d.items.filter(it => it.include && it.rpa && it.job).length, nOpen = d.items.filter(it => it.include && (!it.rpa || !it.job)).length;
@@ -11762,7 +11831,7 @@ View in the Database & Settings tab.`);
                                   <div><div className="font-mono font-semibold text-slate-800">{fmtT(it.t.startMs)} · {fmtMmSs(it.t.durationSec)}</div>
                                     <div className="text-[10px] text-slate-400 truncate" title={it.file}>{it.file}{lc ? ' · ' + lc + 'S' : ''}{it.t.maxAltM != null ? ' · ' + Math.round(it.t.maxAltM * 3.28084) + ' ft' : ''}</div></div>
                                   <div className="col-span-2 sm:col-span-1">
-                                    <select data-bulk-job={it.key} value={it.job} onChange={e => { const jj = d.jobs.find(x => x.key === e.target.value); const g2 = guessAircraft(it.t, it.file, db.fleet, jj ? jj.rpas : []); setItem(it.key, { job: e.target.value, jobSet: true, g: g2, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g2.rpa || it.rpa) }); }}
+                                    <select data-bulk-job={it.key} value={it.job} onChange={e => { const jj = d.jobs.find(x => x.key === e.target.value); const g2 = guessAircraft(it.t, it.file, logFleet(), jj ? jj.rpas : []); setItem(it.key, { job: e.target.value, jobSet: true, g: g2, rpa: it.rpa && it.rpa !== it.g.rpa ? it.rpa : (g2.rpa || it.rpa) }); }}
                                       className={`w-full px-1.5 py-1 border rounded bg-white ${it.job ? 'border-slate-300' : 'border-amber-400'}`}>
                                       <option value="">Choose job… ({it.jobWhy})</option>
                                       {d.jobs.map(jj => <option key={jj.key} value={jj.key}>{jobLabel(jj)}</option>)}
@@ -11771,8 +11840,11 @@ View in the Database & Settings tab.`);
                                   </div>
                                   <div className="col-span-2 sm:col-span-1">
                                     <select data-bulk-rpa={it.key} value={it.rpa} onChange={e => setItem(it.key, { rpa: e.target.value, rpaSet: true })} className={`w-full px-1.5 py-1 border rounded bg-white ${it.rpa ? 'border-slate-300' : 'border-amber-400'}`}>
-                                      <option value="">Choose aircraft… ({it.g.why})</option>
-                                      {fleetNames.map(r => <option key={r} value={r}>{r}{((db.fleet[r] || {}).cells && (db.fleet[r] || {}).cells !== 'none') ? ' · ' + db.fleet[r].cells + 'S' : ''}{j && !j.rpas.includes(r) ? ' (not on job)' : ''}</option>)}
+                                      <option value="">Choose aircraft…</option>
+                                      {(() => { const onJ = j ? j.rpas.filter(r => r && r !== 'Custom') : [], rest = fleetNames.filter(r => !onJ.includes(r));
+                                        const lab = (r) => r + (((db.fleet || {})[r] || {}).cells && db.fleet[r].cells !== 'none' ? ' · ' + db.fleet[r].cells + 'S' : '');
+                                        return <>{onJ.length > 0 && <optgroup label="On this job">{onJ.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup>}
+                                          <optgroup label={onJ.length ? 'Rest of the fleet' : 'Fleet'}>{rest.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup></>; })()}
                                     </select>
                                   </div>
                                 </div>);
@@ -11795,8 +11867,8 @@ View in the Database & Settings tab.`);
                 );
               })()}
               {logDump && (() => {
-                const d = logDump, fleetNames = Object.keys(db.fleet || {}).sort((a, b) => a.localeCompare(b));
-                const job = (overview.rpaTypes || []).filter(r => (db.fleet || {})[r]);
+                const d = logDump, dFleet = d.fleet || db.fleet || {}, fleetNames = Object.keys(dFleet).sort((a, b) => a.localeCompare(b));
+                const job = (d.job || overview.rpaTypes || []).filter(r => dFleet[r]);
                 const setItem = (key, patch) => setLogDump(prev => ({ ...prev, items: prev.items.map(it => it.key === key ? { ...it, ...patch } : it) }));
                 const nReady = d.items.filter(it => it.include && it.rpa).length, nOpen = d.items.filter(it => it.include && !it.rpa).length;
                 const counts = {}; d.items.forEach(it => { if (it.include && it.rpa) counts[it.rpa] = (counts[it.rpa] || 0) + 1; });
@@ -11808,7 +11880,7 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-boxes-stacked text-indigo-600"></i>
                         <div className="flex-1">
                           <h3 className="font-semibold text-slate-800">Log dump: {d.items.length} flight{d.items.length === 1 ? '' : 's'} found</h3>
-                          <p className="text-xs text-slate-500">Each flight is matched by the radio model in the file name, then by battery cells from the starting RxBt voltage. Check the aircraft column, then import. Radio clock: {d.clock === 'local' ? 'local' : 'UTC'}.</p>
+                          <p className="text-xs text-slate-500">The aircraft is filled in where the planner can tell which one flew. Check the Aircraft column, then import. Radio clock: {d.clock === 'local' ? 'local' : 'UTC'}.</p>
                         </div>
                         <button onClick={() => setLogDump(null)} className="text-slate-400 hover:text-slate-700 text-lg px-2" title="Cancel"><i className="fa-solid fa-xmark"></i></button>
                       </div>
@@ -11816,7 +11888,7 @@ View in the Database & Settings tab.`);
                         <table className="w-full text-xs">
                           <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-500"><tr>
                             <th className="px-2 py-2 text-center">Add</th><th className="px-2 py-2 text-left">Start</th><th className="px-2 py-2 text-right">Armed</th><th className="px-2 py-2 text-left">File / radio model</th>
-                            <th className="px-2 py-2 text-right">Start V</th><th className="px-2 py-2 text-center">Cells</th><th className="px-2 py-2 text-right">Max alt</th><th className="px-2 py-2 text-left">Aircraft</th><th className="px-2 py-2 text-left">Why</th>
+                            <th className="px-2 py-2 text-right">Start V</th><th className="px-2 py-2 text-center">Cells</th><th className="px-2 py-2 text-right">Max alt</th><th className="px-2 py-2 text-left">Aircraft</th>
                           </tr></thead>
                           <tbody>{d.items.map(it => {
                             const lc = likelyCells(it.t.vStart), opts = it.g.options || [];
@@ -11834,20 +11906,21 @@ View in the Database & Settings tab.`);
                                   <select value={it.rpa} onChange={e => setItem(it.key, { rpa: e.target.value })} className={`w-full max-w-[13rem] px-1.5 py-1 border rounded bg-white ${it.rpa ? 'border-slate-300' : 'border-amber-400'}`}>
                                     <option value="">Choose aircraft…</option>
                                     {(() => {
-                                      const cOf = (r) => parseInt((db.fleet[r] || {}).cells) || 0;
+                                      // v7.67: this job's aircraft first, then the rest of the company fleet; battery matches first in each
+                                      const cOf = (r) => parseInt((dFleet[r] || {}).cells) || 0;
                                       const okC = (r) => cOf(r) && (cOf(r) === lc || (it.g.cand || []).includes(cOf(r)) && it.t.vStart / cOf(r) >= 3.6 && it.t.vStart / cOf(r) <= 4.4);
-                                      const lab = (r) => r + (cOf(r) ? ' · ' + cOf(r) + 'S' : '') + (!job.includes(r) ? ' (not on job)' : '');
-                                      const byJob = (a, b) => (job.includes(a) ? 0 : 1) - (job.includes(b) ? 0 : 1) || a.localeCompare(b);
-                                      const match = fleetNames.filter(okC).sort(byJob), rest = fleetNames.filter(r => !okC(r)).sort(byJob);
+                                      const lab = (r) => r + (cOf(r) ? ' · ' + cOf(r) + 'S' : '');
+                                      const ord = (a, b) => (okC(a) ? 0 : 1) - (okC(b) ? 0 : 1) || a.localeCompare(b);
+                                      const onJob = fleetNames.filter(r => job.includes(r)).sort(ord), rest = fleetNames.filter(r => !job.includes(r)).sort(ord);
                                       return <>
-                                        {match.length > 0 && <optgroup label={lc ? `Matches ${lc}S (${it.t.vStart} V)` : 'Matching cell count'}>{match.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup>}
-                                        <optgroup label={match.length ? 'Other aircraft' : 'Fleet'}>{rest.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup>
+                                        {onJob.length > 0 && <optgroup label="On this job">{onJob.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup>}
+                                        {rest.length > 0 && <optgroup label={onJob.length ? 'Rest of the fleet' : 'Fleet'}>{rest.map(r => <option key={r} value={r}>{lab(r)}</option>)}</optgroup>}
                                       </>;
                                     })()}
                                   </select>
-                                </td>
-                                <td className={`px-2 py-1.5 text-[11px] ${manual ? 'text-indigo-700' : it.rpa ? 'text-emerald-700' : 'text-amber-700'}`}>
-                                  {manual ? 'chosen by you' : it.rpa ? 'by ' + it.g.why : it.g.why}{!it.rpa && opts.length > 0 && <div className="text-slate-500">{opts.join(' or ')}</div>}
+                                  {/* v7.67: no "Why" column; a short hint only when the pick may be wrong */}
+                                  {!manual && !it.rpa && <div className="text-[11px] text-amber-700 mt-0.5" data-dump-hint="pick">{opts.length > 1 ? 'Could be ' + opts.join(' or ') + '. Pick one.' : 'Pick the aircraft that flew this.'}</div>}
+                                  {!manual && it.rpa && !/radio model|aircraft name/.test(it.g.why || '') && <div className="text-[11px] text-slate-500 mt-0.5" data-dump-hint="check">Best guess from the battery. Check it's right.</div>}
                                 </td>
                               </tr>
                             );
@@ -15361,8 +15434,7 @@ View in the Database & Settings tab.`);
                       {onCloudJob && (jsa.operationTypes || []).includes('EVLOS') && isObserverOnJob && <CrewObserverBar jobId={cloudJob.id} jobTitle={cloudJob.title || getOpTitle(overview)} summary={obsSummary()} name={auth.name || ''} onOpenPlan={() => setActiveTab('preliminary')} />}
                       {onCloudJob && <div data-cloud-push="1" className="print:hidden mx-4 sm:mx-6 mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-center gap-3 flex-wrap">
                         <i className="fa-solid fa-cloud-arrow-up text-sky-600 text-lg"></i>
-                        <div className="flex-1 min-w-[12rem] text-sm text-sky-900"><b>Company job.</b> Log your flights and fill in the post-flight questions below, then send them to the CRP. {logUnsent && <span data-cloud-log-unsent="1">Post-flight answers not sent yet. </span>}{unsentFlights.length ? <span data-cloud-unsent={unsentFlights.length}>{unsentFlights.length} flight{unsentFlights.length === 1 ? '' : 's'} not sent yet.</span> : <span data-cloud-unsent="0">Nothing new to send.</span>}</div>
-                        <button type="button" data-cloud-send="1" disabled={(!unsentFlights.length && !logUnsent) || pushing} onClick={pushCloudFlights} className="px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-sm font-semibold"><i className="fa-solid fa-paper-plane mr-1"></i>{pushing ? 'Sending…' : 'Send my log to the CRP'}</button>
+                        <div className="flex-1 min-w-[12rem] text-sm text-sky-900"><b>Company job.</b> Log all your flights and answer the post-flight questions below, then press <b>Log completed flight</b> at the bottom. That sends your whole log to the CRP for final review. {cloudJob.completedAt && !unsentFlights.length && !logUnsent ? <span data-cloud-complete="1" className="font-semibold">Sent for final review {new Date(cloudJob.completedAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.</span> : <>{logUnsent && <span data-cloud-log-unsent="1">Post-flight answers not sent yet. </span>}{unsentFlights.length ? <span data-cloud-unsent={unsentFlights.length}>{unsentFlights.length} flight{unsentFlights.length === 1 ? '' : 's'} not sent yet.</span> : <span data-cloud-unsent="0">No new flights to send.</span>}</>}</div>
                       </div>}
 
                       {/* PRINT: Log page title */}
@@ -15725,19 +15797,8 @@ View in the Database & Settings tab.`);
                                   rpaCells={parseInt(((db.fleet || {})[rpa] || {}).cells) || 0}
                                 />
                                 {/* Save to fleet */}
-                                <div className="px-4 py-3 border-t border-slate-100 flex justify-end">
-                                  {onCloudJob ? (
-                                    /* v7.64: crew on a company job don't hold the company fleet on their device, so their flights go to the CRP instead */
-                                    <button type="button" data-crew-rpa-send={rpa} disabled={pushing} onClick={() => {
-                                      const flts = rpaLog.flights && rpaLog.flights.length > 0 ? rpaLog.flights : [];
-                                      const total = flts.reduce((s, f) => s + (parseInt(f.duration) || 0), 0);
-                                      if (total <= 0) { alert('Enter at least one flight duration before sending.'); return; }
-                                      if (!unsentFlights.length && !logUnsent) { alert('These flights have already been sent to the CRP.'); return; }
-                                      pushCloudFlights();
-                                    }} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white px-4 py-2 rounded-md text-xs font-semibold transition-colors shadow-sm flex items-center gap-2">
-                                      <i className="fa-solid fa-paper-plane"></i> {pushing ? 'Sending…' : `Send ${rpa} flights to the CRP`}
-                                    </button>
-                                  ) : (
+                                <div className={`px-4 py-3 border-t border-slate-100 flex justify-end${onCloudJob ? ' hidden' : ''}`}>
+                                  {onCloudJob ? null /* v7.67: crew send their whole log with "Log completed flight" at the bottom */ : (
                                   <button data-fleet-save={rpa} onClick={() => {
                                     const flts = rpaLog.flights && rpaLog.flights.length > 0 ? rpaLog.flights : [];
                                     const total = flts.reduce((s, f) => s + (parseInt(f.duration) || 0), 0);
@@ -15797,8 +15858,8 @@ View in the Database & Settings tab.`);
                                 <i className="fa-solid fa-satellite-dish text-[10px]"></i> Import
                               </button>
                             </div>
-                            <button onClick={handleLogCompletedFlight} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
-                              <i className="fa-solid fa-circle-check"></i> Log Completed Flight
+                            <button data-log-complete="1" disabled={onCloudJob && pushing} onClick={onCloudJob ? crewLogComplete : handleLogCompletedFlight} className="flex items-center gap-2 disabled:opacity-50 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+                              <i className="fa-solid fa-circle-check"></i> {onCloudJob ? (pushing ? 'Sending…' : 'Log completed flight') : 'Log Completed Flight'}
                             </button>
                             <button onClick={() => generatePDF()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
                               <i className="fa-solid fa-download"></i> Save PDF

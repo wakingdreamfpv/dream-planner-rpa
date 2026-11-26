@@ -19,23 +19,23 @@ with sync_playwright() as p:
     pg.goto(URL); pg.wait_for_timeout(5000)
     pg.evaluate("window.dispatchEvent(new CustomEvent('wd-open-cloud-job',{detail:{id:'jobs-cw'}}))"); pg.wait_for_timeout(5000)
     pg.evaluate(JS_INC, 'Flight Log'); pg.wait_for_timeout(1500)
-    pg.evaluate(JS_INC, '%s flights to the CRP' % RPA); pg.wait_for_timeout(500)
-    R.check('no duration yet: asked to enter one', any('Enter at least one flight duration' in d for d in dl), dl)
     # like Ben: type 3 minutes into the flight's duration
     pg.evaluate("""()=>{const lbl=[...document.querySelectorAll('*')].find(e=>e.children.length===0&&e.innerText&&e.innerText.trim().toUpperCase()==='DURATION'&&e.offsetParent);
       const box=lbl&&lbl.parentElement; const inp=box&&(box.querySelector('input')||box.parentElement.querySelector('input'));
       if(!inp)return 0; const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; set.call(inp,'3'); inp.dispatchEvent(new Event('input',{bubbles:true})); return 1}""")
     pg.wait_for_timeout(800)
     bt = btn_text(pg)
-    R.check('crew see "Send … flights to the CRP" for the aircraft', any(('Send %s flights to the CRP' % RPA) in t for t in bt), bt[-15:])
+    # v7.67: no per-aircraft send button any more; one "Log completed flight" for the whole job
+    R.check('crew see "Log completed flight"', any('Log completed flight' in t for t in bt), bt[-15:])
+    R.check('no per-aircraft send button (v7.67)', pg.locator('[data-crew-rpa-send]').count() == 0)
     R.check('crew no longer see the Fleet DB button', not any('Time to Fleet DB' in t for t in bt))
-    pg.click('[data-crew-rpa-send="%s"]' % RPA); pg.wait_for_timeout(2500)
+    pg.click('[data-log-complete]'); pg.wait_for_timeout(2500)
     R.check('no "not in your fleet database" message', not any('not in your fleet' in d for d in dl), dl)
     sent = pg.evaluate("(window.__T.job_flights||[]).filter(f=>f.job_id==='jobs-cw'&&f.rpa===%s).length" % json.dumps(RPA))
     R.check('the flight went to the CRP', sent >= 1, (sent, dl))
     R.check('pilot told it was sent', any('sent to the CRP' in d for d in dl), dl)
-    pg.click('[data-crew-rpa-send="%s"]' % RPA); pg.wait_for_timeout(800)
-    R.check('pressing again says already sent (no duplicates)', any('already been sent' in d for d in dl) and pg.evaluate("(window.__T.job_flights||[]).filter(f=>f.job_id==='jobs-cw'&&f.rpa===%s).length" % json.dumps(RPA)) == sent, dl)
+    pg.click('[data-log-complete]'); pg.wait_for_timeout(800)
+    R.check('pressing again says already sent (no duplicates)', any('already sent' in d for d in dl) and pg.evaluate("(window.__T.job_flights||[]).filter(f=>f.job_id==='jobs-cw'&&f.rpa===%s).length" % json.dumps(RPA)) == sent, dl)
     R.check('no page errors (crew)', not errs, errs[:2])
     pg.context.close()
 
