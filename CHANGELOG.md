@@ -9,7 +9,7 @@
 - Supabase: nothing to do.
 
 ### Technical notes (v7.68, for Claude Code)
-- All in `src/legacy/planner.jsx`, block "v7.66: a new operation is saved straight away as a draft" just after `handleSaveDraftPlan`.
+- All in `src/legacy/planner.jsx`, block "v7.68: a new operation is saved straight away as a draft" just after `handleSaveDraftPlan`.
 - `startNewOperation()` = `handleResetFormQuiet()` + `newOpPendingRef`; an effect on `overview.uid` then calls `handleSaveDraftPlan({ quiet, noCrewHook, autoDraft: true })` and stores the "not kept yet" marker in localStorage `wd_auto_draft` ({uid,id,at}). Not for free mode, crew accounts or a read-only tab. The sample tour and other internal resets still use `handleResetFormQuiet()` and make no draft.
 - The marker is cleared by any save that isn't the auto one (Save Draft, quiet saves for share links / RPIC requests, `handleSaveApprovedPlan`), by Keep, by Discard, and when the draft is gone or exists as approved/completed.
 - `guardAutoDraft(go)` shows the Keep / Discard / Stay dialog (`data-auto-draft-ask=leave`) when the open job is the unkept draft; `go` re-runs the action through `latestRef` with a `guarded` flag (skips the old "unsaved changes" confirm). Guarded: header New Operation (`handleResetForm`), Home New job (`dashActions.newJob`), non-silent `handleLoadPlan` (Resume / Open buttons), `openDashJob`, `openCloudJob`, `wd-open-company-job`, `handleCopyPlan`. Silent loads with follow-up steps (sign links, importing crew flights) are not interrupted; the left draft then shows the banner (`data-auto-draft-ask=left`) instead.
