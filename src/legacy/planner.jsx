@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.63';
+        const APP_VERSION = '7.64';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -15608,20 +15608,36 @@ View in the Database & Settings tab.`);
                                 />
                                 {/* Save to fleet */}
                                 <div className="px-4 py-3 border-t border-slate-100 flex justify-end">
-                                  <button onClick={() => {
+                                  {onCloudJob ? (
+                                    /* v7.64: crew on a company job don't hold the company fleet on their device, so their flights go to the CRP instead */
+                                    <button type="button" data-crew-rpa-send={rpa} disabled={pushing} onClick={() => {
+                                      const flts = rpaLog.flights && rpaLog.flights.length > 0 ? rpaLog.flights : [];
+                                      const total = flts.reduce((s, f) => s + (parseInt(f.duration) || 0), 0);
+                                      if (total <= 0) { alert('Enter at least one flight duration before sending.'); return; }
+                                      if (!unsentFlights.length && !logUnsent) { alert('These flights have already been sent to the CRP.'); return; }
+                                      pushCloudFlights();
+                                    }} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white px-4 py-2 rounded-md text-xs font-semibold transition-colors shadow-sm flex items-center gap-2">
+                                      <i className="fa-solid fa-paper-plane"></i> {pushing ? 'Sending…' : `Send ${rpa} flights to the CRP`}
+                                    </button>
+                                  ) : (
+                                  <button data-fleet-save={rpa} onClick={() => {
                                     const flts = rpaLog.flights && rpaLog.flights.length > 0 ? rpaLog.flights : [];
                                     const total = flts.reduce((s, f) => s + (parseInt(f.duration) || 0), 0);
                                     if (total <= 0) { alert('Enter at least one flight duration before saving.'); return; }
                                     const fleet = { ...db.fleet };
-                                    if (fleet[rpa]) {
-                                      const tot = (fleet[rpa].totalFlightTime || 0) + total;
-                                      fleet[rpa] = { ...fleet[rpa], totalFlightTime: tot };
-                                      updateDb('fleet', fleet);
-                                      alert(`Logged ${total} mins (${flts.filter(f=>parseInt(f.duration)>0).length} flight${flts.length!==1?'s':''}) to ${rpa}.\nTotal airframe time: ${tot} mins.`);
-                                    } else { alert('That RPA is not in your fleet database yet.'); }
+                                    if (!fleet[rpa]) {
+                                      // v7.64: no dead end: offer to add the aircraft to this device's fleet
+                                      if (!window.confirm(`${rpa} isn't in the fleet on this device yet.\n\nAdd it to the fleet now and log these ${total} mins to it?`)) return;
+                                      fleet[rpa] = { weight: 0, area: 0.05, cd: 1.2, totalFlightTime: 0 };
+                                    }
+                                    const tot = (fleet[rpa].totalFlightTime || 0) + total;
+                                    fleet[rpa] = { ...fleet[rpa], totalFlightTime: tot };
+                                    updateDb('fleet', fleet);
+                                    alert(`Logged ${total} mins (${flts.filter(f=>parseInt(f.duration)>0).length} flight${flts.length!==1?'s':''}) to ${rpa}.\nTotal airframe time: ${tot} mins.`);
                                   }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md text-xs font-semibold transition-colors shadow-sm flex items-center gap-2">
                                     <i className="fa-solid fa-check"></i> Save {rpa} Time to Fleet DB
                                   </button>
+                                  )}
                                 </div>
                               </div>
                             );
