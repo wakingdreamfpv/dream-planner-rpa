@@ -14629,13 +14629,6 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation<CommentChip sec="approval" /></h2>
                       </div>
-                      {!isFree && !isCrewRole && overview.uid && <div className={`mx-4 sm:mx-6 mt-4 rounded-xl border px-4 py-2 text-sm print:hidden ${otherReocHere ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`} data-allow-locked="1" data-other-reoc={otherReocHere ? '1' : '0'}>
-                        <label className="flex items-center gap-2 font-semibold text-slate-800"><input type="checkbox" data-other-reoc-toggle="1" checked={!!otherReocHere}
-                          onChange={(e) => setOtherReoc(e.target.checked ? { operator: '', at: new Date().toISOString() } : null)} />Flown under another operator's ReOC (not ours)</label>
-                        {otherReocHere && <div className="mt-1.5 space-y-1"><input data-other-reoc-operator="1" className="w-full px-2 py-1 border border-amber-300 rounded-md text-sm bg-white" placeholder="Whose ReOC (operator / ReOC number)"
-                          value={otherReocHere.operator || ''} onChange={(e) => setOtherReoc({ ...otherReocHere, operator: e.target.value })} />
-                          <p className="text-xs text-amber-900">Our crew currency checks and to-do items are skipped for this job, and it's marked “Other ReOC” on Home. Records for it belong with that operator.</p></div>}
-                      </div>}
                       {isCrpCloud && !otherReocHere && (() => {
                         const items = reqItems.filter(x => x.crew);
                         if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
@@ -15049,6 +15042,22 @@ View in the Database & Settings tab.`);
                                   <input type="text" placeholder="ARN" name="crpArn" value={approval.crpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
+                              {/* v7.65: which ReOC the job is flown under (was a box at the top of the page); another operator's skips our crew checks */}
+                              {!isFree && !isCrewRole && overview.uid && <div data-allow-locked="1" data-other-reoc={otherReocHere ? '1' : '0'} className={otherReocHere ? 'rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5' : ''}>
+                                <label className="block text-xs font-medium text-gray-500 mb-1">ReOC</label>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <span className="font-mono text-slate-800 print:hidden">{otherReocHere ? (otherReocHere.operator || 'Another operator') : ((companyFor(overview) || {}).reocNumber || 'Our ReOC')}</span>
+                                  <select data-other-reoc-toggle="1" value={otherReocHere ? 'other' : 'ours'} onChange={(e) => setOtherReoc(e.target.value === 'other' ? { operator: '', at: new Date().toISOString() } : null)}
+                                    className="ml-auto text-xs px-1.5 py-0.5 border border-slate-200 rounded bg-white text-slate-600 print:hidden" title="Which operator's ReOC this job is flown under">
+                                    <option value="ours">Ours</option>
+                                    <option value="other">Another operator's</option>
+                                  </select>
+                                  <span className="hidden print:inline">{otherReocHere ? (otherReocHere.operator || 'Another operator') : ((companyFor(overview) || {}).reocNumber || '')}</span>
+                                </div>
+                                {otherReocHere && <div className="mt-1.5 space-y-1 print:hidden"><input data-other-reoc-operator="1" className="w-full px-2 py-1 border border-amber-300 rounded-md text-sm bg-white" placeholder="Whose ReOC (operator / ReOC number)"
+                                  value={otherReocHere.operator || ''} onChange={(e) => setOtherReoc({ ...otherReocHere, operator: e.target.value })} />
+                                  <p className="text-xs text-amber-900">Our crew currency checks and to-do items are skipped for this job, and it's marked “Other ReOC” on Home. Records for it belong with that operator.</p></div>}
+                              </div>}
                               <div className="flex gap-2 items-end">
                                 <div className="w-2/3 relative h-10 flex items-end pb-1 text-sm">
                                   {!approval.crpSigned ? (
