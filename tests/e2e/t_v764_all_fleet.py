@@ -1,4 +1,4 @@
-# v7.64: the crew "Send … flights to the CRP" button and the CRP's add-to-fleet fix, checked for every aircraft in the fleet
+# v7.64 (v7.67: one Log completed flight button): crew sending and the CRP's add-to-fleet fix, checked for every aircraft in the fleet
 # (names with " and brackets included).
 import sys, os, json, copy; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *
@@ -20,13 +20,11 @@ with sync_playwright() as p:
     pg.evaluate("window.dispatchEvent(new CustomEvent('wd-open-cloud-job',{detail:{id:'jobs-all'}}))"); pg.wait_for_timeout(5000)
     pg.evaluate(JS_INC, 'Flight Log'); pg.wait_for_timeout(2000)
     R.check('(setup) a duration typed for every aircraft', pg.evaluate(SETDUR) == len(FLEET)); pg.wait_for_timeout(1500)
-    for r in FLEET:
-        R.check('crew button shown: ' + r, pg.evaluate(CLICK.replace('.click()', ''), ['data-crew-rpa-send', r]) == 1)
+    # v7.67: one "Log completed flight" sends every aircraft's flights
+    R.check('no per-aircraft send buttons (v7.67)', pg.locator('[data-crew-rpa-send]').count() == 0)
     R.check('no old Fleet DB button for crew', pg.locator('[data-fleet-save]').count() == 0)
-    # each aircraft pressed on its own, Pavo first
-    for r in ['Pavo 20 Pro'] + [x for x in FLEET if x != 'Pavo 20 Pro']:
-        dl.clear(); pg.evaluate(CLICK, ['data-crew-rpa-send', r]); pg.wait_for_timeout(1800)
-        R.check('crew send ok: ' + r, dl and not any('not in your fleet' in d or "Couldn't" in d for d in dl), dl)
+    dl.clear(); pg.click('[data-log-complete]'); pg.wait_for_timeout(2500)
+    R.check('crew send ok', dl and not any('not in your fleet' in d or "Couldn't" in d for d in dl), dl)
     sent = pg.evaluate("[...new Set((window.__T.job_flights||[]).filter(f=>f.job_id==='jobs-all'&&f.rpa).map(f=>f.rpa))]")
     R.check('flights from every aircraft reached the CRP (%d/%d)' % (len(sent), len(FLEET)), sorted(sent) == sorted(FLEET), set(FLEET) - set(sent))
     R.check('no duplicates', pg.evaluate("(window.__T.job_flights||[]).filter(f=>f.job_id==='jobs-all'&&f.rpa).length") == len(FLEET))

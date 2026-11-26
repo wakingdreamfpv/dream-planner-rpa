@@ -5,7 +5,7 @@ import { getSupabase } from '../cloud/client.js';
 
 const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday'], [6, 'Saturday'], [7, 'Sunday']];
 const EVENTS = {
-  crp: [['rpic_signed', 'A pilot signs a job as RPIC'], ['induction', 'A pilot submits their induction'], ['plan_suggestions', 'Crew suggest changes to a plan']],
+  crp: [['rpic_signed', 'A pilot signs a job as RPIC'], ['induction', 'A pilot submits their induction'], ['plan_suggestions', 'Crew suggest changes to a plan'], ['log_complete', 'A pilot logs a completed flight (ready for final review)']],
   crew: [['sign_request', 'The CRP asks you to sign a job as RPIC'], ['log_request', 'The CRP asks you to fill in a flight log'], ['induction', 'Your induction is certified']],
 };
 

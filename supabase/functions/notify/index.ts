@@ -1,4 +1,4 @@
-// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.22 ═══
+// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.67 ═══
 // Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
@@ -179,6 +179,29 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ from, to: to8, subject: subject8, html: html8 }) });
       if (!r8.ok) return json({ ok: false, error: 'Email failed: ' + (await r8.text()).slice(0, 200) }, 502);
       return json({ ok: true, sent: to8.length });
+    }
+    // v7.67: a crew member pressed "Log completed flight" → email the CRP(s): the log is ready for final review
+    if (event === 'log_complete') {
+      const { data: row } = await admin.from('job_flights')
+        .select('id, flight, job_id, jobs:job_id (title, op_id, start_date), people:person_id (full_name, email, user_id)').eq('id', String(body.flight_id || '')).single();
+      const lc = (row?.flight || {}) as any, who9 = (row as any)?.people || {}, job9 = (row as any)?.jobs || {};
+      if (!row || lc.kind !== 'log_complete' || who9.user_id !== who.user.id) return json({ error: 'Log not found' }, 404);
+      const { data: crps } = await admin.from('profiles').select('email').eq('role', 'crp').eq('active', true);
+      const to9 = await keep((crps || []).map((c: any) => c.email).filter(Boolean), 'log_complete');
+      if (!to9.length) return json({ ok: true, sent: 0, message: 'No CRP to email' });
+      if (!resendKey) return json({ ok: true, sent: 0, message: 'Email not set up (RESEND_API_KEY missing); shown in the planner only' });
+      const n9 = Number(lc.flights) || 0, m9 = Number(lc.minutes) || 0, ac9 = Array.isArray(lc.aircraft) ? lc.aircraft.slice(0, 8).map((x: unknown) => String(x)) : [];
+      const subject9 = `${who9.full_name || 'A pilot'} has logged ${job9.title || 'a job'}: ready for final review`;
+      const html9 = page(subject9,
+        P(`<b>${esc(who9.full_name)}</b> has finished their flight log and sent it to you for final review.`) +
+        P(`Job: <b>${esc(job9.title || '')}</b>${job9.op_id ? ' (' + esc(job9.op_id) + ')' : ''}${job9.start_date ? ' · ' + esc(job9.start_date) : ''}`) +
+        P(`${n9} flight${n9 === 1 ? '' : 's'}${m9 ? ', ' + m9 + ' min in total' : ''}${ac9.length ? ' on ' + esc(ac9.join(', ')) : ''}${lc.answers ? ', with the post-flight answers' : ''}.`) +
+        P('Open the planner: it is in Awaiting action on Home. Review log adds it to the job, then check it and log the completed flight.'),
+        'Open the planner', appUrl);
+      const r9 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: to9, subject: subject9, html: html9 }) });
+      if (!r9.ok) return json({ ok: false, error: 'Email failed: ' + (await r9.text()).slice(0, 200) }, 502);
+      return json({ ok: true, sent: to9.length });
     }
     // v7.5.2: a crew member signed as RPIC on a company job → email the CRP(s)
     if (event === 'rpic_signed') {
