@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.64';
+        const APP_VERSION = '7.65';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10414,7 +10414,7 @@ View in the Database & Settings tab.`);
             if (d.error || !d.plan) { alert('Couldn\'t open the job from the cloud: ' + (d.error || 'no plan saved')); return false; }
             handleLoadPlan({ ...d.plan, title: d.job.title, status: d.job.status === 'completed' ? 'completed' : 'draft' }, { silent: true });
             setTimeout(() => { then && then(); }, 500);
-            setTimeout(() => alert(`“${d.job.title}” was opened from the cloud (it wasn't saved on this device). Save it here when you're done, so this device keeps a copy.\n\nTelemetry traces and site attachments stay on the device the job was made on.`), 900);
+            setTimeout(() => alert(`“${d.job.title}” was opened from the cloud (it wasn't saved on this device). Save it here when you're done, so this device keeps a copy.\n\nSite attachments stay on the device the job was made on.`), 900);
             return true;
           };
           // v7.5.7: "Open" on a job in a crew member's profile
@@ -11231,6 +11231,11 @@ View in the Database & Settings tab.`);
                       </div>
                       <div className="p-4 sm:p-5 space-y-3 text-sm text-slate-700">
                         <p>Plan a whole job (plan, JSA and risk, approval, flight log and the PDF), free with no sign-up. It's saved on this device, and you can use it for paid work.</p>
+                        {/* v7.65: existing users (CRP, crew) sign in straight from here */}
+                        {IS_HOSTED && <div className="flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5" data-free-signin-row="1">
+                          <span className="flex-1 text-slate-700"><span className="block font-semibold text-slate-800">Already have an account?</span><span className="block text-xs text-slate-600">Your company, crew or beta login.</span></span>
+                          <button type="button" data-free-signin="1" onClick={() => { done(); window.dispatchEvent(new Event('wd-open-account')); }} className="shrink-0 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-semibold"><i className="fa-solid fa-right-to-bracket mr-1.5"></i>Sign in</button>
+                        </div>}
                         <div className="text-xs font-bold uppercase tracking-wider text-slate-500 pt-1">How would you like to start?</div>
                         <button type="button" data-free-start="1" onClick={() => { done(); setActiveTab('preliminary'); }} className="w-full flex items-start gap-3 text-left rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 px-4 py-3"><i className="fa-solid fa-pen-to-square text-violet-600 mt-1 w-5"></i><span><span className="block font-bold text-slate-800">Start a plan from scratch</span><span className="block text-xs text-slate-600">A blank job, ready for real work.</span></span></button>
                         {IS_HOSTED && <button type="button" data-free-sample="1" onClick={() => { done(); openSampleJob(); }} className="w-full flex items-start gap-3 text-left rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 px-4 py-3"><i className="fa-solid fa-map-location-dot text-violet-600 mt-1 w-5"></i><span><span className="block font-bold text-slate-800">See a sample job</span><span className="block text-xs text-slate-600">Acme Corp, Suncorp Stadium: a finished over-people (OONP) plan with map, 3D view, risks and approval. Explore and edit your own copy.</span></span></button>}
@@ -14629,13 +14634,6 @@ View in the Database & Settings tab.`);
                         <i className="fa-solid fa-file-signature text-lg text-blue-600"></i>
                         <h2 className="text-lg font-semibold text-slate-800">Section 3: Approval & Flight Authorisation<CommentChip sec="approval" /></h2>
                       </div>
-                      {!isFree && !isCrewRole && overview.uid && <div className={`mx-4 sm:mx-6 mt-4 rounded-xl border px-4 py-2 text-sm print:hidden ${otherReocHere ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`} data-allow-locked="1" data-other-reoc={otherReocHere ? '1' : '0'}>
-                        <label className="flex items-center gap-2 font-semibold text-slate-800"><input type="checkbox" data-other-reoc-toggle="1" checked={!!otherReocHere}
-                          onChange={(e) => setOtherReoc(e.target.checked ? { operator: '', at: new Date().toISOString() } : null)} />Flown under another operator's ReOC (not ours)</label>
-                        {otherReocHere && <div className="mt-1.5 space-y-1"><input data-other-reoc-operator="1" className="w-full px-2 py-1 border border-amber-300 rounded-md text-sm bg-white" placeholder="Whose ReOC (operator / ReOC number)"
-                          value={otherReocHere.operator || ''} onChange={(e) => setOtherReoc({ ...otherReocHere, operator: e.target.value })} />
-                          <p className="text-xs text-amber-900">Our crew currency checks and to-do items are skipped for this job, and it's marked “Other ReOC” on Home. Records for it belong with that operator.</p></div>}
-                      </div>}
                       {isCrpCloud && !otherReocHere && (() => {
                         const items = reqItems.filter(x => x.crew);
                         if (!currency) return <div className="mx-4 sm:mx-6 mt-4 text-xs text-slate-500 print:hidden" data-crew-currency="loading">Checking crew currency…</div>;
@@ -15049,6 +15047,22 @@ View in the Database & Settings tab.`);
                                   <input type="text" placeholder="ARN" name="crpArn" value={approval.crpArn} readOnly className="w-1/3 px-3 py-2 text-sm border border-gray-200 bg-gray-50 rounded-md text-gray-600" />
                                 </div>
                               </div>
+                              {/* v7.65: which ReOC the job is flown under (was a box at the top of the page); another operator's skips our crew checks */}
+                              {!isFree && !isCrewRole && overview.uid && <div data-allow-locked="1" data-other-reoc={otherReocHere ? '1' : '0'} className={otherReocHere ? 'rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5' : ''}>
+                                <label className="block text-xs font-medium text-gray-500 mb-1">ReOC</label>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <span className="font-mono text-slate-800 print:hidden">{otherReocHere ? (otherReocHere.operator || 'Another operator') : ((companyFor(overview) || {}).reocNumber || 'Our ReOC')}</span>
+                                  <select data-other-reoc-toggle="1" value={otherReocHere ? 'other' : 'ours'} onChange={(e) => setOtherReoc(e.target.value === 'other' ? { operator: '', at: new Date().toISOString() } : null)}
+                                    className="ml-auto text-xs px-1.5 py-0.5 border border-slate-200 rounded bg-white text-slate-600 print:hidden" title="Which operator's ReOC this job is flown under">
+                                    <option value="ours">Ours</option>
+                                    <option value="other">Another operator's</option>
+                                  </select>
+                                  <span className="hidden print:inline">{otherReocHere ? (otherReocHere.operator || 'Another operator') : ((companyFor(overview) || {}).reocNumber || '')}</span>
+                                </div>
+                                {otherReocHere && <div className="mt-1.5 space-y-1 print:hidden"><input data-other-reoc-operator="1" className="w-full px-2 py-1 border border-amber-300 rounded-md text-sm bg-white" placeholder="Whose ReOC (operator / ReOC number)"
+                                  value={otherReocHere.operator || ''} onChange={(e) => setOtherReoc({ ...otherReocHere, operator: e.target.value })} />
+                                  <p className="text-xs text-amber-900">Our crew currency checks and to-do items are skipped for this job, and it's marked “Other ReOC” on Home. Records for it belong with that operator.</p></div>}
+                              </div>}
                               <div className="flex gap-2 items-end">
                                 <div className="w-2/3 relative h-10 flex items-end pb-1 text-sm">
                                   {!approval.crpSigned ? (

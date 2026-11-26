@@ -1,5 +1,12 @@
 # Planner changelog
 
+## v7.65 — 26 Nov 2026 — Flight charts on every device, ReOC under the CRP, Sign in on the welcome screen
+- **Flight charts everywhere:** the height and speed chart readings now save to your account with the job (about 13 KB a flight). A flight opened on another device, or added for you by Claude, now draws its chart instead of showing "Pick a reading below" with nothing to pick.
+- **Older flights:** flights saved before this update still have no chart on other devices. To fix one, click **Import telemetry** and pick the same log file (nothing else on the flight changes), or open and save the job on the device that imported it. Claude can also fill them in through the connector by adding the same log again.
+- **ReOC under the CRP:** the "Flown under another operator's ReOC" box at the top of Authorisation is gone. The CRP block now shows a **ReOC** line with your ReOC number and a small **Ours / Another operator's** dropdown. Choosing another operator's asks whose ReOC it is, as before.
+- **Sign in on the welcome screen:** the free welcome now has "Already have an account? **Sign in**" for existing users.
+- Supabase: nothing to do.
+
 ## v7.64 — 26 Nov 2026 — Crew can log flights without "That RPA is not in your fleet database yet"
 - **Crew on a company job:** pilots signed in as crew don't have the company fleet on their device, so the green "Save … Time to Fleet DB" button stopped them with "That RPA is not in your fleet database yet" (Ben, Custom FPV Cinewhoop). On a company job that button is now **"Send … flights to the CRP"** and sends their flights to you, the same as the blue "Send my log to the CRP" button. Pressing it twice doesn't send twice.
 - **Your own device:** if an aircraft on the job isn't in the fleet yet, the planner now offers to add it and log the time, instead of stopping.
