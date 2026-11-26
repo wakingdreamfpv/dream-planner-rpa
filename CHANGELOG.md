@@ -1,5 +1,22 @@
 # Planner changelog
 
+## v7.66 — 26 Nov 2026 — New jobs are saved as drafts straight away; approved jobs save themselves
+- **New Operation:** the new job is saved as a draft as soon as you start it (and to your account). Same for "start a new job from this plan".
+- **Leaving a new job you haven't saved yourself:** starting another job, or opening a different one, asks **Keep draft**, **Discard it** or **Stay on this job**. Keep leaves it in Draft plans (with any changes you made). Discard removes it from this device and from your account (your other devices ask before removing their copy, as with any deleted job). Nothing is ever removed unless you press Discard.
+- **Closed the tab instead?** Next time you open the planner, a yellow bar asks the same: keep or discard.
+- Once you press Save Draft (or the job is approved), it's yours: no more questions about it. Going to Home doesn't count as leaving, because the job stays open.
+- **Approved jobs:** as soon as the plan has the CRP and RPIC signatures (or the CRP override) and you switch on Approved for Flight, it's saved into Saved approved plans and to your account as approved. No Save click needed; a green note confirms it. Opening an approved plan later doesn't re-save it, and completed records are never touched.
+- Supabase: nothing to do.
+
+### Technical notes (v7.66, for Claude Code)
+- All in `src/legacy/planner.jsx`, block "v7.66: a new operation is saved straight away as a draft" just after `handleSaveDraftPlan`.
+- `startNewOperation()` = `handleResetFormQuiet()` + `newOpPendingRef`; an effect on `overview.uid` then calls `handleSaveDraftPlan({ quiet, noCrewHook, autoDraft: true })` and stores the "not kept yet" marker in localStorage `wd_auto_draft` ({uid,id,at}). Not for free mode, crew accounts or a read-only tab. The sample tour and other internal resets still use `handleResetFormQuiet()` and make no draft.
+- The marker is cleared by any save that isn't the auto one (Save Draft, quiet saves for share links / RPIC requests, `handleSaveApprovedPlan`), by Keep, by Discard, and when the draft is gone or exists as approved/completed.
+- `guardAutoDraft(go)` shows the Keep / Discard / Stay dialog (`data-auto-draft-ask=leave`) when the open job is the unkept draft; `go` re-runs the action through `latestRef` with a `guarded` flag (skips the old "unsaved changes" confirm). Guarded: header New Operation (`handleResetForm`), Home New job (`dashActions.newJob`), non-silent `handleLoadPlan` (Resume / Open buttons), `openDashJob`, `openCloudJob`, `wd-open-company-job`, `handleCopyPlan`. Silent loads with follow-up steps (sign links, importing crew flights) are not interrupted; the left draft then shows the banner (`data-auto-draft-ask=left`) instead.
+- Discard: safety copy, removes the draft from `draftPlans` only (never if the same job is in savedPlans/completedFlights), `cancelInAccount()` (v7.40 path, status cancelled), plus a second cancel after 4 s if its first upload may still have been on the way.
+- Auto-approve: effect on `[overview.uid, approvedReady]` where `approvedReady = flightAuthApproved && crpSigned && (rpSigned || rpOverride)`. Fires only on the false→true change for the same open job (never on load), not for crew/read-only tabs or jobs with a completed record. Calls `handleSaveApprovedPlan({ auto: true })` (same path as the button; note banner `data-job-note=approved` instead of the alert). The cloud upload is the usual list sync (status approved). record_versions untouched.
+- Test: `tests/e2e/t_v766_draft_autosave.py`.
+
 ## v7.64 — 26 Nov 2026 — Crew can log flights without "That RPA is not in your fleet database yet"
 - **Crew on a company job:** pilots signed in as crew don't have the company fleet on their device, so the green "Save … Time to Fleet DB" button stopped them with "That RPA is not in your fleet database yet" (Ben, Custom FPV Cinewhoop). On a company job that button is now **"Send … flights to the CRP"** and sends their flights to you, the same as the blue "Send my log to the CRP" button. Pressing it twice doesn't send twice.
 - **Your own device:** if an aircraft on the job isn't in the fleet yet, the planner now offers to add it and log the time, instead of stopping.
