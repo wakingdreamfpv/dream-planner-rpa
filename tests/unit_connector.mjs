@@ -35,7 +35,12 @@ const r1 = await tools.add_flight_logs.run({ job: 'OP-2026-0101', flights: [{ re
 ok('add_flight_logs: added to the draft with battery and OONP', r1.added.length === 1 && !r1.skipped.length, r1);
 const j1 = T.jobs.find(j => j.id === 'j1');
 const f1 = j1.plan.log.rpaLogs['Nazgul 5'].flights[0];
-ok('...saved in the account: newer savedAt, telemetry summary without the heavy trace', j1.plan.savedAt > '2026-11-10' && f1.batteries === '6S-01' && f1.oonp === false && f1.telemetry && !f1.telemetry.trace, f1);
+ok('...saved in the account: newer savedAt, telemetry with its chart readings (v7.65)', j1.plan.savedAt > '2026-11-10' && f1.batteries === '6S-01' && f1.oonp === false && f1.telemetry && (f1.telemetry.trace || []).length > 5, f1);
+// v7.65: a flight added before without its readings gets them when its log is added again; nothing else on it changes
+delete f1.telemetry.trace; f1.notes = 'keep me';
+const rf = await tools.add_flight_logs.run({ job: 'Beach', flights: [{ ref: rd.flights[0].ref, aircraft: 'Nazgul 5' }] });
+const f1b = T.jobs.find(j => j.id === 'j1').plan.log.rpaLogs['Nazgul 5'].flights;
+ok('adding the log again fills in missing chart readings only', !rf.added.length && (rf.filled || []).length === 1 && f1b.length === 1 && (f1b[0].telemetry.trace || []).length > 5 && f1b[0].notes === 'keep me' && f1b[0].batteries === '6S-01', rf);
 const r2 = await tools.add_flight_logs.run({ job: 'Beach', flights: [{ ref: rd.flights[0].ref, aircraft: 'Nazgul 5' }] });
 ok('the same flight again is skipped', !r2.added.length && /already/.test(r2.skipped[0]), r2);
 const r3 = await tools.add_flight_logs.run({ job: 'Hezzelic', flights: [{ ref: rd.flights[1].ref, aircraft: 'DJI Mini 4 Pro' }, { ref: rd.flights[1].ref, aircraft: 'Nazgul 5' }] });

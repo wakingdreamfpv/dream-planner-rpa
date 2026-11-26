@@ -15,13 +15,11 @@ const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { deta
 const publish = (key, value, ev) => { window[key] = value; window.dispatchEvent(new Event(ev)); };
 const low = (s) => String(s || '').trim().toLowerCase();
 
-// strip the bulky parts of a plan before it goes to the cloud (telemetry traces stay on the CRP's device)
+// strip the bulky parts of a plan before it goes to the cloud. v7.65: the flight chart readings (about 13 KB a flight) now go
+// too, so the height / speed charts show on every device; site attachments and heat strokes still stay on the device
 export const slimPlan = (plan) => {
   try {
     const p = JSON.parse(JSON.stringify(plan || {}));
-    Object.values((p.log && p.log.rpaLogs) || {}).forEach(rl => ((rl && rl.flights) || []).forEach(f => {
-      if (f && f.telemetry) { delete f.telemetry.trace; delete f.telemetry.altRaw; delete f.telemetry.spdRaw; }
-    }));
     delete p.siteAttachments; delete p.heatStrokes;
     return p;
   } catch (e) { return {}; }

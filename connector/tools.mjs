@@ -11,7 +11,6 @@ import crypto from 'node:crypto';
 import { parseTelemetryCsv, flightFromTelemetry, guessAircraft, fmtMmSs, retimeFlight } from '../src/telemetry/logs.js';
 
 const slim = (plan) => { const p = JSON.parse(JSON.stringify(plan || {}));
-  Object.values((p.log && p.log.rpaLogs) || {}).forEach(rl => ((rl && rl.flights) || []).forEach(f => { if (f && f.telemetry) { delete f.telemetry.trace; delete f.telemetry.altRaw; delete f.telemetry.spdRaw; } }));
   delete p.siteAttachments; delete p.heatStrokes; return p; };
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const deepMerge = (a, b) => { if (!isObj(a) || !isObj(b)) return b; const o = { ...a }; Object.keys(b).forEach(k => { o[k] = (isObj(a[k]) && isObj(b[k])) ? deepMerge(a[k], b[k]) : b[k]; }); return o; };
@@ -138,8 +137,8 @@ export function makeTools(sb, opts = {}) {
         const plan = JSON.parse(JSON.stringify(row.plan || {})), ov = plan.overview = plan.overview || {}, lg = plan.log = plan.log || {};
         const approved = !!((plan.approval || {}).flightAuthApproved), setup = await getSetup(), fleet = setup.fleet || {};
         const rpaLogs = lg.rpaLogs = { ...(lg.rpaLogs || {}) }, rpaTypes = ov.rpaTypes = [...(ov.rpaTypes || [])];
-        const have = new Set(); Object.values(rpaLogs).forEach(rl => ((rl && rl.flights) || []).forEach(f => { if (f.telemetry) have.add(f.telemetry.startMs); }));
-        const cache = {}; const added = [], skipped = [];
+        const have = new Set(), bare = new Map(); Object.values(rpaLogs).forEach(rl => ((rl && rl.flights) || []).forEach(f => { if (f.telemetry) { have.add(f.telemetry.startMs); if (!(f.telemetry.trace || []).length) bare.set(f.telemetry.startMs, f); } }));
+        const cache = {}; const added = [], skipped = [], filled = [];
         for (const it of flights || []) {
           const rm = /^(.*)#(\d+)(?:@(utc|local))?$/.exec(String(it.ref || '')); if (!rm) { skipped.push(it.ref + ': not a flight reference from read_flight_logs'); continue; }
           const file = rm[1], idx = rm[2], fclk = clock ? clk : (rm[3] || clk);
@@ -147,9 +146,11 @@ export function makeTools(sb, opts = {}) {
           if (approved && !rpaTypes.includes(it.aircraft)) { skipped.push(it.ref + ': ' + it.aircraft + ' is not on this approved plan (add it in the planner)'); continue; }
           const ck = file + '@' + fclk; if (!cache[ck]) { try { cache[ck] = parseTelemetryCsv(fs.readFileSync(file, 'utf8'), path.basename(file), fclk); } catch (e) { skipped.push(it.ref + ': ' + e.message); continue; } }
           const t = cache[ck][parseInt(idx, 10)]; if (!t) { skipped.push(it.ref + ': flight not found in the file'); continue; }
+          // v7.65: a flight that's already here without its chart readings gets them (nothing else on it changes)
+          if (bare.has(t.startMs)) { const ef = bare.get(t.startMs); bare.delete(t.startMs); ef.telemetry = { ...ef.telemetry, trace: t.trace }; filled.push(`${ef.label || it.ref}: chart readings added`); continue; }
           if (have.has(t.startMs)) { skipped.push(it.ref + ': already on this job'); continue; } have.add(t.startMs);
           const cells = parseInt((fleet[it.aircraft] || {}).cells) || 0;
-          const f = flightFromTelemetry(cells ? { ...t, cells } : t); delete f.telemetry.trace; delete f.telemetry.altRaw; delete f.telemetry.spdRaw;
+          const f = flightFromTelemetry(cells ? { ...t, cells } : t);
           if (it.battery) f.batteries = String(it.battery); if (typeof it.oonp === 'boolean') f.oonp = it.oonp;
           if (!rpaTypes.includes(it.aircraft)) rpaTypes.push(it.aircraft);
           const rl = { duration: '', batteries: '', fpvEnabled: false, flights: [], ...(rpaLogs[it.aircraft] || {}) };
@@ -157,8 +158,8 @@ export function makeTools(sb, opts = {}) {
           rpaLogs[it.aircraft] = { ...rl, flights: [...(rl.flights || []).filter(x => !blank(x)), f].sort((a, b) => ((a.telemetry && a.telemetry.startMs) || 0) - ((b.telemetry && b.telemetry.startMs) || 0)) };
           added.push(`${it.aircraft}: ${f.label} (${f.duration} min)`);
         }
-        if (added.length) { plan.savedAt = new Date().toISOString(); await saveJob(row, plan); }
-        return { job: `${row.op_id || ''} ${row.title}`, added, skipped, note: added.length ? 'Saved to the account. Open the planner: the job updates on each device (if that device has unsaved changes to this job, those are kept and this is not applied there).' : 'Nothing was added.' };
+        if (added.length || filled.length) { plan.savedAt = new Date().toISOString(); await saveJob(row, plan); }
+        return { job: `${row.op_id || ''} ${row.title}`, added, ...(filled.length ? { filled } : {}), skipped, note: (added.length || filled.length) ? 'Saved to the account. Open the planner: the job updates on each device (if that device has unsaved changes to this job, those are kept and this is not applied there).' : 'Nothing was added.' };
       },
     },
     update_flight: {
