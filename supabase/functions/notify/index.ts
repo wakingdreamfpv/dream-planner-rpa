@@ -1,4 +1,4 @@
-// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.67 ═══
+// ═══ Dream Planner RPA · edge function "notify" · last changed in v7.69 ═══
 // Paste into: Supabase › Edge Functions › notify › Code (replace everything) › Deploy. Verify JWT: OFF.
 // Dream Planner RPA — notify (Supabase Edge Function)
 // Sends the induction emails through Resend:
@@ -196,8 +196,8 @@ Deno.serve(async (req) => {
         P(`<b>${esc(who9.full_name)}</b> has finished their flight log and sent it to you for final review.`) +
         P(`Job: <b>${esc(job9.title || '')}</b>${job9.op_id ? ' (' + esc(job9.op_id) + ')' : ''}${job9.start_date ? ' · ' + esc(job9.start_date) : ''}`) +
         P(`${n9} flight${n9 === 1 ? '' : 's'}${m9 ? ', ' + m9 + ' min in total' : ''}${ac9.length ? ' on ' + esc(ac9.join(', ')) : ''}${lc.answers ? ', with the post-flight answers' : ''}.`) +
-        P('Open the planner: it is in Awaiting action on Home. Review log adds it to the job, then check it and log the completed flight.'),
-        'Open the planner', appUrl);
+        P('Open the job: their flights and answers are added to the log and the job is saved. Then check Section 4 and log the completed flight.'),
+        'Open the job', appUrl + '#crew-log=' + row.job_id);
       const r9 = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ from, to: to9, subject: subject9, html: html9 }) });
       if (!r9.ok) return json({ ok: false, error: 'Email failed: ' + (await r9.text()).slice(0, 200) }, 502);
