@@ -1,5 +1,17 @@
 # Planner changelog
 
+## v7.70 — 26 Nov 2026 — HUD Studio 1.9.2: new Arcade cabinet style
+- **New style card: Arcade cabinet**, made from your two cabinet pictures. A 9:16 video uses the tall cabinet; 16:9 uses the wide one. Square and 4:3 use the tall one, cropped to the screen and controls.
+- Your footage plays **inside the arcade screen**, with scanlines and a glass shine. On top: SCORE (flight time), heading, altitude, a blinking REC dot, an aim box with a horizon line that tilts with roll and moves with pitch, and a message line (INSERT COIN · PRESS START before arming, PLAYER 1 · GO!, LOW BATTERY!, GAME OVER after landing, otherwise mode and throttle).
+- The six side screens are live: battery volts and per cell, current and mAh, pack % with a bar, speed, distance home with an arrow, link quality and satellites.
+- The **joysticks move** with your sticks (left: throttle and yaw, right: pitch and roll), turned up a bit so it's easy to see. The little THR / YAW and PIT / ROLL boxes show the stick positions. **ARM** lights while armed, **ACRO** lights in acro mode and **REC** blinks while recording. The coin-door lights glow with throttle.
+- Best exported **burned into the video** (the footage is shrunk into the screen).
+- Supabase: nothing to do.
+
+### Technical notes (v7.70, for Claude Code)
+- `public/hud/index.html`: block "v1.9.2: Arcade cabinet" before `jetHud`. `CB` holds the images (tall/wide base plus 2 stick sprites each, `CB_OK` counts to 6). `CBI` holds image-pixel layout: `scr`, `box`, `mini`, `btn`, `stk`, `piv`. `cabRect` uses the wide photo when W/H ≥ 1.45. `cabinet()` cuts the CRT out with destination-out (`cabScrPath`) so the `<video>` under the canvas shows. `vidRect` now fits the video into `cabScr` when the style is `cabinet` (the old body is `vidRect0`), and the style click calls `applyVid()`. `drawHUD` returns `cabinet()` straight away for this style, so there's no cockpit toggle or sway. The sticks were cut offline (scratchpad `ck8/cut.py`), with a row-interpolated fill behind them.
+- Test: `tests/e2e/t_v770_hud_192.py`. `t_v762` now accepts 1.9.x.
+
 ## v7.69 — 26 Nov 2026 — Crew logs are added and saved as soon as you open the job
 - **The problem:** when a pilot pressed Log completed flight, you got the email, but opening the job showed nothing. Their flights only went in through Home › Awaiting action › Review log, and then you still had to save.
 - **Now:** open the job any way (Saved approved plans, the job list, the email's **Open the job** button, or Review log in Awaiting action). The pilot's flights and post-flight answers are added to Section 4 straight away and the job is saved, on this device and in your account. A message lists what was added. Approved plans stay approved; the approval and signatures aren't touched. Opening the job again doesn't add anything twice.
