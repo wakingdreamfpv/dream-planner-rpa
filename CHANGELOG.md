@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.63 — 26 Nov 2026 — No more signature pop-up on approved jobs
+- **Approved jobs:** an RPIC signature for a job that's already approved (for example with the CRP override) no longer pops up "signed an earlier version of this plan" every time the job opens, and no longer sits in Awaiting action. This was blocking the Global Drone Show job (OP-2026-8723).
+- Jobs that aren't approved yet still check the RPIC's signature against the plan, as before.
+- Supabase: nothing to do.
+
 ## v7.62 — 26 Nov 2026 — HUD Studio 1.9.1: tidy tall frames, head stays on its hose, cleaner patches behind moving hands
 - **Fighter jet in tall (9:16) frames:** the timer, flight mode and throttle (and the small sticks) now sit above the battery and link lines instead of overlapping them. Wide frames are unchanged.
 - **Over shoulder:** the oxygen hose now bends with the head, so the mask end stays attached when the head moves. Removed the bit of city that showed between the head and the hose.
