@@ -54,7 +54,7 @@ with sync_playwright() as p:
     pg.click('[data-todo-item$=":close"] [data-todo-go]'); pg.wait_for_timeout(1500)
     pg.evaluate("()=>{const b=[...document.querySelectorAll('button')].find(b=>/^Authorisation/.test(b.innerText.trim())&&b.offsetParent);b&&b.click()}"); pg.wait_for_timeout(800)
     R.check('the approval tab has the "another operator\'s ReOC" switch', pg.locator('[data-other-reoc-toggle]').count() == 1)
-    pg.click('[data-other-reoc-toggle]'); pg.wait_for_timeout(400)
+    pg.select_option('[data-other-reoc-toggle]', 'other'); pg.wait_for_timeout(400)
     pg.fill('[data-other-reoc-operator]', 'Rob Mulallay'); pg.wait_for_timeout(800)
     R.check('...it is kept in the setup, not in the signed plan', ((get_db(pg) or {}).get('otherReocJobs') or {}).get('u-mitch', {}).get('operator') == 'Rob Mulallay'
             and 'otherReoc' not in json.dumps(((get_db(pg) or {}).get('savedPlans') or [{}])[0]))
