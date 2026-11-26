@@ -269,9 +269,13 @@ export function useCloudJobs(sb, me) {
         if (!personId) await load();
         const rows = (d.flights || []).map(f => ({ job_id: d.jobId, person_id: personId, rpa: f.rpa, flight: f.flight }));
         if (!rows.length) { emit('wd-push-result', { ok: true, sent: 0 }); return; }
-        const { error } = await sb.from('job_flights').insert(rows);
+        const { data: ins, error } = await sb.from('job_flights').insert(rows).select('id,flight');
         if (error) throw error;
-        emit('wd-push-result', { ok: true, sent: rows.length, keys: (d.flights || []).map(f => f.key) });
+        // v7.67: "Log completed flight": tell the CRP (email) the log is complete and ready for final review
+        let emailed = false;
+        const mk = d.complete && (ins || []).find(r => r && r.flight && r.flight.kind === 'log_complete');
+        if (mk) { try { const r = await sb.functions.invoke('notify', { body: { event: 'log_complete', flight_id: mk.id } }); emailed = !!(r && r.data && r.data.sent); } catch (x) { /* the CRP still sees it in Awaiting action */ } }
+        emit('wd-push-result', { ok: true, sent: rows.length, keys: (d.flights || []).map(f => f.key), complete: !!d.complete, emailed });
       } catch (err) { emit('wd-push-result', { ok: false, error: String((err && err.message) || err) }); }
     };
     // v7.5.2: an RPIC signature on a company job goes to the CRP (stored with the job's crew entries) and emails them
