@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.67';
+        const APP_VERSION = '7.68';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -6444,7 +6444,8 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
 
 
-          const handleSaveApprovedPlan = async () => {
+          const handleSaveApprovedPlan = async (opts) => {
+            opts = (opts && !opts.nativeEvent && !opts.target) ? opts : {};
             if (!approval.flightAuthApproved) {
               alert('Flight Authorisation must be approved before saving the plan.');
               return;
@@ -6462,13 +6463,15 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (!(await persistDbNow(newDb))) return;
             setDb(newDb);
             { const problem = await verifySaved('savedPlans', plan); if (problem) { alert(`⚠ Plan saved, but the check after saving failed: ${problem}.\n\nExport a backup from Database & Settings before closing.`); return; } }
-            markSaved();
+            markSaved(); setAutoDraft(null);
+            if (opts.auto) { setJobNote({ kind: 'approved', text: `Approved and saved: "${title}" is now in Saved approved plans${isCrpCloud ? ' and in your account' : ''}.` }); return plan; }
             alert(`Plan saved: "${title}"\n\nReturn to it from the Database & Settings tab.`);
           };
 
           // Start a new job from an existing plan: keeps the site, map, risks, OONP set-up and crew;
           // clears everything that belongs to one particular day.
-          const handleCopyPlan = (p) => {
+          const handleCopyPlan = (p, guarded) => {
+            if (!guarded && !guardAutoDraft(() => latestRef.current.handleCopyPlan(p, true))) return; // v7.68
             const srcOv = p.overview || {};
             const d0 = cParse(srcOv.operationDate), d1 = cParse(srcOv.operationEndDate);
             const span = d0 && d1 && d1 > d0 ? cDiff(d1, d0) : 0;
@@ -6488,16 +6491,18 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             if (!window.confirm(`This replaces the current form with a new job ${newId} (${c.title}). Anything unsaved in the form will be lost.\n\nContinue?`)) return;
             handleLoadPlan(c, { silent: true });
             autoIdRef.current = null;
-            setTimeout(() => alert(`New job ${newId} started from "${p.title}".\n\nIt isn't saved yet. Check the details, risks and NOTAMs for the new date, then Save Draft.`), 450);
+            newOpPendingRef.current = autoDraftAllowed(); // v7.68: saved as a draft straight away
+            setTimeout(() => alert(`New job ${newId} started from "${p.title}".\n\n${newOpPendingRef.current || autoDraftAllowed() ? 'It is saved as a draft. ' : 'It isn\'t saved yet. '}Check the details, risks and NOTAMs for the new date, then Save Draft.`), 450);
           };
 
           const handleLoadPlan = (plan, opts = {}) => {
+            if (!opts._guarded && !opts.silent && ((plan.overview || {}).uid || null) !== (overview.uid || null) && !guardAutoDraft(() => latestRef.current.handleLoadPlan(plan, { ...opts, _guarded: true }))) return; // v7.68
             if (!opts.silent && plan.status !== 'draft') {
               const newer = (db.draftPlans || []).find(p => p.id === plan.id && Date.parse(p.savedAt || 0) > Date.parse(plan.savedAt || 0));
               if (newer && window.confirm(`There is a NEWER DRAFT of this job (saved ${new Date(newer.savedAt).toLocaleString('en-AU')}).\n\nOK: open the newer draft\nCancel: open this ${plan.status || 'saved'} copy`)) { plan = newer; }
             }
-            if (!opts.silent && dirty && !window.confirm(`You have unsaved changes to the job that's open now. Loading "${plan.title}" will discard them.\n\nContinue?`)) return;
-            if (!opts.silent && !dirty && !window.confirm(`Load "${plan.title}"? This will replace the current form.`)) return;
+            if (!opts.silent && !opts._guarded && dirty && !window.confirm(`You have unsaved changes to the job that's open now. Loading "${plan.title}" will discard them.\n\nContinue?`)) return;
+            if (!opts.silent && !opts._guarded && !dirty && !window.confirm(`Load "${plan.title}"? This will replace the current form.`)) return;
             quietUntilRef.current = Date.now() + 2500; setDirty(false);
             planLoadingRef.current = true;
             const clone = (o) => (o === undefined || o === null) ? o : JSON.parse(JSON.stringify(o));
@@ -8298,12 +8303,102 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             const problem = await verifySaved('draftPlans', draft);
             if (problem) { alert(`⚠ Draft saved, but the check after saving failed: ${problem}.\n\nDon't close the planner. Export a backup from Database & Settings and tell Claude what you were editing.`); return; }
             markSaved();
+            if (!opts.autoDraft && autoDraft && autoDraft.uid === (ov.uid || '')) setAutoDraft(null); // v7.68: saved on purpose, so it's kept
             if (opts.quiet) return draft;
             if (isFree) { alert(`Saved on this device: "${title}"\n\nFree mode keeps this one job until you start a new one. Come back any time to finish the flight log, and keep your exported PDFs.`); return; }
             const hasApproved = (db.savedPlans || []).some(p => sameJob(p, draft));
             alert(`Draft saved and checked: "${title}" (${draft.id})\n\nResume it any time from the Database & Settings tab.`
               + (hasApproved ? `\n\nNote: this job also has an APPROVED plan. That copy hasn't changed; open the draft (or save it as approved again) to see these edits.` : ''));
           };
+
+          // ── v7.68: a new operation is saved straight away as a draft ─────────────────────────────────────
+          // It is remembered as "not kept yet" until the user saves it on purpose (Save Draft, approval, …). Leaving it before
+          // then asks: keep it, or discard it. If it was left without being asked (tab closed, a job opened from a link), a
+          // banner asks instead. Discard only ever removes that one draft; an approved plan or completed record is never touched.
+          const [autoDraft, setAutoDraftState] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_auto_draft') || 'null'); } catch (e) { return null; } });
+          const setAutoDraft = (v) => { setAutoDraftState(v); try { if (v) localStorage.setItem('wd_auto_draft', JSON.stringify(v)); else localStorage.removeItem('wd_auto_draft'); } catch (e) {} };
+          const autoDraftOpen = !!(autoDraft && overview.uid && autoDraft.uid === overview.uid);
+          const [leaveAsk, setLeaveAsk] = useState(null);
+          const latestRef = useRef({});
+          const [jobNote, setJobNote] = useState(null);
+          useEffect(() => { if (!jobNote) return; const t = setTimeout(() => setJobNote(null), 12000); return () => clearTimeout(t); }, [jobNote]);
+          const autoDraftAllowed = () => !isFree && !isCrewRole && !wdStore.locked;
+          const newOpPendingRef = useRef(false);
+          const startNewOperation = () => { handleResetFormQuiet(); newOpPendingRef.current = autoDraftAllowed(); };
+          useEffect(() => {
+            if (!newOpPendingRef.current) return; newOpPendingRef.current = false;
+            (async () => { const d = await handleSaveDraftPlan({ quiet: true, noCrewHook: true, autoDraft: true });
+              if (d) { setAutoDraft({ uid: (d.overview || {}).uid, id: d.id, at: d.savedAt }); setJobNote({ kind: 'draft', text: `New job ${d.id} started and saved as a draft. If you leave it without saving, you'll be asked whether to keep it.` }); } })();
+          }, [overview.uid]); // eslint-disable-line
+          // Leaving the open job: returns true to go on now; otherwise asks first and runs `go` after Keep / Discard
+          const guardAutoDraft = (go) => {
+            if (!autoDraftOpen || wdStore.locked) return true;
+            setLeaveAsk({ go, uid: overview.uid, id: overview.identifier, title: getOpTitle(overview), dirty });
+            return false;
+          };
+          const leaveGo = (go) => { if (go) setTimeout(go, 80); };
+          const keepAutoDraft = async (a) => {
+            setLeaveAsk(null);
+            if (a && a.dirty && a.uid === overview.uid) { const d = await handleSaveDraftPlan({ quiet: true, noCrewHook: true }); if (!d) return; }
+            setAutoDraft(null); leaveGo(a && a.go);
+          };
+          const discardAutoDraft = async (a) => {
+            const uid = (a && a.uid) || (autoDraft && autoDraft.uid); setLeaveAsk(null);
+            if (!uid) return;
+            const ofUid = (x) => ((x && x.overview) || {}).uid === uid;
+            const plan = (db.draftPlans || []).find(ofUid);
+            const elsewhere = ['savedPlans', 'completedFlights'].some(k => (db[k] || []).some(ofUid));
+            setAutoDraft(null);
+            if (plan && !elsewhere) {
+              try { wdStore.saveSafety(db, 'Before discarding the new draft "' + (plan.title || plan.id) + '"'); } catch (e) {}
+              const newDb = { ...db, draftPlans: (db.draftPlans || []).filter(x => !ofUid(x)) };
+              if (!(await persistDbNow(newDb))) return;
+              setDb(newDb);
+              const sent = !!(lsJson('wd_cloud_synced', {}) || {})[uid];
+              cancelInAccount(plan);
+              if (!sent && isCrpCloud) setTimeout(() => window.dispatchEvent(new CustomEvent('wd-job-cancel', { detail: { uid } })), 4000); // in case its first upload was still on the way
+            }
+            if (uid === overview.uid) wdStore.clearWorking();
+            leaveGo(a && a.go);
+            if (!(a && a.go) && uid === overview.uid) setTimeout(() => handleResetFormQuiet(), 80);
+            setJobNote({ kind: 'discarded', text: `Draft ${(a && a.id) || (plan && plan.id) || ''} discarded.${plan && isCrpCloud && !elsewhere ? ' It was also removed from your account.' : ''}` });
+          };
+          // A draft that was left without being asked about (closed tab, job opened from a link): forget it if it's gone or was saved as approved
+          useEffect(() => {
+            if (!dbReady || !autoDraft || autoDraftOpen) return;
+            const ofUid = (x) => ((x && x.overview) || {}).uid === autoDraft.uid;
+            if (!(db.draftPlans || []).some(ofUid) || ['savedPlans', 'completedFlights'].some(k => (db[k] || []).some(ofUid))) setAutoDraft(null);
+          }, [dbReady, autoDraft, autoDraftOpen, db.draftPlans, db.savedPlans, db.completedFlights]); // eslint-disable-line
+          const AutoDraftAsk = () => {
+            const a = leaveAsk || (dbReady && autoDraft && !autoDraftOpen && tabRole === 'writer' && (db.draftPlans || []).some(x => ((x && x.overview) || {}).uid === autoDraft.uid)
+              ? (() => { const p = (db.draftPlans || []).find(x => ((x && x.overview) || {}).uid === autoDraft.uid); return { uid: autoDraft.uid, id: p.id, title: p.title || p.id, left: true }; })() : null);
+            if (!a) return null;
+            const box = (
+              <div data-auto-draft-ask={a.left ? 'left' : 'leave'} className={a.left ? 'print:hidden bg-amber-50 border-b border-amber-300 text-amber-950 text-sm px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5' : 'bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-3 text-sm text-slate-800'}>
+                {a.left
+                  ? <span><i className="fa-solid fa-file-circle-question mr-1.5"></i>You started <b>{a.title}</b> ({a.id}) and left it without saving. Keep it as a draft, or discard it?</span>
+                  : <><div className="text-base font-bold text-slate-900"><i className="fa-solid fa-file-circle-question text-amber-600 mr-2"></i>Keep this new job?</div>
+                      <div><b>{a.title}</b> ({a.id}) was saved as a draft when you started it. You haven't saved it yourself yet.</div>
+                      <div className="text-slate-600">Keep it to find it later in Draft plans{a.dirty ? ' (your changes are saved too)' : ''}, or discard it if you don't need it.</div></>}
+                <div className={a.left ? 'flex gap-2' : 'flex flex-wrap gap-2 pt-1'}>
+                  <button type="button" data-allow-locked="1" data-auto-draft-keep="1" onClick={() => keepAutoDraft(a)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-semibold text-xs sm:text-sm">Keep draft</button>
+                  <button type="button" data-allow-locked="1" data-auto-draft-discard="1" onClick={() => discardAutoDraft(a)} className="bg-white border border-red-300 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg font-semibold text-xs sm:text-sm">Discard it</button>
+                  {!a.left && <button type="button" data-allow-locked="1" data-auto-draft-stay="1" onClick={() => setLeaveAsk(null)} className="text-slate-600 underline px-2 text-xs sm:text-sm">Stay on this job</button>}
+                </div>
+              </div>);
+            return a.left ? box : <div className="print:hidden fixed inset-0 z-[5000] bg-black/40 flex items-center justify-center p-4">{box}</div>;
+          };
+          // ── v7.68: approved with both signatures (or the CRP override) → saved to Saved approved plans by itself ──
+          const approvedReady = !!(approval.flightAuthApproved && approval.crpSigned && (approval.rpSigned || approval.rpOverride));
+          const apprSeenRef = useRef({ uid: null, ok: false });
+          const saveApprovedRef = useRef(null); saveApprovedRef.current = handleSaveApprovedPlan;
+          useEffect(() => {
+            const prev = apprSeenRef.current; apprSeenRef.current = { uid: overview.uid, ok: approvedReady };
+            if (!approvedReady || prev.ok || prev.uid !== overview.uid || planLoadingRef.current || isCrewRole || wdStore.locked) return; // only the moment it becomes approved, never on opening a job
+            const ofUid = (x) => ((x && x.overview) || {}).uid === overview.uid;
+            if ((db.completedFlights || []).some(ofUid)) return; // a completed record is never re-saved here
+            setTimeout(() => saveApprovedRef.current && saveApprovedRef.current({ auto: true }), 0);
+          }, [overview.uid, approvedReady]); // eslint-disable-line
 
 
           // ── Crew Log Share ────────────────────────────────────────────────────
@@ -9782,8 +9877,9 @@ View in the Database & Settings tab.`);
           };
           const handleResetForm = () => {
               if (isFree) { if (window.confirm('Start a new job?\n\nFree mode keeps one job at a time, so this replaces the job that\'s open now' + (dirty ? ' (it has unsaved changes)' : '') + '.\n\nExport its PDF first if you haven\'t (and use Settings › Export this job if you want to come back to it).')) { handleResetFormQuiet(); setDb(prev => ({ ...prev, draftPlans: [], savedPlans: [] })); } return; }
-              if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Are you sure you want to clear the current form and start a new operation? This will wipe all current flight data (but will safely keep your saved Database)."))
-                  handleResetFormQuiet();
+              if (!guardAutoDraft(() => latestRef.current.startNewOperation())) return; // v7.68: the open job is a new draft not kept yet
+              if (window.confirm((dirty ? "⚠ You have UNSAVED changes to the open job. They will be lost.\n\n" : "") + "Start a new operation?\n\nThe form is cleared and the new job is saved as a draft straight away. Your saved jobs and Database are kept."))
+                  startNewOperation();
           };
 
           // ── v6.0 Mandatory record items ───────────────────────────────────────
@@ -10466,7 +10562,8 @@ View in the Database & Settings tab.`);
             const h = (e) => { const d = e.detail || {}; window.dispatchEvent(new Event('wd-close-account'));
               const local = cloudJobsList().find(j => j.uid === d.uid);
               if (overview.uid && overview.uid === d.uid) { setActiveTab('preliminary'); return; }
-              if (dirty && !window.confirm(`Open “${d.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
+              if (!d._guarded && !guardAutoDraft(() => window.dispatchEvent(new CustomEvent('wd-open-company-job', { detail: { ...d, _guarded: true } })))) return; // v7.68
+              if (!d._guarded && dirty && !window.confirm(`Open “${d.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
               if (local) { handleLoadPlan(local.p, { silent: true }); setTimeout(() => setActiveTab('preliminary'), 60); }
               else openJobFromCloud(d.id, d.uid, () => setActiveTab('preliminary')); };
             window.addEventListener('wd-open-company-job', h); return () => window.removeEventListener('wd-open-company-job', h);
@@ -10566,8 +10663,9 @@ View in the Database & Settings tab.`);
           const setCloudJob = (v) => { setCloudJobState(v); lsJsonSet(cjKey, v); };
           const flightKey = (rpa, f) => rpa + '|' + (f.id != null ? f.id : [String(f.label || ''), String(f.duration == null ? '' : f.duration), String(f.batteries || ''), (f.telemetry && f.telemetry.startMs) || ''].join('|'));
           const cloudLogFlights = (lg) => { const out = []; Object.entries((lg && lg.rpaLogs) || {}).forEach(([rpa, rl]) => ((rl && rl.flights) || []).forEach(f => { if (!crewBlankFlight(f)) out.push({ key: flightKey(rpa, f), rpa, f }); })); return out; };
-          const openCloudJob = (j) => {
-            if (dirty && !window.confirm(`Open “${j.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
+          const openCloudJob = (j, guarded) => {
+            if (!guarded && !guardAutoDraft(() => latestRef.current.openCloudJob(j, true))) return; // v7.68
+            if (!guarded && dirty && !window.confirm(`Open “${j.title || 'this job'}”? The job that's open now has unsaved changes, which will be lost.`)) return;
             window.dispatchEvent(new CustomEvent('wd-open-cloud-job', { detail: { id: j.id } }));
           };
           useEffect(() => {
@@ -10918,14 +11016,15 @@ View in the Database & Settings tab.`);
               fleetLimits: fleetRows.map(f => /mini|air ?3|mavic/i.test(f.name) ? { name: f.name, wind: 38, gust: 45 } : /whoop|avata|fpv|pavo|cine/i.test(f.name) ? { name: f.name, wind: 25, gust: 32 } : { name: f.name, wind: 30, gust: 38 }),
             };
           };
-          const openDashJob = (j) => {
-            if (j.cloudJob) { if (dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return; openJobFromCloud(j.cloudJob.id, j.cloudJob.plan_uid, () => setActiveTab('preliminary')); return; }
+          const openDashJob = (j, guarded) => {
+            if (!(j.current || j.id === overview.identifier) && !guarded && !guardAutoDraft(() => latestRef.current.openDashJob(j, true))) return; // v7.68
+            if (j.cloudJob) { if (!guarded && dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return; openJobFromCloud(j.cloudJob.id, j.cloudJob.plan_uid, () => setActiveTab('preliminary')); return; }
             if (j.current || j.id === overview.identifier) { setActiveTab('preliminary'); return; }
-            if (dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return;
+            if (!guarded && dirty && !window.confirm('Open “' + j.name + '”? The job that\'s open now has unsaved changes, which will be lost.')) return;
             handleLoadPlan(j.plan, { silent: true }); setTimeout(() => setActiveTab('preliminary'), 60);
           };
           const dashActions = {
-            newJob: () => { if (isFree) handleResetForm(); else { if (!dirty || window.confirm('Start a new operation? Unsaved changes to the open job will be lost.')) handleResetFormQuiet(); } },
+            newJob: () => { if (isFree) handleResetForm(); else { if (!guardAutoDraft(() => latestRef.current.startNewOperation())) return; if (!dirty || window.confirm('Start a new operation? Unsaved changes to the open job will be lost.')) startNewOperation(); } },
             continueJob: () => setActiveTab('preliminary'),
             goTab: (t) => setActiveTab(t),
             todoIgnore: (id, on) => { const m = { ...(db.todoDismissed || {}) }; if (on) m[id] = new Date().toISOString(); else delete m[id]; updateDb('todoDismissed', m); },
@@ -10935,6 +11034,7 @@ View in the Database & Settings tab.`);
             openCloudJob, signCloudJob, requestAccess, openInduction: () => window.dispatchEvent(new Event('wd-open-account')),
             bulkLogs: (files) => openBulkLogs(files),
           };
+          latestRef.current = { handleLoadPlan, openDashJob, openCloudJob, startNewOperation, handleCopyPlan }; // v7.68: what runs after Keep / Discard
           const jumpToDbSection = (id) => {
             const fe = document.querySelector(`[data-dbfold="${id}"]`);
             if (fe && fe.dataset.open !== '1' && !jumpToDbSection.busy) { jumpToDbSection.busy = true; setFold(id, true); setTimeout(() => { jumpToDbSection.busy = false; jumpToDbSection(id); }, 90); return; }
@@ -11848,6 +11948,10 @@ View in the Database & Settings tab.`);
                   <button onClick={() => { try { localStorage.setItem('wd_rec_dismissed', workingOffer.savedAt); } catch (e) {} setWorkingOffer(null); }} className="text-sky-800 underline text-xs" title="Hide this. The copy stays under Database & Settings › Recovery copies for 30 days.">Not now</button>
                 </div>
               )}
+              {AutoDraftAsk()}
+              {jobNote && <div data-job-note={jobNote.kind} className={`print:hidden border-b text-sm px-4 py-2 flex items-center justify-center gap-3 ${jobNote.kind === 'approved' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : jobNote.kind === 'discarded' ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-sky-50 border-sky-200 text-sky-900'}`}>
+                <span><i className={`fa-solid ${jobNote.kind === 'approved' ? 'fa-circle-check' : jobNote.kind === 'discarded' ? 'fa-trash-can' : 'fa-floppy-disk'} mr-1.5`}></i>{jobNote.text}</span>
+                <button type="button" data-allow-locked="1" onClick={() => setJobNote(null)} aria-label="Close" className="opacity-70 hover:opacity-100"><i className="fa-solid fa-xmark"></i></button></div>}
               {SetupChoiceBanner()}
               {GoneElsewhereBanner()}
               {tabRole === 'reader' && (

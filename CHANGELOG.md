@@ -1,5 +1,21 @@
 # Planner changelog
 
+## v7.68 — 26 Nov 2026 — New jobs are saved as drafts straight away; approved jobs save themselves
+- **New Operation:** the new job is saved as a draft as soon as you start it (and to your account). Same for "start a new job from this plan".
+- **Leaving a new job you haven't saved yourself:** starting another job, or opening a different one, asks **Keep draft**, **Discard it** or **Stay on this job**. Keep leaves it in Draft plans (with any changes you made). Discard removes it from this device and from your account (your other devices ask before removing their copy, as with any deleted job). Nothing is ever removed unless you press Discard.
+- **Closed the tab instead?** Next time you open the planner, a yellow bar asks the same: keep or discard.
+- Once you press Save Draft (or the job is approved), it's yours: no more questions about it. Going to Home doesn't count as leaving, because the job stays open.
+- **Approved jobs:** as soon as the plan has the CRP and RPIC signatures (or the CRP override) and you switch on Approved for Flight, it's saved into Saved approved plans and to your account as approved. No Save click needed; a green note confirms it. Opening an approved plan later doesn't re-save it, and completed records are never touched.
+- Supabase: nothing to do.
+
+### Technical notes (v7.68, for Claude Code)
+- All in `src/legacy/planner.jsx`, block "v7.68: a new operation is saved straight away as a draft" just after `handleSaveDraftPlan`.
+- `startNewOperation()` = `handleResetFormQuiet()` + `newOpPendingRef`; an effect on `overview.uid` then calls `handleSaveDraftPlan({ quiet, noCrewHook, autoDraft: true })` and stores the "not kept yet" marker in localStorage `wd_auto_draft` ({uid,id,at}). Not for free mode, crew accounts or a read-only tab. The sample tour and other internal resets still use `handleResetFormQuiet()` and make no draft.
+- The marker is cleared by any save that isn't the auto one (Save Draft, quiet saves for share links / RPIC requests, `handleSaveApprovedPlan`), by Keep, by Discard, and when the draft is gone or exists as approved/completed.
+- `guardAutoDraft(go)` shows the Keep / Discard / Stay dialog (`data-auto-draft-ask=leave`) when the open job is the unkept draft; `go` re-runs the action through `latestRef` with a `guarded` flag (skips the old "unsaved changes" confirm). Guarded: header New Operation (`handleResetForm`), Home New job (`dashActions.newJob`), non-silent `handleLoadPlan` (Resume / Open buttons), `openDashJob`, `openCloudJob`, `wd-open-company-job`, `handleCopyPlan`. Silent loads with follow-up steps (sign links, importing crew flights) are not interrupted; the left draft then shows the banner (`data-auto-draft-ask=left`) instead.
+- Discard: safety copy, removes the draft from `draftPlans` only (never if the same job is in savedPlans/completedFlights), `cancelInAccount()` (v7.40 path, status cancelled), plus a second cancel after 4 s if its first upload may still have been on the way.
+- Auto-approve: effect on `[overview.uid, approvedReady]` where `approvedReady = flightAuthApproved && crpSigned && (rpSigned || rpOverride)`. Fires only on the false→true change for the same open job (never on load), not for crew/read-only tabs or jobs with a completed record. Calls `handleSaveApprovedPlan({ auto: true })` (same path as the button; note banner `data-job-note=approved` instead of the alert). The cloud upload is the usual list sync (status approved). record_versions untouched.
+- Test: `tests/e2e/t_v768_draft_autosave.py`.
 ## v7.67 — 26 Nov 2026 — Crew: approved plans, the right aircraft list, one "Log completed flight" button
 - **Approved plans for crew:** in Database & Settings › Saved approved plans, a pilot now sees the approved plans for the jobs they're on, and can open them (instead of "0 · No saved plans yet"). Only their own jobs; no approve, sign-as-CRP or delete buttons. Home › My jobs lists them too.
 - **Choosing the aircraft for radio logs (Log dump):** the list now shows **this job's aircraft first, then the rest of your company fleet**. The built-in starter list (DJI Avata 2, Skydio, Autel…) no longer shows on a company account unless you actually use that aircraft. Same on your own device.
