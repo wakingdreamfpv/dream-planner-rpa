@@ -1,5 +1,10 @@
 # Planner changelog
 
+## v7.64 — 26 Nov 2026 — Crew can log flights without "That RPA is not in your fleet database yet"
+- **Crew on a company job:** pilots signed in as crew don't have the company fleet on their device, so the green "Save … Time to Fleet DB" button stopped them with "That RPA is not in your fleet database yet" (Ben, Custom FPV Cinewhoop). On a company job that button is now **"Send … flights to the CRP"** and sends their flights to you, the same as the blue "Send my log to the CRP" button. Pressing it twice doesn't send twice.
+- **Your own device:** if an aircraft on the job isn't in the fleet yet, the planner now offers to add it and log the time, instead of stopping.
+- Supabase: nothing to do.
+
 ## v7.63 — 26 Nov 2026 — No more signature pop-up on approved jobs
 - **Approved jobs:** an RPIC signature for a job that's already approved (for example with the CRP override) no longer pops up "signed an earlier version of this plan" every time the job opens, and no longer sits in Awaiting action. This was blocking the Global Drone Show job (OP-2026-8723).
 - Jobs that aren't approved yet still check the RPIC's signature against the plan, as before.
