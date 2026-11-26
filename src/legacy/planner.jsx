@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.62';
+        const APP_VERSION = '7.63';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -10476,10 +10476,15 @@ View in the Database & Settings tab.`);
             if (!local) { openJobFromCloud(grp.job && grp.job.id, uid, finish); return; }
             handleLoadPlan(local.p, { silent: true }); setTimeout(finish, 450);
           };
+          // v7.63: an RPIC signature for a job that's already approved (or that the CRP override already names) is settled:
+          // it no longer waits in Awaiting action or pops up when the job opens
+          const sigSettled = (f) => { const st = f && f.job && f.job.status; if (st === 'approved' || st === 'completed') return true;
+            const ap = (f && f.job && f.job.plan_uid && f.job.plan_uid === overview.uid) ? approval : null;
+            return !!(ap && (ap.flightAuthApproved || (ap.rpOverride && (ap.rpOverride.rpicSignatures || []).includes(f.id)))); };
           const cloudAwaiting = () => {
             const aw = [];
             const sigSeen = new Set();
-            (crewFlights || []).filter(f => !importedFl.includes(f.id) && f.flight && f.flight.kind === 'rpic_signature')
+            (crewFlights || []).filter(f => !importedFl.includes(f.id) && f.flight && f.flight.kind === 'rpic_signature' && !sigSettled(f))
               .sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || ''))).filter(f => { const k = f.job_id + '|' + f.person_id; if (sigSeen.has(k)) return false; sigSeen.add(k); return true; }).forEach(f => aw.push({ kind: 'rpic-signed', icon: 'fa-signature', color: 'text-emerald-600',
               label: `${f.who} signed as RPIC: ${(f.job && f.job.title) || 'a job'}`, sub: 'Add their signature, then sign as CRP and approve', cta: 'Review & sign', act: () => applyCloudSignature(f) }));
             const byJob = {}; (crewFlights || []).filter(f => !importedFl.includes(f.id) && !(f.flight && f.flight.kind && f.flight.kind !== 'post_flight')).forEach(f => { const k = f.job_id + '|' + f.person_id; (byJob[k] = byJob[k] || { job: f.job, who: f.who, flights: [], name: (f.job && f.job.title) || 'a job' }).flights.push(f); });
@@ -10724,7 +10729,7 @@ View in the Database & Settings tab.`);
             applyCloudSignature(row);
           }, [signLink, isCrpCloud, dbReady, crewFlights]); // eslint-disable-line
           // v7.5.3: a crew RPIC signature waiting for the job that's open is added as soon as the job is open (fingerprint-checked)
-          const pendingSig = isCrpCloud && overview.uid ? (crewFlights || []).filter(f => f.flight && f.flight.kind === 'rpic_signature' && !importedFl.includes(f.id) && f.job && f.job.plan_uid === overview.uid)
+          const pendingSig = isCrpCloud && overview.uid ? (crewFlights || []).filter(f => f.flight && f.flight.kind === 'rpic_signature' && !importedFl.includes(f.id) && f.job && f.job.plan_uid === overview.uid && !sigSettled(f))
             .sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || '')))[0] || null : null;
           const sigTried = useRef(new Set());
           useEffect(() => {
