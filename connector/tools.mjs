@@ -146,7 +146,7 @@ export function makeTools(sb, opts = {}) {
           if (approved && !rpaTypes.includes(it.aircraft)) { skipped.push(it.ref + ': ' + it.aircraft + ' is not on this approved plan (add it in the planner)'); continue; }
           const ck = file + '@' + fclk; if (!cache[ck]) { try { cache[ck] = parseTelemetryCsv(fs.readFileSync(file, 'utf8'), path.basename(file), fclk); } catch (e) { skipped.push(it.ref + ': ' + e.message); continue; } }
           const t = cache[ck][parseInt(idx, 10)]; if (!t) { skipped.push(it.ref + ': flight not found in the file'); continue; }
-          // v7.64: a flight that's already here without its chart readings gets them (nothing else on it changes)
+          // v7.65: a flight that's already here without its chart readings gets them (nothing else on it changes)
           if (bare.has(t.startMs)) { const ef = bare.get(t.startMs); bare.delete(t.startMs); ef.telemetry = { ...ef.telemetry, trace: t.trace }; filled.push(`${ef.label || it.ref}: chart readings added`); continue; }
           if (have.has(t.startMs)) { skipped.push(it.ref + ': already on this job'); continue; } have.add(t.startMs);
           const cells = parseInt((fleet[it.aircraft] || {}).cells) || 0;

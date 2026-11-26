@@ -35,8 +35,8 @@ const r1 = await tools.add_flight_logs.run({ job: 'OP-2026-0101', flights: [{ re
 ok('add_flight_logs: added to the draft with battery and OONP', r1.added.length === 1 && !r1.skipped.length, r1);
 const j1 = T.jobs.find(j => j.id === 'j1');
 const f1 = j1.plan.log.rpaLogs['Nazgul 5'].flights[0];
-ok('...saved in the account: newer savedAt, telemetry with its chart readings (v7.64)', j1.plan.savedAt > '2026-11-10' && f1.batteries === '6S-01' && f1.oonp === false && f1.telemetry && (f1.telemetry.trace || []).length > 5, f1);
-// v7.64: a flight added before without its readings gets them when its log is added again; nothing else on it changes
+ok('...saved in the account: newer savedAt, telemetry with its chart readings (v7.65)', j1.plan.savedAt > '2026-11-10' && f1.batteries === '6S-01' && f1.oonp === false && f1.telemetry && (f1.telemetry.trace || []).length > 5, f1);
+// v7.65: a flight added before without its readings gets them when its log is added again; nothing else on it changes
 delete f1.telemetry.trace; f1.notes = 'keep me';
 const rf = await tools.add_flight_logs.run({ job: 'Beach', flights: [{ ref: rd.flights[0].ref, aircraft: 'Nazgul 5' }] });
 const f1b = T.jobs.find(j => j.id === 'j1').plan.log.rpaLogs['Nazgul 5'].flights;

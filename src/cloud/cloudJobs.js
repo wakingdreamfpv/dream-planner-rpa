@@ -15,7 +15,7 @@ const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { deta
 const publish = (key, value, ev) => { window[key] = value; window.dispatchEvent(new Event(ev)); };
 const low = (s) => String(s || '').trim().toLowerCase();
 
-// strip the bulky parts of a plan before it goes to the cloud. v7.64: the flight chart readings (about 13 KB a flight) now go
+// strip the bulky parts of a plan before it goes to the cloud. v7.65: the flight chart readings (about 13 KB a flight) now go
 // too, so the height / speed charts show on every device; site attachments and heat strokes still stay on the device
 export const slimPlan = (plan) => {
   try {

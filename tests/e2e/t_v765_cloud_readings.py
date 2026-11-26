@@ -1,4 +1,4 @@
-# v7.64: the flight chart readings now go to the cloud with the job (they used to stay on the device that imported the
+# v7.65: the flight chart readings now go to the cloud with the job (they used to stay on the device that imported the
 # log), so a flight opened on another device, or added through the connector, still draws its height / speed chart.
 import sys, os, json, tempfile; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *
