@@ -1,5 +1,22 @@
 # Planner changelog
 
+## v7.71 — 27 Nov 2026 — HUD Studio 1.9.3: your own text on the arcade sign; cockpit controls move the cabinet
+- **Arcade cabinet sign:** a **Sign** box appears under the style cards when Arcade cabinet is picked. Whatever you type shows on the sign at the top, in the same yellow pixel letters with the pink shadow. It's shown in capitals, and long names squeeze to fit. It starts as WAKING DREAM FPV and is remembered.
+- **Cockpit view controls work on the cabinet:** turn on Cockpit view, then Scale, Left / right and Up / down (or dragging and scrolling on the preview) resize and move the whole cabinet. Your footage moves with its screen. Reset cockpit puts it back. Space around a smaller cabinet is dark.
+- **The Elements list now works on the cabinet:**
+  - Heading, Altitude, Boresight (aim box), Pitch ladder (horizon line) and Flight timer (SCORE and the mode / throttle line) turn their bits of the screen on and off.
+  - Speed, Battery (battery, current and pack panels) and Link (home and link panels) turn their side screens off.
+  - Stick inputs shows the dots in the two stick boxes.
+  - Warnings turns the LOW BATTERY / SIGNAL WEAK messages on and off.
+  - Clock, Power, Radio, G-meter, Satellites, Records and Distance flown add small lines on the screen.
+  - GPS mini-map shows in the top-right of the screen.
+  - The joysticks and buttons always move.
+- Supabase: nothing to do.
+
+### Technical notes (v7.71, for Claude Code)
+- `public/hud/index.html`: `cabSign()` covers `CBI[k].mq` with a dark fill and draws `O.cabSign` (default `CB_SIGN0`), squeezed with `scale(sx, k)` and clipped. The `#cabSignRow` input is shown by `buildStyles`. `cabRect` applies `ckPos(O,'cabinet')` with the same maths as `ckApply`, so `cabScr`/`vidRect` follow. `cabinet()` fills the frame dark first. `ckEdit` and `ckReset` now call `applyVid()`. `cabinet()` reads `o.el` (`E`): `panel(..., on)` leaves a blank screen when an item is off; the extras come from `extraRows()` without AMPS; the map is `mapArcade` drawn into a screen-sized virtual frame with scale 1.7.
+- Test: `tests/e2e/t_v771_hud_193.py`. `t_v770` now accepts 1.9.x.
+
 ## v7.70 — 26 Nov 2026 — HUD Studio 1.9.2: new Arcade cabinet style
 - **New style card: Arcade cabinet**, made from your two cabinet pictures. A 9:16 video uses the tall cabinet; 16:9 uses the wide one. Square and 4:3 use the tall one, cropped to the screen and controls.
 - Your footage plays **inside the arcade screen**, with scanlines and a glass shine. On top: SCORE (flight time), heading, altitude, a blinking REC dot, an aim box with a horizon line that tilts with roll and moves with pitch, and a message line (INSERT COIN · PRESS START before arming, PLAYER 1 · GO!, LOW BATTERY!, GAME OVER after landing, otherwise mode and throttle).

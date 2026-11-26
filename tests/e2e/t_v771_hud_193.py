@@ -1,0 +1,43 @@
+# v7.71: HUD Studio 1.9.3. The Arcade cabinet sign shows your own text (Sign box, only shown for that style).
+import sys, os; sys.path.insert(0, os.path.dirname(__file__))
+from harness import *
+R = Run(); ensure_server()
+SPY = """()=>{window.__txt=[];if(!window.__spy){window.__spy=1;const f=CanvasRenderingContext2D.prototype.fillText;CanvasRenderingContext2D.prototype.fillText=function(t,...r){if(this.canvas.id==='hud')window.__txt.push(String(t));return f.call(this,t,...r)}}}"""
+with sync_playwright() as p:
+    b = p.chromium.launch(); ctx = b.new_context(viewport={'width': 1500, 'height': 1000})
+    ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
+    pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
+    R.check('HUD Studio is 1.9.3', pg.inner_text('#hudVer').strip() == 'v1.9.3', pg.inner_text('#hudVer'))
+    pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(2000)
+    pg.evaluate("()=>document.querySelector('.sty[data-s=fighter]').click()"); pg.wait_for_timeout(300)
+    R.check('the Sign box is hidden for other styles', not pg.is_visible('#cabSign'))
+    pg.evaluate("()=>document.querySelector('.sty[data-s=cabinet]').click()"); pg.wait_for_timeout(600)
+    R.check('the Sign box shows for the Arcade cabinet, starting with WAKING DREAM FPV', pg.is_visible('#cabSign') and pg.input_value('#cabSign') == 'WAKING DREAM FPV')
+    for ar in ('16:9', '9:16'):
+        pg.evaluate("a=>document.querySelector('#arSeg button[data-v=\"'+a+'\"]').click()", ar); pg.wait_for_timeout(300)
+        pg.evaluate(SPY); pg.fill('#cabSign', 'Gold coast run'); pg.evaluate("()=>{const s=document.getElementById('scrub'); s.value=s.max*0.4; s.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(400)
+        t = pg.evaluate("()=>window.__txt")
+        R.check(ar + ': the sign shows the new text in capitals', 'GOLD COAST RUN' in t and 'WAKING DREAM FPV' not in t, t[:6])
+    # the Elements list changes the cabinet: Speed off hides the SPEED screen; Heading off hides HDG
+    pg.evaluate(SPY); pg.evaluate("()=>{const s=document.getElementById('scrub'); s.value=s.max*0.45; s.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(300)
+    on = pg.evaluate("()=>window.__txt")
+    pg.evaluate("()=>['speed','heading'].forEach(k=>{const el=document.querySelector('[data-e='+k+']'); if(el.checked) el.click();})"); pg.evaluate(SPY)
+    pg.evaluate("()=>{const s=document.getElementById('scrub'); s.value=s.max*0.45; s.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(300)
+    off = pg.evaluate("()=>window.__txt")
+    R.check('Elements: Speed and Heading turn off on the cabinet', 'SPEED' in on and any(x.startswith('HDG') for x in on) and 'SPEED' not in off and not any(x.startswith('HDG') for x in off), (on[:8], off[:8]))
+    pg.evaluate("()=>['speed','heading'].forEach(k=>{const el=document.querySelector('[data-e='+k+']'); if(!el.checked) el.click();})")
+    # the cockpit Scale and Left/right controls move and resize the cabinet, and the footage follows the screen
+    pg.evaluate("()=>{const c=document.getElementById('cockpit'); if(!c.checked) document.getElementById('ckBtn').click();}"); pg.wait_for_timeout(300)
+    vr = lambda: pg.evaluate("()=>{const v=document.getElementById('vid').style;return [parseFloat(v.left),parseFloat(v.top),parseFloat(v.width)]}")
+    v0 = vr(); pg.evaluate("()=>{const z=document.getElementById('ckZ'); z.value=0.7; z.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(300); v1 = vr()
+    R.check('Scale makes the cabinet (and its screen) smaller', v1[2] < v0[2] * 0.8, (v0, v1))
+    pg.evaluate("()=>{const x=document.getElementById('ckX'); x.value=0.2; x.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(300); v2 = vr()
+    R.check('Left / right moves the cabinet sideways', v2[0] > v1[0] + 20 and abs(v2[1] - v1[1]) < 2, (v1, v2))
+    pg.click('#ckReset'); pg.wait_for_timeout(300); v3 = vr()
+    R.check('Reset puts the cabinet back', abs(v3[2] - v0[2]) < 2 and abs(v3[0] - v0[0]) < 2, (v0, v3))
+    pg.reload(); pg.wait_for_timeout(1500)
+    R.check('the sign text is remembered', pg.input_value('#cabSign') == 'Gold coast run')
+    R.check('no page errors', errs == [], errs)
+    ctx.close(); b.close()
+R.done()
