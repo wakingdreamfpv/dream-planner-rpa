@@ -191,7 +191,7 @@ import Maintenance from '../compliance/Maintenance.jsx'; // v7.44
         const keFmtS = (s) => keFloor1(s * 3.6) + ' kph';
 
         // --- APP VERSION (written into every save and backup) ---
-        const APP_VERSION = '7.68';
+        const APP_VERSION = '7.69';
         // Today's date (or a given date) in the device's own time zone, as YYYY-MM-DD.
         // toISOString() is UTC, which gives yesterday's date before 10 am in Queensland.
         const localISODate = (d) => { const x = d ? new Date(d) : new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
@@ -6446,7 +6446,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
 
           const handleSaveApprovedPlan = async (opts) => {
             opts = (opts && !opts.nativeEvent && !opts.target) ? opts : {};
-            if (!approval.flightAuthApproved) {
+            if (!approval.flightAuthApproved && !opts.keepList) { // v7.69 keepList: re-saving a job that's already in Saved approved plans
               alert('Flight Authorisation must be approved before saving the plan.');
               return;
             }
@@ -6464,6 +6464,7 @@ No armed flights in: ${empty.join(', ')}` : '')); return; }
             setDb(newDb);
             { const problem = await verifySaved('savedPlans', plan); if (problem) { alert(`⚠ Plan saved, but the check after saving failed: ${problem}.\n\nExport a backup from Database & Settings before closing.`); return; } }
             markSaved(); setAutoDraft(null);
+            if (opts.quiet) return plan; // v7.69: crew flights added on open save the approved plan without a message
             if (opts.auto) { setJobNote({ kind: 'approved', text: `Approved and saved: "${title}" is now in Saved approved plans${isCrpCloud ? ' and in your account' : ''}.` }); return plan; }
             alert(`Plan saved: "${title}"\n\nReturn to it from the Database & Settings tab.`);
           };
@@ -10605,6 +10606,8 @@ View in the Database & Settings tab.`);
           useEffect(() => { const h = () => setManualOpen(true); window.addEventListener('wd-open-manual', h); return () => window.removeEventListener('wd-open-manual', h); }, []);
           const importCloudFlights = (grp) => {
             const uid = grp.job && grp.job.plan_uid; const local = cloudJobsList().find(j => j.uid === uid);
+            // v7.69: open jobs get the crew's flights added and saved by themselves (crewAutoAdd below); completed ones keep the old path
+            if (uid && !crewLogClosed(uid, grp.job && grp.job.status)) { openForCrewLog(grp.job && grp.job.id, uid); return; }
             const inc = { rpaLogs: {} };
             [...grp.flights].sort((x, y) => String(x.created_at || '').localeCompare(String(y.created_at || ''))).forEach(f => {
               if (f.flight && f.flight.kind === 'post_flight') { Object.assign(inc, f.flight.fields || {}); return; }
@@ -10905,6 +10908,73 @@ View in the Database & Settings tab.`);
             const t = setTimeout(() => applyCloudSignature(pendingSig), 600);
             return () => clearTimeout(t);
           }, [pendingSig && pendingSig.id, dbReady]); // eslint-disable-line
+          // ── v7.69: crew flights, post-flight answers and "log complete" are added as soon as the CRP opens the job ──────────
+          // (from the job list, the email link or Awaiting action), then the job is saved on this device and to the account.
+          // They're marked as added only once the account has the saved job, so a failed save leaves them in Awaiting action.
+          // Approval and signatures are never touched. Completed jobs are left alone (records are locked).
+          const crewLogClosed = (uid, cloudStatus) => cloudStatus === 'completed' || cloudStatus === 'cancelled' || (db.completedFlights || []).some(r => (r.overview || {}).uid === uid);
+          const crewRowsFor = (uid) => (crewFlights || []).filter(f => !importedFl.includes(f.id) && f.job && f.job.plan_uid === uid && !(f.flight && f.flight.kind && !['post_flight', 'log_complete'].includes(f.flight.kind)));
+          const crewAutoRef = useRef({ busy: false, tried: new Set() });
+          const crewSaveRef = useRef(null); crewSaveRef.current = { handleSaveApprovedPlan, handleSaveDraftPlan, approval, uid: overview.uid, savedPlans: db.savedPlans };
+          const [crewKick, setCrewKick] = useState(0);
+          const openForCrewLog = (jobId, uid) => {
+            crewAutoRef.current.tried = new Set([...crewAutoRef.current.tried].filter(k => !k.startsWith(uid + '|')));
+            if (overview.uid === uid) { setActiveTab('log'); setCrewKick(k => k + 1); return; }
+            if (dirty && !window.confirm('Open this job to add the crew\'s flights? The job that\'s open now has unsaved changes, which will be lost.')) return;
+            const local = cloudJobsList().find(j => j.uid === uid);
+            if (local) { handleLoadPlan(local.p, { silent: true }); setTimeout(() => setActiveTab('log'), 300); }
+            else openJobFromCloud(jobId, uid, () => setActiveTab('log'));
+          };
+          const crewPending = isCrpCloud && dbReady && overview.uid && !crewLogClosed(overview.uid, ((window.wdCloudJobs || []).find(j => j.plan_uid === overview.uid) || {}).status) ? crewRowsFor(overview.uid) : [];
+          const crewPendingKey = overview.uid ? overview.uid + '|' + crewPending.map(f => f.id).sort().join(',') : '';
+          useEffect(() => {
+            if (!crewPending.length || wdStore.locked || crewAutoRef.current.busy || crewAutoRef.current.tried.has(crewPendingKey)) return;
+            const uid = overview.uid, rows = crewPending, key = crewPendingKey;
+            const t = setTimeout(async () => {
+              if (crewSaveRef.current.uid !== uid || planLoadingRef.current) return;
+              crewAutoRef.current.busy = true; crewAutoRef.current.tried.add(key);
+              try {
+                const inc = { rpaLogs: {} };
+                [...rows].sort((x, y) => String(x.created_at || '').localeCompare(String(y.created_at || ''))).forEach(f => {
+                  if (f.flight && f.flight.kind === 'post_flight') { Object.assign(inc, f.flight.fields || {}); return; }
+                  if (f.flight && f.flight.kind) return;
+                  const r = f.rpa || 'RPA'; (inc.rpaLogs[r] = inc.rpaLogs[r] || { flights: [] }).flights.push({ ...(f.flight || {}), crewBy: f.who }); });
+                let changes = []; setLog(prev => { const m = mergeCrewLog(prev, inc); changes = m.changes; return m.log; });
+                const missing = Object.keys(inc.rpaLogs).filter(r => !((fpStateRef.current.overview || {}).rpaTypes || []).includes(r));
+                await new Promise(r => setTimeout(r, 700)); // let the log update land before saving
+                if (crewSaveRef.current.uid !== uid) return;
+                // saved into the list the job is already in (an approved plan stays approved)
+                const sv = crewSaveRef.current, inApproved = (sv.savedPlans || []).some(p => (p.overview || {}).uid === uid && p.status !== 'completed');
+                const saved = inApproved || (sv.approval && sv.approval.flightAuthApproved) ? await sv.handleSaveApprovedPlan({ quiet: true, keepList: inApproved }) : await sv.handleSaveDraftPlan({ quiet: true, noCrewHook: true });
+                const who = [...new Set(rows.map(f => f.who).filter(Boolean))].join(', ') || 'the crew', done = rows.some(f => f.flight && f.flight.kind === 'log_complete');
+                const what = changes.length ? changes.join('\n') : 'Nothing new: it was already in the log.';
+                const extra = missing.length ? `\n\nNote: ${missing.join(', ')} ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} on this plan's aircraft list, so ${missing.length === 1 ? 'its flights are' : 'their flights are'} kept with the log but not shown in Section 4.` : '';
+                if (!saved) { alert(`${who}'s flights were added to this job, but it couldn't be saved. They stay in Awaiting action; save the job, then they'll be marked as added.\n\n${what}`); return; }
+                setActiveTab('log');
+                // marked as added only once the account has it (or straight away when not signed in to the cloud)
+                const ok = await new Promise(res => { const tm = setTimeout(() => { window.removeEventListener('wd-job-synced', h); res(false); }, 25000);
+                  const h = (e) => { const d = e.detail || {}; if (d.uid !== uid) return; clearTimeout(tm); window.removeEventListener('wd-job-synced', h); res(!!d.ok); };
+                  window.addEventListener('wd-job-synced', h); });
+                if (ok) { const ids = [...new Set([...(lsJson('wd_cloud_imported', []) || []), ...rows.map(f => f.id)])]; setImportedFl(ids); lsJsonSet('wd_cloud_imported', ids); }
+                alert(`${done ? `${who}'s log is complete. ` : ''}Added from ${who} and saved${ok ? ' (on this device and in your account)' : ' on this device'}:\n\n${what}${extra}`
+                  + (ok ? '' : `\n\nIt couldn't be saved to your account yet (offline?), so it stays in Awaiting action. Open the job again when you're online.`)
+                  + (done ? '\n\nCheck Section 4, then log the completed flight when you\'re happy.' : ''));
+              } finally { crewAutoRef.current.busy = false; }
+            }, 1500);
+            return () => clearTimeout(t);
+          }, [crewPendingKey, crewKick]); // eslint-disable-line
+          // v7.69: the "log complete" email links to #crew-log=<job id>: open that job; the crew's log is then added as above
+          const [crewLogLink, setCrewLogLink] = useState(() => { const m = /^#crew-log=([\w-]+)$/.exec((typeof location !== 'undefined' && location.hash) || ''); return m ? m[1] : null; });
+          useEffect(() => { const h = () => { const m = /^#crew-log=([\w-]+)$/.exec(location.hash || ''); if (m) { setCrewLogLink(m[1]); window.dispatchEvent(new Event('wd-cloud-refresh')); } };
+            window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+          useEffect(() => {
+            if (!crewLogLink || !isCrpCloud || !dbReady || !crewFlights) return;
+            const j = (window.wdCloudJobs || []).find(x => String(x.id) === crewLogLink) || ((crewFlights.find(f => String(f.job_id) === crewLogLink) || {}).job);
+            if (!j) return; // the jobs list hasn't arrived yet
+            setCrewLogLink(null); try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+            if (crewLogClosed(j.plan_uid, j.status)) { alert(`“${j.title || 'This job'}” is completed, so crew flights can't be added to it. Check Awaiting action on Home.`); setActiveTab('home'); return; }
+            openForCrewLog(j.id, j.plan_uid);
+          }, [crewLogLink, isCrpCloud, dbReady, crewFlights]); // eslint-disable-line
           // fetch new crew signatures and flights when the CRP comes back to the planner or opens Authorisation
           useEffect(() => { if (!isCrpCloud) return; const h = () => { if (document.visibilityState === 'visible') window.dispatchEvent(new Event('wd-cloud-refresh')); };
             window.addEventListener('focus', h); document.addEventListener('visibilitychange', h); return () => { window.removeEventListener('focus', h); document.removeEventListener('visibilitychange', h); }; }, [isCrpCloud]);

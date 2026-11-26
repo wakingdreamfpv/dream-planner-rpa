@@ -1,5 +1,20 @@
 # Planner changelog
 
+## v7.69 — 26 Nov 2026 — Crew logs are added and saved as soon as you open the job
+- **The problem:** when a pilot pressed Log completed flight, you got the email, but opening the job showed nothing. Their flights only went in through Home › Awaiting action › Review log, and then you still had to save.
+- **Now:** open the job any way (Saved approved plans, the job list, the email's **Open the job** button, or Review log in Awaiting action). The pilot's flights and post-flight answers are added to Section 4 straight away and the job is saved, on this device and in your account. A message lists what was added. Approved plans stay approved; the approval and signatures aren't touched. Opening the job again doesn't add anything twice.
+- If the account can't be reached, the job is still saved on this device, and the log stays in Awaiting action until it's saved to your account (open the job again when you're online).
+- Completed jobs aren't changed.
+- **Jobs OP-2026-8715 (GC Media) and OP-2026-8716 (Royal Grand):** open each one once after this update and Ben's flights go in.
+- Supabase: **update the `notify` edge function** again (Edge Functions › notify › Code: replace everything with `supabase/functions/notify/index.ts`, first line says "last changed in v7.69" › Deploy). It makes the email's button open the job itself. No SQL.
+
+### Technical notes (v7.69, for Claude Code)
+- `planner.jsx`, block "v7.69: crew flights … are added as soon as the CRP opens the job" just after the `pendingSig` effect. `crewPending` = not-yet-imported `crewFlights` rows (plain flights, `post_flight`, `log_complete`) whose `job.plan_uid` is the open job, unless the job is completed/cancelled (`crewLogClosed`). An effect on `crewPendingKey` (+ `crewKick`) waits 1.5 s, merges with `mergeCrewLog`, then saves into the list the job is in: `handleSaveApprovedPlan({ quiet: true, keepList })` if it's in `savedPlans` (keepList skips the "must be approved" check) or approved, else `handleSaveDraftPlan({ quiet, noCrewHook })`. Then it waits up to 25 s for `wd-job-synced` for that uid; only on `ok` are the row ids added to `wd_cloud_imported`. Runs once per set of rows (`crewAutoRef.tried`), not in a read-only tab.
+- `importCloudFlights` (Awaiting action "Review log" / "Add to log") now calls `openForCrewLog(jobId, uid)` for open jobs; the old path is kept for completed jobs.
+- Link `#crew-log=<job id>` (like `#rpic-signed=`), handled once `wdCloudJobs` / `crewFlights` have arrived. `notify` `log_complete` email button → `appUrl + '#crew-log=' + row.job_id` (header v7.69).
+- Aircraft in the crew log but not on the plan's `rpaTypes` are kept in `log.rpaLogs` (not added to the plan, so the approval isn't changed); the message says so.
+- Test: `tests/e2e/t_v769_crew_log_autoadd.py` (job list, email link, failed account save). `t_v767_log_complete.py` updated.
+
 ## v7.68 — 26 Nov 2026 — New jobs are saved as drafts straight away; approved jobs save themselves
 - **New Operation:** the new job is saved as a draft as soon as you start it (and to your account). Same for "start a new job from this plan".
 - **Leaving a new job you haven't saved yourself:** starting another job, or opening a different one, asks **Keep draft**, **Discard it** or **Stay on this job**. Keep leaves it in Draft plans (with any changes you made). Discard removes it from this device and from your account (your other devices ask before removing their copy, as with any deleted job). Nothing is ever removed unless you press Discard.
