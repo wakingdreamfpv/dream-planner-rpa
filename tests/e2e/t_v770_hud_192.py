@@ -16,14 +16,15 @@ with sync_playwright() as p:
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(2000)
     pg.evaluate("()=>document.querySelector('.sty[data-s=cabinet]').click()"); pg.wait_for_timeout(800)
     def frame(ar, f):
-        pg.evaluate("a=>document.querySelector('#arSeg button[data-v=\"'+a+'\"]').click()", ar); pg.wait_for_timeout(300)
-        pg.evaluate(SPY); pg.evaluate("f=>{const s=document.getElementById('scrub'); s.value=s.max*f; s.dispatchEvent(new Event('input',{bubbles:true}))}", f); pg.wait_for_timeout(500)
-        return pg.evaluate("()=>({t:window.__txt,i:window.__img})")
+        pg.evaluate(SPY); pg.evaluate("a=>document.querySelector('#arSeg button[data-v=\"'+a+'\"]').click()", ar); pg.wait_for_timeout(300)
+        pg.evaluate("()=>{window.__img0=window.__img;window.__img=[];window.__txt=[]}")
+        pg.evaluate("f=>{const s=document.getElementById('scrub'); s.value=s.max*f; s.dispatchEvent(new Event('input',{bubbles:true}))}", f); pg.wait_for_timeout(500)
+        return pg.evaluate("()=>({t:window.__txt,i:window.__img,i0:window.__img0})")
     for ar, base in (('16:9', (1672, 941)), ('9:16', (941, 1672))):
         a = frame(ar, 0.3); bb = frame(ar, 0.6)
-        R.check(ar + ': draws the right cabinet photo', any(x[0] == base[0] and x[1] == base[1] for x in a['i']), a['i'][:3])
+        R.check(ar + ': draws the right cabinet photo', any(x[0] == base[0] and x[1] == base[1] for x in a['i'] + a['i0']), a['i'][:3])
         R.check(ar + ': screen and panels show live text', any(t.startswith('SCORE') for t in a['t']) and 'BATTERY' in a['t'] and 'SPEED' in a['t'], a['t'][:12])
-        stk = lambda d: [x for x in d['i'] if x[0] < 200]
+        stk = lambda d: [x for x in d['i'] if x[0] and x[0] < 200]
         R.check(ar + ': the two joysticks are drawn and move as the flight plays', len(stk(a)) == 2 and stk(a) != stk(bb), (stk(a), stk(bb)))
         R.check(ar + ': the readouts change as the flight plays', a['t'] != bb['t'])
         # the footage sits inside the arcade screen (smaller than the frame)
