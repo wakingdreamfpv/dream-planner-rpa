@@ -1,5 +1,17 @@
 # Planner changelog
 
+## v7.72 — 27 Nov 2026 — HUD Studio 1.9.4: auto-sync from takeoff
+- **Auto-sync from takeoff** (new button in step 3, Sync): finds your first throttle push after arming in the log, and the first frame where the video starts to move (the quad sits still until you push the throttle). It lines the two up to the exact frame, jumps the video there, and says what it did. A quick scan of the video comes first, with a progress %.
+- If someone carries the quad at the start of the video, the scan skips that and looks for "still, then moving". It checks each such moment against the whole flight's stick moves and picks the best. If it's still wrong, press **Try next match**.
+- **Takeoff is here:** scrub to the first frame where the picture moves and press it. The first throttle push is lined up with that frame. It's easier to spot than arming, because you can't see the motors spin.
+- **Go to takeoff:** jumps the video to where the first throttle push is now, so you can check it with the frame buttons.
+- The sync strip shows how much the picture moves (orange) and a green **TAKEOFF** line at the first throttle push, so you can see them line up. Nudging and dragging still work as before.
+- Supabase: nothing to do.
+
+### Technical notes (v7.72, for Claude Code)
+- `public/hud/index.html`, block "v1.9.4: auto-sync from takeoff" after the sync strip. `firstThrottle(f)` returns the log time where throttle first rises 0.2 (10%) above its value just after arming, interpolated. `scanVideo` plays a hidden copy of the video at 8x with `requestVideoFrameCallback` (stepping is the fallback) and records the mean grey-pixel change on a 96×54 copy into `MOT.t`/`MOT.d`. `onsetCands` picks moving samples with no movement in the 1.2 s before that stay moving, scores each by Pearson correlation of picture change with stick activity at that sync, and returns them best first. `refineOnset` steps frame by frame from −0.9 s to +0.4 s and takes the first frame over base + 25% of the jump. `armAt = onset − (tThr − tArm)`. `MOT` is a `var` because `drawSync` reads it before the block runs. `WD_BETA.firstThrottle()` is there for tests.
+- Test: `tests/e2e/t_v772_hud_194.py` (makes a still-then-moving webm in the page).
+
 ## v7.71 — 27 Nov 2026 — HUD Studio 1.9.3: your own text on the arcade sign; cockpit controls move the cabinet
 - **Arcade cabinet sign:** a **Sign** box appears under the style cards when Arcade cabinet is picked. Whatever you type shows on the sign at the top, in the same yellow pixel letters with the pink shadow. It's shown in capitals, and long names squeeze to fit. It starts as WAKING DREAM FPV and is remembered.
 - **Cockpit view controls work on the cabinet:** turn on Cockpit view, then Scale, Left / right and Up / down (or dragging and scrolling on the preview) resize and move the whole cabinet. Your footage moves with its screen. Reset cockpit puts it back. Space around a smaller cabinet is dark.

@@ -8,7 +8,7 @@ with sync_playwright() as p:
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
-    R.check('HUD Studio is 1.9.3', pg.inner_text('#hudVer').strip() == 'v1.9.3', pg.inner_text('#hudVer'))
+    R.check('HUD Studio is 1.9.3 or later', pg.inner_text('#hudVer').strip().startswith('v1.9.'), pg.inner_text('#hudVer'))
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(2000)
     pg.evaluate("()=>document.querySelector('.sty[data-s=fighter]').click()"); pg.wait_for_timeout(300)
     R.check('the Sign box is hidden for other styles', not pg.is_visible('#cabSign'))
