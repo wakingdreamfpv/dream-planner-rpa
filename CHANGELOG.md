@@ -1,5 +1,21 @@
 # Planner changelog
 
+## v7.74 — 27 Nov 2026 — New risk template: fully outdoor music festival
+- **New built-in template** in JSA & Risk › Select Template › OONP Operations: **OONP Pathway 2 + EVLOS — Fully outdoor music festival (sub-250 g near aerodrome, below 20 m, light pyro)**. It also shows in Database & Settings › Risk assessment library.
+- Built from the Big Bang Tour Sydney register, changed for an open-air festival:
+  - Venue structure, open-roof GPS, laser and confetti risks taken out.
+  - Pyro kept, but scaled down to a few effects.
+  - Only sub-250 g drones (the site is within 3 nm of an aerodrome).
+  - Flights over people stay below 20 m, even though the zone allows 45 m. RTH height is set no higher than the max height flown.
+  - New outdoor risks: wind and gusts, rain / storms / lightning, heat and fatigue, crowd movement in open ground, nearby aircraft, dust, and fire near dry grass.
+- 21 risks in all. Check and edit them for each job as usual.
+- **Released in a hurry at Mike's request:** only the new test suite (`t_v774`) was run (it passed). The full test run was stopped part way (the 14 suites it got through all passed) and still needs running afterwards.
+- Supabase: nothing to do.
+
+### Technical notes (v7.74, for Claude Code)
+- `src/legacy/planner.jsx`: `riskTemplates.oonpP2OutdoorFestival` (before `oonpP2NightEventLifter`), name in `BUILTIN_RISK_TEMPLATE_NAMES` and an `<option>` in the OONP Operations group.
+- Test: `tests/e2e/t_v774_outdoor_festival.py`.
+
 ## v7.73 — 27 Nov 2026 — HUD Studio 1.9.5: arcade burn-in fixed, smoother playback, the sync is remembered
 - **Burn-in with the Arcade cabinet showed no video:** the cabinet cut its screen out as a hole. In the export, the video and HUD go onto one picture with no see-through parts, so the hole wiped the footage to black. The cabinet is now drawn around the screen, so the footage stays.
 - **Smoother playback:**
