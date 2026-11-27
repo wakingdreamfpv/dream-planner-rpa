@@ -9,7 +9,7 @@
   - Flights over people stay below 20 m, even though the zone allows 45 m. RTH height is set no higher than the max height flown.
   - New outdoor risks: wind and gusts, rain / storms / lightning, heat and fatigue, crowd movement in open ground, nearby aircraft, dust, and fire near dry grass.
 - 21 risks in all. Check and edit them for each job as usual.
-- **Released in a hurry at Mike's request:** only the new test suite (`t_v774`) was run (it passed). The full test run was stopped part way (the 14 suites it got through all passed) and still needs running afterwards.
+- **Tests:** released in a hurry at Mike's request with only the new test suite run. The full tests were run straight afterwards on this version and all passed (59 browser suites, 13 database suites, 4 unit suites).
 - Supabase: nothing to do.
 
 ### Technical notes (v7.74, for Claude Code)
