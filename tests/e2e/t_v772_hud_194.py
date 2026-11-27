@@ -13,7 +13,7 @@ with sync_playwright() as p:
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(URL + 'hud/'); pg.wait_for_timeout(1200)
-    R.check('HUD Studio is 1.9.4', pg.inner_text('#hudVer').strip() == 'v1.9.4', pg.inner_text('#hudVer'))
+    R.check('HUD Studio is 1.9.4 or later', pg.inner_text('#hudVer').strip().startswith('v1.9.'), pg.inner_text('#hudVer'))
     vid = os.path.join(tempfile.mkdtemp(), 'still3.webm'); open(vid, 'wb').write(base64.b64decode(pg.evaluate(MK)))
     pg.evaluate("()=>{[...document.querySelectorAll('button')].find(x=>/sample flight/i.test(x.textContent)).click()}"); pg.wait_for_timeout(2000)
     pg.set_input_files('#vidIn', vid); pg.wait_for_timeout(2000)

@@ -1,5 +1,25 @@
 # Planner changelog
 
+## v7.73 — 27 Nov 2026 — HUD Studio 1.9.5: arcade burn-in fixed, smoother playback, the sync is remembered
+- **Burn-in with the Arcade cabinet showed no video:** the cabinet cut its screen out as a hole. In the export, the video and HUD go onto one picture with no see-through parts, so the hole wiped the footage to black. The cabinet is now drawn around the screen, so the footage stays.
+- **Smoother playback:**
+  - With a video playing, the HUD is now drawn once per video frame, at that frame's exact time. Before, it was drawn 60 times a second against a 30 fps clip, so it jittered against the picture.
+  - The sync strip redraws about 6 times a second while playing, instead of every frame.
+  - The cabinet's photo, sign and screen glass are drawn once and reused.
+  - If your clips are 4K or HEVC (H.265), the browser may still struggle to decode them. An H.264 copy plays more smoothly.
+- **The sync is remembered:** each time you set or change the sync (Auto-sync, Takeoff is here, Arming is here, the nudge buttons, dragging the strip or typing), it's saved for that video and flight on this computer. Open the same video and log again, in either order and even after reloading the page, and the sync comes back with a note saying so. If the log has several flights, the one you synced is picked for you.
+- **Export just a section:** in Export there's now a **Section** with start and end times. Scrub to where you want it to start and press **Start here**, scrub to the end and press **End here**, or type the times. **Go to start** jumps there, **Whole video** clears it, and Length shows the section and its frame count. Both MP4 exports and the PNG sequence only render that part, and the file name says which part. The section is saved along with the sync, and it's shaded on the sync strip.
+- Supabase: nothing to do.
+
+### Technical notes (v7.73, for Claude Code)
+- `public/hud/index.html`:
+  - Cabinet: `cabStatic()` draws the photo and sign clipped with evenodd around `cabScrPath(c, I, true)`, plus the screen scanlines, vignette and shine, into a frame-sized layer cached on `CB_CACHE` (key: size, rect, sign, font loaded). `cabinet()` draws that layer, then the live parts. There is no more destination-out.
+  - Playback: `vfcStart()` uses `requestVideoFrameCallback` with `VFC_GEN` and `VFC_ON` while playing; `stop()` bumps the generation. The RAF loop only renders a video when VFC is off. `updateInfo` throttles `drawSync` to 160 ms while playing.
+  - Sync memory: `localStorage` key `wd_hud_syncs`, keyed by `V.name|V.size|flight.startMs`, holding `{armAt, at, vid, log}` for up to 300 entries. `setArm` calls `saveSync()`. `restoreSync(pickFlight)` runs after the video loads and after `selectFlight` (when there's a video).
+  - Test hooks: `WD_BETA.drawOnto`, `WD_BETA.cabScr`, `WD_BETA.renderMs` and `WD_BETA.syncMs`.
+- Section: `P.rngA`/`P.rngB` (null = start/end). `expRange()`, `isSection()` and `setRange()` handle them. `exportVideo` and `exportPng` render from `ra` for `(rb−ra)·fps` frames, and add `secTag` to the file name. The section is saved in the `wd_hud_syncs` entry.
+- Test: `tests/e2e/t_v773_hud_195.py`. The t_v770 and t_v771 spies now also watch the cabinet's cache canvas.
+
 ## v7.72 — 27 Nov 2026 — HUD Studio 1.9.4: auto-sync from takeoff
 - **Auto-sync from takeoff** (new button in step 3, Sync): finds your first throttle push after arming in the log, and the first frame where the video starts to move (the quad sits still until you push the throttle). It lines the two up to the exact frame, jumps the video there, and says what it did. A quick scan of the video comes first, with a progress %.
 - If someone carries the quad at the start of the video, the scan skips that and looks for "still, then moving". It checks each such moment against the whole flight's stick moves and picks the best. If it's still wrong, press **Try next match**.

@@ -2,7 +2,7 @@
 import sys, os; sys.path.insert(0, os.path.dirname(__file__))
 from harness import *
 R = Run(); ensure_server()
-SPY = """()=>{window.__txt=[];if(!window.__spy){window.__spy=1;const f=CanvasRenderingContext2D.prototype.fillText;CanvasRenderingContext2D.prototype.fillText=function(t,...r){if(this.canvas.id==='hud')window.__txt.push(String(t));return f.call(this,t,...r)}}}"""
+SPY = """()=>{window.__txt=[];if(!window.__spy){window.__spy=1;const f=CanvasRenderingContext2D.prototype.fillText;CanvasRenderingContext2D.prototype.fillText=function(t,...r){if(this.canvas.id==='hud'||!this.canvas.id)window.__txt.push(String(t));return f.call(this,t,...r)}}}"""
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(viewport={'width': 1500, 'height': 1000})
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())
@@ -16,7 +16,7 @@ with sync_playwright() as p:
     R.check('the Sign box shows for the Arcade cabinet, starting with WAKING DREAM FPV', pg.is_visible('#cabSign') and pg.input_value('#cabSign') == 'WAKING DREAM FPV')
     for ar in ('16:9', '9:16'):
         pg.evaluate("a=>document.querySelector('#arSeg button[data-v=\"'+a+'\"]').click()", ar); pg.wait_for_timeout(300)
-        pg.evaluate(SPY); pg.fill('#cabSign', 'Gold coast run'); pg.evaluate("()=>{const s=document.getElementById('scrub'); s.value=s.max*0.4; s.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(400)
+        pg.fill('#cabSign', ''); pg.wait_for_timeout(100); pg.evaluate(SPY); pg.fill('#cabSign', 'Gold coast run'); pg.evaluate("()=>{const s=document.getElementById('scrub'); s.value=s.max*0.4; s.dispatchEvent(new Event('input',{bubbles:true}))}"); pg.wait_for_timeout(400)
         t = pg.evaluate("()=>window.__txt")
         R.check(ar + ': the sign shows the new text in capitals', 'GOLD COAST RUN' in t and 'WAKING DREAM FPV' not in t, t[:6])
     # the Elements list changes the cabinet: Speed off hides the SPEED screen; Heading off hides HDG

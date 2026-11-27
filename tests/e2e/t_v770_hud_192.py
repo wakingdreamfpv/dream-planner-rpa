@@ -5,7 +5,7 @@ from harness import *
 R = Run(); ensure_server()
 SPY = """()=>{window.__txt=[];window.__img=[];const P=CanvasRenderingContext2D.prototype;if(!window.__spy){window.__spy=1;const f=P.fillText,d=P.drawImage;
  P.fillText=function(t,...r){if(this.canvas.id==='hud')window.__txt.push(String(t));return f.call(this,t,...r)};
- P.drawImage=function(im,...r){if(this.canvas.id==='hud'){const m=this.getTransform();window.__img.push([im.naturalWidth,im.naturalHeight,Math.round(m.e),Math.round(m.f),+m.b.toFixed(3)])}return d.call(this,im,...r)}}}"""
+ P.drawImage=function(im,...r){if(this.canvas.id==='hud'||im.naturalWidth>800){const m=this.getTransform();window.__img.push([im.naturalWidth,im.naturalHeight,Math.round(m.e),Math.round(m.f),+m.b.toFixed(3)])}return d.call(this,im,...r)}}}"""
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(viewport={'width': 1500, 'height': 1000})
     ctx.route('**/*', lambda r: r.abort() if (r.request.url.startswith('http') and 'localhost' not in r.request.url) else r.continue_())

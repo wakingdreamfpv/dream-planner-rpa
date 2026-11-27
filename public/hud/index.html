@@ -14,7 +14,7 @@
 <script>
 window.WD_BETA = {
   app: 'HUD Studio',
-  version: 'HUD Studio 1.9.4',
+  version: 'HUD Studio 1.9.5',
   // Map imagery under the GPS mini-maps. MapTiler key (free at maptiler.com) gives the satellite option; with no key it uses OpenStreetMap streets.
   mapKey: '',
   tiles: {
@@ -241,6 +241,9 @@ window.WD_BETA = {
     <label class="mode" data-m="burn"><b>Burned into the video · MP4</b><span>HUD drawn onto your clip, ready to post. No audio. Slower, because every frame is decoded.</span></label>
     <div class="row"><span class="lbl" style="width:76px">Resolution</span><select id="res"><option value="match">Match video</option><option value="1920x1080" selected>1920×1080</option><option value="2704x1520">2.7K 2704×1520</option><option value="3840x2160">4K 3840×2160</option><option value="1440x1080">1440×1080 (4:3)</option><option value="2704x2028">2.7K 4:3</option><option value="4000x3000">4K 4:3</option><option value="1080x1920">1080×1920 vertical</option></select></div>
     <div class="row"><span class="lbl" style="width:76px">Frame rate</span><select id="fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select><span class="note">match your clip</span></div>
+    <div class="row" style="flex-wrap:wrap;gap:6px"><span class="lbl" style="width:76px">Section</span>
+      <input type="number" id="rngAIn" step="0.01" min="0" placeholder="start" style="width:72px" class="mono"><span class="lbl">to</span><input type="number" id="rngBIn" step="0.01" min="0" placeholder="end" style="width:72px" class="mono"><span class="lbl">s</span></div>
+    <div class="row" style="flex-wrap:wrap;gap:6px"><span style="width:76px"></span><button class="btn sm" id="rngA">Start here</button><button class="btn sm" id="rngB">End here</button><button class="btn sm" id="rngGo">Go to start</button><button class="btn sm" id="rngAll">Whole video</button></div>
     <div class="row"><span class="lbl" style="width:76px">Length</span><span class="note" id="lenInfo">—</span></div>
     <button class="btn primary" id="exportBtn" style="width:100%;margin-top:6px" disabled>Export</button>
     <button class="btn" id="cancelBtn" style="width:100%;margin-top:6px;display:none">Cancel</button>
@@ -3219,7 +3222,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
   }
   // Where the CRT screen sits in the frame (the footage is fitted into it)
   function cabScr(W, H) { const r = cabRect(W, H), [a, b, c2, d] = r.I.scr; return { x: r.x0 + a * r.sc, y: r.y0 + b * r.sc, w: (c2 - a) * r.sc, h: (d - b) * r.sc }; }
-  function cabScrPath(c, I) { const [x0, y0, x1, y1] = I.scr, r = I.sr, b = 6; c.beginPath();
+  function cabScrPath(c, I, add) { const [x0, y0, x1, y1] = I.scr, r = I.sr, b = 6; if (!add) c.beginPath();
     c.moveTo(x0 + r, y0); c.quadraticCurveTo((x0 + x1) / 2, y0 - b, x1 - r, y0); c.quadraticCurveTo(x1, y0, x1, y0 + r); c.quadraticCurveTo(x1 + b, (y0 + y1) / 2, x1, y1 - r);
     c.quadraticCurveTo(x1, y1, x1 - r, y1); c.quadraticCurveTo((x0 + x1) / 2, y1 + b, x0 + r, y1); c.quadraticCurveTo(x0, y1, x0, y1 - r); c.quadraticCurveTo(x0 - b, (y0 + y1) / 2, x0, y0 + r); c.quadraticCurveTo(x0, y0, x0 + r, y0); c.closePath(); }
   const CBY = '#ffc93c', CBL = '#ff8a4c', CBP = '#ff3e8a', CBC = '#5ce1ff', CBG = '#6cff6c';
@@ -3241,23 +3244,38 @@ If you want to offset all timestamps of a track such that the first one is zero,
       c.fillStyle = '#ffd626'; c.shadowColor = 'rgba(255,214,38,0.85)'; c.shadowBlur = 14; c.fillText(txt, cx, cy); c.shadowBlur = 0; c.fillText(txt, cx, cy); }
     c.restore();
   }
+  // v1.9.5: the parts of the cabinet that don't change (photo, sign, screen lines and shine) are drawn once into a
+  // frame-sized layer and reused until the size, position or sign text changes (playback was redrawing the photo each frame).
+  // Everything is drawn around the screen (clipped), never punched out, so a burned-in export keeps the footage that's
+  // already on the frame (the export canvas has no transparency: a punched hole came out black).
+  let CB_CACHE = null;
+  function cabStatic(W, H, r, o) {
+    const sign = o.cabSign == null ? CB_SIGN0 : o.cabSign, fontOk = !document.fonts || document.fonts.check('20px "Press Start 2P"');
+    const key = [W, H, r.k, r.sc.toFixed(6), r.x0.toFixed(2), r.y0.toFixed(2), sign, fontOk].join('|');
+    if (CB_CACHE && CB_CACHE.key === key) return CB_CACHE.cv;
+    const cv = (CB_CACHE && CB_CACHE.cv) || document.createElement('canvas'); cv.width = W; cv.height = H;
+    const c = cv.getContext('2d'), I = r.I, G = CB[r.k]; c.clearRect(0, 0, W, H);
+    c.save(); c.translate(r.x0, r.y0); c.scale(r.sc, r.sc);
+    c.save(); c.beginPath(); c.rect(-1e5, -1e5, 2e5, 2e5); cabScrPath(c, I, true); c.clip('evenodd');
+    c.fillStyle = '#06050a'; c.fillRect(-1e5, -1e5, 2e5, 2e5); c.drawImage(G.base, 0, 0); cabSign(c, I, o); c.restore();
+    const [sx0, sy0, sx1, sy1] = I.scr, sw = sx1 - sx0, sh = sy1 - sy0, scx = (sx0 + sx1) / 2, scy = (sy0 + sy1) / 2;
+    c.save(); cabScrPath(c, I); c.clip();
+    c.fillStyle = 'rgba(0,0,0,0.16)'; for (let y = sy0; y < sy1; y += 4) c.fillRect(sx0, y, sw, 1.6);
+    const vg = c.createRadialGradient(scx, scy, Math.min(sw, sh) * 0.35, scx, scy, Math.max(sw, sh) * 0.62); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)'); c.fillStyle = vg; c.fillRect(sx0, sy0, sw, sh);
+    const gl = c.createLinearGradient(sx0, sy0, sx0 + sw * 0.6, sy0 + sh * 0.7); gl.addColorStop(0, 'rgba(255,255,255,0.10)'); gl.addColorStop(0.45, 'rgba(255,255,255,0)'); c.fillStyle = gl; c.fillRect(sx0, sy0, sw, sh);
+    c.restore(); c.restore();
+    CB_CACHE = { key, cv }; return cv;
+  }
   function cabinet(c, W, H, s, o) {
     if (CB_OK < 6) return;
     const r = cabRect(W, H), I = r.I, G = CB[r.k], cv = unitConv(o), t = s.t || 0, blink = (hz) => Math.floor(t * hz) % 2 === 0, E = o.el || {};
-    c.save(); c.fillStyle = '#06050a'; c.fillRect(0, 0, W, H); c.restore();
     const thr = clamp(((s.thr === undefined || isNaN(s.thr) ? -1 : s.thr) + 1) / 2, 0, 1), cell = s.cellV;
     const pct = !isNaN(s.pct) ? clamp(s.pct / 100, 0, 1) : isNaN(cell) ? NaN : clamp((cell - 3.3) / 0.9, 0, 1);
+    c.drawImage(cabStatic(W, H, r, o), 0, 0);
     c.save(); c.translate(r.x0, r.y0); c.scale(r.sc, r.sc);
     try {
-      c.drawImage(G.base, 0, 0);
-      cabSign(c, I, o);
-      // the CRT: cut a hole for the footage, then scanlines, a dark rim and a glass shine on top
-      c.save(); c.globalCompositeOperation = 'destination-out'; cabScrPath(c, I); c.fill(); c.restore();
       const [sx0, sy0, sx1, sy1] = I.scr, sw = sx1 - sx0, sh = sy1 - sy0, scx = (sx0 + sx1) / 2, scy = (sy0 + sy1) / 2;
       c.save(); cabScrPath(c, I); c.clip();
-      c.fillStyle = 'rgba(0,0,0,0.16)'; for (let y = sy0; y < sy1; y += 4) c.fillRect(sx0, y, sw, 1.6);
-      const vg = c.createRadialGradient(scx, scy, Math.min(sw, sh) * 0.35, scx, scy, Math.max(sw, sh) * 0.62); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)'); c.fillStyle = vg; c.fillRect(sx0, sy0, sw, sh);
-      const gl = c.createLinearGradient(sx0, sy0, sx0 + sw * 0.6, sy0 + sh * 0.7); gl.addColorStop(0, 'rgba(255,255,255,0.10)'); gl.addColorStop(0.45, 'rgba(255,255,255,0)'); c.fillStyle = gl; c.fillRect(sx0, sy0, sw, sh);
       // screen HUD: score (flight time), heading, altitude, REC, aim box with a horizon line, and a message line
       const P = I.px, PF = '"Press Start 2P", monospace', pad = P * 1.6, ty = sy0 + pad + P * 0.6, e = Math.max(0, s.elapsed || 0);
       const hh = Math.floor(e / 3600), mm = Math.floor(e / 60) % 60, ss = Math.floor(e % 60), p2 = (n) => String(n).padStart(2, '0');
@@ -3473,7 +3491,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
   // ───────────────────────── Preview stage ─────────────────────────
   const vid = $('vid'), hud = $('hud'), hc = hud.getContext('2d');
   const V = { has: false, dur: 0, w: 1920, h: 1080, url: null, name: '' };
-  const P = { t: 0, playing: false, last: 0, armAt: 0 };
+  const P = { t: 0, playing: false, last: 0, armAt: 0, rngA: null, rngB: null };
   const logTimeAt = (vt) => S.cur ? S.cur.t[S.cur.armA] + (vt - P.armAt) : 0;
   const totalLen = () => V.has ? V.dur : (S.cur ? Math.max(1, S.cur.dur - S.cur.t[S.cur.armA] + P.armAt) : 0);
   // ── v1.7 video options: frame shape, fill/fit, zoom and pan (crop), contrast, vibrance, brightness
@@ -3508,13 +3526,15 @@ If you want to offset all timestamps of a track such that the first one is zero,
     if (!S.cur) return;
     const lt = logTimeAt(P.t);
     if (lt < S.cur.t[0] || lt > S.cur.dur) { updateInfo(lt); return; }
-    const st0 = stateAt(S.cur, lt); drawHUD(hc, hud.width, hud.height, st0, O);
+    const r0 = performance.now(), st0 = stateAt(S.cur, lt); drawHUD(hc, hud.width, hud.height, st0, O); if (window.WD_BETA) window.WD_BETA.renderMs = performance.now() - r0;
     if ((O.style === 'bfa' || O.style === 'bfd') && O.osdPlace) drawOsdPlacement(hc, hud.width, hud.height, st0, O, O.style); else OSD_HIT = null;
     updateInfo(lt);
   }
   const fmtV = (s) => { const m = Math.floor(s / 60); return m + ':' + (s - m * 60).toFixed(2).padStart(5, '0'); };
+  // v1.9.5: while playing, the sync strip only redraws about 6 times a second (it was every frame)
+  let SYNC_LAST = 0;
   function updateInfo(lt) {
-    drawSync();
+    { const now = performance.now(); if (!P.playing || now - SYNC_LAST > 160) { SYNC_LAST = now; drawSync(); } }
     $('tcode').textContent = fmtV(P.t) + ' / ' + fmtV(totalLen());
     $('scrub').max = totalLen(); $('scrub').value = P.t;
     if (!S.cur) return;
@@ -3522,17 +3542,21 @@ If you want to offset all timestamps of a track such that the first one is zero,
     $('syncInfo').textContent = (lt < f.t[0] || lt > f.dur) ? 'This video frame is outside the log — the HUD is hidden here.' : 'Log at this frame: T' + (e < 0 ? '−' : '+') + fmtV(Math.abs(e)) + ' from arming · ' + fmtClock(f.D.ms[f.i0] + (lt - f.t[0]) * 1000) + (S.clock === 'utc' ? ' UTC' : '');
   }
   function seek(t) { P.t = Math.max(0, Math.min(totalLen(), t)); if (V.has && Math.abs(vid.currentTime - P.t) > 0.001) vid.currentTime = P.t; render(); }
+  // v1.9.5: with a video playing, the HUD is drawn once per video frame, at that frame's exact time
+  // (requestVideoFrameCallback), so it moves in step with the picture instead of 60 times a second against a 30 fps clip
+  let VFC_GEN = 0, VFC_ON = false;
+  function vfcStart() { if (!V.has || !vid.requestVideoFrameCallback) return; const g = ++VFC_GEN; VFC_ON = true;
+    const cb = (now, md) => { if (g !== VFC_GEN || !P.playing) return; P.t = md.mediaTime; render(); vid.requestVideoFrameCallback(cb); }; vid.requestVideoFrameCallback(cb); }
   function loop(ts) {
     if (P.playing) {
-      if (V.has) { P.t = vid.currentTime; if (vid.ended) stop(); }
-      else { P.t += P.last ? (ts - P.last) / 1000 : 0; if (P.t >= totalLen()) { P.t = totalLen(); stop(); } }
-      render();
+      if (V.has) { if (vid.ended) stop(); else if (!VFC_ON) { P.t = vid.currentTime; render(); } }
+      else { P.t += P.last ? (ts - P.last) / 1000 : 0; if (P.t >= totalLen()) { P.t = totalLen(); stop(); } render(); }
     }
     P.last = ts; requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
-  const stop = () => { P.playing = false; $('play').textContent = '▶'; if (V.has) vid.pause(); };
-  $('play').onclick = () => { if (!S.cur && !V.has) return; if (P.playing) return stop(); if (P.t >= totalLen() - 0.05) seek(0); P.playing = true; $('play').textContent = '❚❚'; if (V.has) vid.play(); };
+  const stop = () => { P.playing = false; VFC_ON = false; VFC_GEN++; $('play').textContent = '▶'; if (V.has) vid.pause(); };
+  $('play').onclick = () => { if (!S.cur && !V.has) return; if (P.playing) return stop(); if (P.t >= totalLen() - 0.05) seek(0); P.playing = true; $('play').textContent = '❚❚'; if (V.has) { vid.play(); vfcStart(); } };
   $('scrub').oninput = (e) => { if (P.playing) stop(); seek(+e.target.value); };
   vid.addEventListener('seeked', () => { if (!P.playing) render(); });
   window.addEventListener('resize', sizeStage);
@@ -3557,6 +3581,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     prep(S.cur);
     if (!V.has) P.armAt = 3;
     $('armAt').value = P.armAt.toFixed(2);
+    if (V.has) setTimeout(() => restoreSync(false), 0);
     $('stageMsg').style.display = 'none';
     $('exportBtn').disabled = false;
     // Data-rate report
@@ -3571,14 +3596,14 @@ If you want to offset all timestamps of a track such that the first one is zero,
   function loadVideo(file) {
     loadAudio(file);
     if (V.url) URL.revokeObjectURL(V.url);
-    V.url = URL.createObjectURL(file); V.name = file.name;
+    V.url = URL.createObjectURL(file); V.name = file.name; V.size = file.size;
     vid.src = V.url;
     vid.onloadedmetadata = () => {
       V.has = true; V.dur = vid.duration; V.w = vid.videoWidth || 1920; V.h = vid.videoHeight || 1080;
       $('bgfake').style.display = 'none'; $('openVid').textContent = '2 · ' + file.name;
       if ($('res').value === 'match' || true) $('res').value = 'match';
-      P.armAt = 0; $('armAt').value = '0.00';
-      updateLen(); sizeStage(); seek(0);
+      P.armAt = 0; $('armAt').value = '0.00'; setRange(null, null, true);
+      updateLen(); sizeStage(); seek(0); restoreSync(true);
     };
     vid.onerror = () => alert('This browser cannot play that video file. GoPro HEVC (H.265) clips need hardware HEVC support — try Chrome/Edge on a recent Mac or Windows PC, or export a proxy in H.264.');
   }
@@ -3591,8 +3616,27 @@ If you want to offset all timestamps of a track such that the first one is zero,
   window.addEventListener('drop', (e) => { e.preventDefault(); const fs = [...(e.dataTransfer.files || [])]; const csv = fs.filter(f => /\.csv$/i.test(f.name)), v = fs.find(f => /^video\//.test(f.type) || /\.(mp4|mov)$/i.test(f.name)); if (csv.length) loadLogs(csv); if (v) loadVideo(v); });
 
   // Sync controls
-  const setArm = (v) => { P.armAt = Math.round(v * 1000) / 1000; $('armAt').value = P.armAt.toFixed(2); updateLen(); render(); };
+  const setArm = (v) => { P.armAt = Math.round(v * 1000) / 1000; $('armAt').value = P.armAt.toFixed(2); updateLen(); render(); saveSync(); };
+  // v1.9.5: the sync is remembered for each video + flight pair (video name and size, flight start time) on this
+  // computer, so opening the same two files again, even after a reload, puts the sync back
+  const SYNC_KEY = 'wd_hud_syncs';
+  const syncKeyOf = (f) => V.has && f ? V.name + '|' + (V.size || 0) + '|' + f.startMs : null;
+  const syncStore = () => { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || '{}') || {}; } catch (e) { return {}; } };
+  function saveSync() { const k = syncKeyOf(S.cur); if (!k) return; const all = syncStore(); all[k] = { armAt: P.armAt, at: Date.now(), vid: V.name, log: S.cur.file || '', rngA: P.rngA, rngB: P.rngB };
+    const ks = Object.keys(all); if (ks.length > 300) ks.sort((a, b) => all[a].at - all[b].at).slice(0, ks.length - 300).forEach(x => delete all[x]);
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(all)); } catch (e) {} }
+  function restoreSync(pickFlight) {
+    if (!V.has || !S.cur) return false; const all = syncStore(); let hit = all[syncKeyOf(S.cur)];
+    if (!hit && pickFlight) { const k = S.flights.findIndex(f => all[syncKeyOf(f)]); if (k >= 0) { $('flightSel').value = String(k); selectFlight(k); return true; } }
+    if (!hit) return false;
+    P.armAt = hit.armAt; $('armAt').value = P.armAt.toFixed(2); setRange(hit.rngA, hit.rngB, true); render();
+    const d = new Date(hit.at); if ($('autoNote')) $('autoNote').textContent = 'Sync put back from last time (saved ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }) + '). Any change you make is saved too.';
+    return true;
+  }
   $('setArm').onclick = () => setArm(P.t);
+  $('rngA').onclick = () => setRange(P.t, P.rngB); $('rngB').onclick = () => setRange(P.rngA, P.t); $('rngAll').onclick = () => setRange(null, null);
+  $('rngGo').onclick = () => { if (P.playing) stop(); seek(expRange()[0]); };
+  $('rngAIn').onchange = (e) => setRange(e.target.value === '' ? null : +e.target.value, P.rngB); $('rngBIn').onchange = (e) => setRange(P.rngA, e.target.value === '' ? null : +e.target.value);
   $('armAt').onchange = (e) => setArm(+e.target.value || 0);
   document.querySelectorAll('[data-n]').forEach(b => b.onclick = () => setArm(P.armAt + (+b.dataset.n === 0.0333 || +b.dataset.n === -0.0333 ? Math.sign(+b.dataset.n) / (+$('fps').value || 30) : +b.dataset.n)));
 
@@ -3613,7 +3657,8 @@ If you want to offset all timestamps of a track such that the first one is zero,
     drawSync();
   }
   const syncWin = () => { const L = totalLen() || 1; if (SYNC_ZOOM === 'all') return [0, L]; const a = P.armAt - 8; return [a, a + 20]; };
-  function drawSync() {
+  function drawSync() { const t0 = performance.now(); try { drawSync0(); } finally { if (window.WD_BETA) window.WD_BETA.syncMs = performance.now() - t0; } }
+  function drawSync0() {
     const wrap = $('syncWrap'); if (!wrap) return; wrap.style.display = S.cur ? '' : 'none'; if (!S.cur) return;
     const cv = $('syncCv'), dpr = window.devicePixelRatio || 1, Wc = Math.max(200, cv.clientWidth), Hc = 130;
     if (cv.width !== Math.round(Wc * dpr)) { cv.width = Math.round(Wc * dpr); cv.height = Math.round(Hc * dpr); }
@@ -3641,6 +3686,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     const xa = X(P.armAt); c.strokeStyle = '#f59e0b'; c.lineWidth = 2; c.beginPath(); c.moveTo(xa, 14); c.lineTo(xa, Hc); c.stroke(); c.fillStyle = '#f59e0b'; c.font = '700 10px system-ui,sans-serif'; c.fillText('ARM', Math.min(Wc - 24, xa + 3), yA + 12);
     { const tThr = typeof firstThrottle === 'function' ? firstThrottle(f) : NaN; if (!isNaN(tThr)) { const xt = X(P.armAt + tThr - la); c.save(); c.setLineDash([4, 3]); c.strokeStyle = '#3ddc84'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(xt, 14); c.lineTo(xt, Hc); c.stroke(); c.restore();
       c.fillStyle = '#3ddc84'; c.font = '700 10px system-ui,sans-serif'; c.fillText('TAKEOFF', Math.min(Wc - 52, xt + 3), Hc - 22); } }
+    if (isSection()) { const [ra, rb] = expRange(); c.fillStyle = 'rgba(95,230,255,0.10)'; c.fillRect(X(ra), 0, X(rb) - X(ra), Hc); c.fillStyle = '#5fe6ff'; c.fillRect(X(ra), 0, 2, Hc); c.fillRect(X(rb) - 2, 0, 2, Hc); c.font = '700 10px system-ui,sans-serif'; c.fillText('EXPORT', X(ra) + 4, 24); }
     const xp = X(P.t); c.strokeStyle = '#e6edf5'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(xp, 0); c.lineTo(xp, Hc); c.stroke();
     if (SYNC_DRAG && SYNC_DRAG.moved) { c.fillStyle = '#e6edf5'; c.font = '700 11px system-ui,sans-serif'; c.fillText('Arming at ' + P.armAt.toFixed(2) + ' s', 6, Hc - 8); }
   }
@@ -3659,6 +3705,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
   // move. The log gives the first throttle push; a quick scan of the video gives how much the picture changes over time.
   // The best-matching "still, then moving" moment in the video is lined up with that push, then fine-tuned frame by frame.
   var MOT = { t: null, d: null, busy: false, cands: [], pick: 0 };
+  if (window.WD_BETA) window.WD_BETA.drawOnto = (c, w, h) => drawHUD(c, w, h, stateAt(S.cur, logTimeAt(P.t)), O), window.WD_BETA.cabScr = (w, h) => cabScr(w, h);
   if (window.WD_BETA) window.WD_BETA.firstThrottle = () => S.cur ? firstThrottle(S.cur) - S.cur.t[S.cur.armA] : NaN;
   // First throttle push after arming, in log time (throttle 10% of travel above where it sat at arming)
   function firstThrottle(f) {
@@ -3780,9 +3827,18 @@ If you want to offset all timestamps of a track such that the first one is zero,
     else { const S = $('res').value === 'match' ? (V.has ? Math.min(V.w, V.h) : 1080) : Math.min(...$('res').value.split('x').map(Number)); if (fa >= 1) { h = S; w = Math.round(S * fa); } else { w = S; h = Math.round(S / fa); } }
     return [w - (w % 2), h - (h % 2)];
   }
+  // v1.9.5: export only a section of the video (start / end in video seconds; empty = from the start / to the end)
+  function expRange() { const L = totalLen(), a = clamp(P.rngA == null ? 0 : P.rngA, 0, L), b = clamp(P.rngB == null ? L : P.rngB, 0, L); return b - a >= 0.05 ? [a, b] : [0, L]; }
+  const isSection = () => { const L = totalLen(), [a, b] = expRange(); return a > 0.001 || b < L - 0.001; };
+  function setRange(a, b, quiet) {
+    P.rngA = a == null || isNaN(a) ? null : Math.max(0, Math.round(a * 1000) / 1000); P.rngB = b == null || isNaN(b) ? null : Math.max(0, Math.round(b * 1000) / 1000);
+    if (P.rngA != null && P.rngB != null && P.rngB < P.rngA) { const t = P.rngA; P.rngA = P.rngB; P.rngB = t; }
+    $('rngAIn').value = P.rngA == null ? '' : P.rngA.toFixed(2); $('rngBIn').value = P.rngB == null ? '' : P.rngB.toFixed(2);
+    updateLen(); drawSync(); if (!quiet) saveSync();
+  }
   function updateLen() {
-    const L = totalLen(), fps = +$('fps').value, [w, h] = outSize();
-    $('lenInfo').textContent = L ? fmtV(L) + ' · ' + Math.ceil(L * fps) + ' frames · ' + w + '×' + h + (V.has ? ' (same length as your clip)' : ' (flight + 3 s lead-in)') : '—';
+    const L0 = totalLen(), [ra, rb] = expRange(), L = rb - ra, fps = +$('fps').value, [w, h] = outSize();
+    $('lenInfo').textContent = L0 ? (isSection() ? 'Section ' + fmtV(ra) + ' to ' + fmtV(rb) + ' = ' + fmtV(L) : fmtV(L)) + ' · ' + Math.ceil(L * fps) + ' frames · ' + w + '×' + h + (isSection() ? '' : V.has ? ' (same length as your clip)' : ' (flight + 3 s lead-in)') : '—';
     if (O.mode === 'burn' && !V.has) $('lenInfo').textContent += ' — open a video to burn in';
   }
   const loadFonts = (st) => document.fonts ? Promise.all((STYLES[st] || STYLES.fighter).fonts.map(f => document.fonts.load(f).catch(() => {}))).then(() => document.fonts.ready) : Promise.resolve();
@@ -3811,12 +3867,12 @@ If you want to offset all timestamps of a track such that the first one is zero,
   }
   const waitSeek = (t) => new Promise(res => { const done = () => { vid.removeEventListener('seeked', done); res(); }; vid.addEventListener('seeked', done); vid.currentTime = t; setTimeout(res, 3000); });
   async function exportVideo(burn) {
-    const fps = +$('fps').value, [w, h] = outSize(), L = totalLen(), n = Math.ceil(L * fps);
+    const fps = +$('fps').value, [w, h] = outSize(), [ra, rb] = expRange(), L = rb - ra, n = Math.ceil(L * fps), secTag = isSection() ? '_' + fmtV(ra).replace(/[:.]/g, '-') + '_to_' + fmtV(rb).replace(/[:.]/g, '-') : '';
     const bitrate = Math.min(80e6, Math.max(4e6, w * h * fps * (burn ? 0.16 : 0.05)));
     const pick = await pickCodec(w, h, fps, bitrate);
     if (!pick) { alert('This browser cannot encode video. Use Chrome or Edge (desktop), or choose the PNG sequence export.'); return; }
     $('codecInfo').textContent = 'Encoder: ' + (pick.mux === 'avc' ? 'H.264' : 'VP9 (no H.264 encoder in this browser — some editors may need it converted)') + ' · ' + (bitrate / 1e6).toFixed(0) + ' Mbps';
-    const base = (S.cur.file || 'flight').replace(/\.csv$/i, '') + (burn ? '_HUD' : '_HUD_overlay_SCREEN') + '_' + w + 'x' + h + '_' + fps + 'p.mp4';
+    const base = (S.cur.file || 'flight').replace(/\.csv$/i, '') + (burn ? '_HUD' : '_HUD_overlay_SCREEN') + secTag + '_' + w + 'x' + h + '_' + fps + 'p.mp4';
     let target, writable = null;
     if (window.showSaveFilePicker) {
       try { const fh = await window.showSaveFilePicker({ suggestedName: base, types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] }); writable = await fh.createWritable(); target = new Mp4Muxer.FileSystemWritableFileStreamTarget(writable); }
@@ -3832,7 +3888,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     const t0 = performance.now();
     for (let k = 0; k < n; k++) {
       if (cancel || encErr) break;
-      const vt = k / fps;
+      const vt = ra + k / fps;
       c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
       if (burn) { await waitSeek(Math.min(vt, V.dur - 0.001)); const vr = vidRect(w, h), vf = vidFilter(); c.filter = vf; c.drawImage(vid, vr.x, vr.y, vr.w, vr.h); c.filter = 'none'; }
       const lt = logTimeAt(vt);
@@ -3870,8 +3926,8 @@ If you want to offset all timestamps of a track such that the first one is zero,
     };
   }
   async function exportPng() {
-    const fps = +$('fps').value, [w, h] = outSize(), L = totalLen(), n = Math.ceil(L * fps);
-    const base = (S.cur.file || 'flight').replace(/\.csv$/i, '') + '_HUD_' + w + 'x' + h + '_' + fps + 'p';
+    const fps = +$('fps').value, [w, h] = outSize(), [ra, rb] = expRange(), L = rb - ra, n = Math.ceil(L * fps), secTag = isSection() ? '_' + fmtV(ra).replace(/[:.]/g, '-') + '_to_' + fmtV(rb).replace(/[:.]/g, '-') : '';
+    const base = (S.cur.file || 'flight').replace(/\.csv$/i, '') + '_HUD' + secTag + '_' + w + 'x' + h + '_' + fps + 'p';
     let dir = null, zip = null;
     if (window.showDirectoryPicker) { try { const root = await window.showDirectoryPicker({ mode: 'readwrite' }); dir = await root.getDirectoryHandle(base, { create: true }); } catch (e) { if (e.name === 'AbortError') return; } }
     if (!dir) { if (n * w * h > 3840 * 2160 * 9000) { if (!confirm('That is a lot of frames for a .zip in the browser — it may run out of memory. Continue?')) return; } zip = zipWriter(); }
@@ -3880,7 +3936,7 @@ If you want to offset all timestamps of a track such that the first one is zero,
     for (let k = 0; k < n; k++) {
       if (cancel) break;
       c.clearRect(0, 0, w, h);
-      const lt = logTimeAt(k / fps);
+      const lt = logTimeAt(ra + k / fps);
       if (lt >= S.cur.t[0] && lt <= S.cur.dur) drawHUD(c, w, h, stateAt(S.cur, lt), O);
       const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
       const name = 'hud_' + String(k).padStart(6, '0') + '.png';
